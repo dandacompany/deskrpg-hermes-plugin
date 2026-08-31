@@ -71,6 +71,10 @@ def put_handler(api):
     `ifRevision` 을 요구한다. 없거나 어긋나면 409 + 현재 본문을 돌려준다.
     효과가 둘이다 — 그 사이 서버에서 누가 고쳤으면 덮어쓰지 않고, UI 가 반드시
     먼저 읽게 강제되어 "지금 이 성격을 이걸로 바꿉니다" 를 보여줄 수 있다.
+
+    예외 하나: 파일이 아직 없는 첫 생성이다. 이때 `revision_of("")` 는 상수라
+    GET 없이도 계산할 수 있으므로 엄밀히는 "읽지 않고 쓴다" 지만, 지울 인격이
+    없으니 데이터 유실 위험도 없다 — 그래서 그대로 허용한다.
     """
 
     async def handler(request):
@@ -80,6 +84,9 @@ def put_handler(api):
             payload = await request.json()
         except Exception:
             raise web.HTTPBadRequest(reason="body must be JSON")
+
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(reason="body must be a JSON object")
 
         new_body = payload.get("body")
         if not isinstance(new_body, str):
@@ -99,7 +106,9 @@ def put_handler(api):
             )
 
         if path.is_file():
-            backup = path.with_name(f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+            # 같은 초에 두 번 써도 백업이 서로 덮어쓰지 않도록 마이크로초까지 찍는다 —
+            # 백업의 존재 이유가 옛 내용 보존인데 충돌로 지워지면 목적이 무색해진다.
+            backup = path.with_name(f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1_000_000:06d}")
             backup.write_text(current, encoding="utf-8")
 
         path.parent.mkdir(parents=True, exist_ok=True)

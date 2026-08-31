@@ -71,3 +71,53 @@ async def test_쓰기_전에_백업이_남는다(aiohttp_client, fake_api):
     backups = list(d.glob("SOUL.md.bak-*"))
     assert len(backups) == 1
     assert backups[0].read_text(encoding="utf-8") == "나는 소피다"
+
+
+async def test_json_최상위가_객체가_아니면_400(aiohttp_client, fake_api):
+    # request.json() 이 성공해도 payload 가 list/str/int/null 이면
+    # payload.get(...) 이 AttributeError 를 던져 500 으로 새면 안 된다.
+    await _seed(fake_api, "나는 소피다")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put(
+        "/p/sophie/deskrpg/identity",
+        json=[1, 2, 3],
+    )
+    assert resp.status == 400
+
+
+async def test_파일이_없으면_빈_본문_revision으로_첫_생성이_허용된다(aiohttp_client, fake_api):
+    # revision_of("") 는 상수라 GET 없이도 계산 가능하지만, 지울 인격이 없으므로
+    # "읽지 않으면 못 쓴다" 의 의도된 예외다.
+    fake_api.create_profile("sophie")
+    (fake_api.get_profile_dir("sophie") / "SOUL.md").unlink()
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put(
+        "/p/sophie/deskrpg/identity",
+        json={"body": "처음 쓰는 인격", "ifRevision": identity.revision_of("")},
+    )
+    assert resp.status == 200
+    assert (await resp.json())["revision"] == identity.revision_of("처음 쓰는 인격")
+    saved = (fake_api.get_profile_dir("sophie") / "SOUL.md").read_text(encoding="utf-8")
+    assert saved == "처음 쓰는 인격"
+
+
+async def test_같은_초에_두_번_써도_백업_둘_다_남는다(aiohttp_client, fake_api):
+    await _seed(fake_api, "첫 인격")
+    client = await _client(aiohttp_client, fake_api)
+
+    resp1 = await client.put(
+        "/p/sophie/deskrpg/identity",
+        json={"body": "둘째 인격", "ifRevision": identity.revision_of("첫 인격")},
+    )
+    assert resp1.status == 200
+    resp2 = await client.put(
+        "/p/sophie/deskrpg/identity",
+        json={"body": "셋째 인격", "ifRevision": identity.revision_of("둘째 인격")},
+    )
+    assert resp2.status == 200
+
+    d = fake_api.get_profile_dir("sophie")
+    backups = list(d.glob("SOUL.md.bak-*"))
+    assert len(backups) == 2
+    contents = {b.read_text(encoding="utf-8") for b in backups}
+    assert contents == {"첫 인격", "둘째 인격"}
