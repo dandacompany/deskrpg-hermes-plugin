@@ -1,3 +1,7 @@
+import os
+import stat
+
+import pytest
 from aiohttp import web
 
 from deskrpg_plugin import routes
@@ -20,6 +24,42 @@ async def test_목록은_인격_보유_여부를_함께_준다(aiohttp_client, f
     by_name = {p["name"]: p for p in body["profiles"]}
     assert by_name["sophie"]["hasCustomPersona"] is False  # 기본 템플릿 그대로
     assert by_name["mia"]["hasCustomPersona"] is True
+
+
+async def test_SOUL_MD_가_깨진_인코딩이어도_목록_전체는_살아있다(aiohttp_client, fake_api):
+    fake_api.create_profile("sophie")
+    fake_api.create_profile("noah")
+    # UTF-8 로 디코드되지 않는 바이트 — read_text(encoding="utf-8") 가 UnicodeDecodeError 를 던진다.
+    (fake_api.get_profile_dir("noah") / "SOUL.md").write_bytes(b"\xff\xfe\x00broken")
+
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.get("/deskrpg/profiles")
+    assert resp.status == 200
+    body = await resp.json()
+    by_name = {p["name"]: p for p in body["profiles"]}
+    assert set(by_name) == {"sophie", "noah"}  # 손상된 프로필도 목록에는 남는다
+    assert by_name["sophie"]["hasCustomPersona"] is False
+    # 읽기 실패는 "기본 템플릿"(False)으로 둔갑하지 않고 판정 불가(None)로 남는다.
+    assert by_name["noah"]["hasCustomPersona"] is None
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root 는 파일 권한을 무시하므로 이 테스트가 성립하지 않는다")
+async def test_SOUL_MD_읽기_권한이_없어도_목록_전체는_살아있다(aiohttp_client, fake_api):
+    fake_api.create_profile("sophie")
+    fake_api.create_profile("noah")
+    soul = fake_api.get_profile_dir("noah") / "SOUL.md"
+    soul.chmod(0)  # 소유자조차 읽기 불가 — read_text() 가 PermissionError 를 던진다.
+    try:
+        client = await _client(aiohttp_client, fake_api)
+        resp = await client.get("/deskrpg/profiles")
+        assert resp.status == 200
+        body = await resp.json()
+        by_name = {p["name"]: p for p in body["profiles"]}
+        assert set(by_name) == {"sophie", "noah"}
+        assert by_name["sophie"]["hasCustomPersona"] is False
+        assert by_name["noah"]["hasCustomPersona"] is None
+    finally:
+        soul.chmod(stat.S_IRUSR | stat.S_IWUSR)  # tmp_path 정리가 지울 수 있도록 복구
 
 
 async def test_생성하면_201(aiohttp_client, fake_api):

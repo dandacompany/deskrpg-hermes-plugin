@@ -28,13 +28,34 @@ def list_handler(api):
         for info in api.list_profiles():
             name = getattr(info, "name", str(info))
             soul = api.get_profile_dir(name) / SOUL_FILENAME
-            body = soul.read_text(encoding="utf-8") if soul.is_file() else ""
+
+            # 프로필 하나의 SOUL.md 를 못 읽어도 (깨진 인코딩, 권한 없음) 목록 전체를
+            # 500 으로 죽이지 않는다 — 이 라우트는 마법사가 프로필을 고르는 첫 화면이라,
+            # 프로필 하나의 손상이 나머지를 못 보이게 만들면 안 된다. 다만 조용히
+            # 넘기지도 않는다: 판정 불가는 hasCustomPersona 를 False(=기본 템플릿)로
+            # 둔갑시키지 않고 null 로 남겨, UI 가 실수로 덮어쓰기 확인을 건너뛰지 않게 한다.
+            has_custom_persona = True
+            if soul.is_file():
+                try:
+                    body = soul.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.warning(
+                        "[deskrpg] SOUL.md 읽기 실패 — 프로필 %s 의 hasCustomPersona 판정 불가: %s",
+                        name,
+                        exc,
+                    )
+                    has_custom_persona = None
+                else:
+                    has_custom_persona = not is_default_template(body, api)
+            else:
+                has_custom_persona = not is_default_template("", api)
+
             meta = api.read_profile_meta(api.get_profile_dir(name)) or {}
             out.append(
                 {
                     "name": name,
                     "description": meta.get("description") or "",
-                    "hasCustomPersona": not is_default_template(body, api),
+                    "hasCustomPersona": has_custom_persona,
                 }
             )
         return web.json_response({"profiles": out})
