@@ -59,8 +59,8 @@ tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 | DELETE | `/deskrpg/profiles/{name}` | default | 프로필 삭제 (`?confirm={name}` 필수) |
 | GET | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 읽기 |
 | PUT | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 쓰기 (`ifRevision` 필수) |
-| GET | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 읽기 |
-| PUT | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 쓰기 |
+| GET | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 읽기 (읽을 수 없으면 200 + `unreadable: true`) |
+| PUT | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 쓰기 (읽을 수 없으면 409 `config_unreadable`) |
 
 ### DELETE — `?confirm={name}` 필수
 
