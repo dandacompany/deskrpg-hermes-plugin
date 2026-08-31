@@ -57,8 +57,8 @@ tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 | GET | `/deskrpg/profiles` | default | 프로필 목록 (`hasCustomPersona` 포함) |
 | POST | `/deskrpg/profiles` | default | 프로필 생성 |
 | DELETE | `/deskrpg/profiles/{name}` | default | 프로필 삭제 (`?confirm={name}` 필수) |
-| GET | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 읽기 |
-| PUT | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 쓰기 (`ifRevision` 필수) |
+| GET | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 읽기 (읽을 수 없으면 200 + `unreadable: true`) |
+| PUT | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 쓰기 (`ifRevision` 필수 · 읽을 수 없으면 409 `identity_unreadable`) |
 | GET | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 읽기 (읽을 수 없으면 200 + `unreadable: true`) |
 | PUT | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 쓰기 (읽을 수 없으면 409 `config_unreadable`) |
 
@@ -77,6 +77,15 @@ tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 반대로 하면 이 필드는 항상 `false` 로 거짓말한다).
 
 ### PUT identity — `ifRevision` 필수
+
+기존 `SOUL.md` 를 읽을 수 없을 때(권한·인코딩 오류)는 config 와 같은 규약을
+따른다: `GET` 은 500 대신 200 + `{"body": null, "isDefaultTemplate": null,
+"revision": null, "unreadable": true}` 를 돌려주고, `PUT` 은 `409 {"error":
+"identity_unreadable"}` 로 거절한다. `isDefaultTemplate` 이 `false` 가 아니라
+`null` 인 것이 중요하다 — 읽기 실패가 "기본 템플릿이니 덮어써도 안전"으로
+둔갑하면 사람이 쓴 인격을 모르고 지우게 된다. `revision: null` 을 받은
+클라이언트는 그것을 `ifRevision` 에 실어 보내지 말고 사용자에게 파일 문제를
+알려야 한다.
 
 `PUT /p/{profile}/deskrpg/identity` 는 본문에 `ifRevision` 을 요구한다. 현재
 SOUL.md 의 revision(내용의 SHA-256 앞 16자)과 일치하지 않으면 덮어쓰지 않고
