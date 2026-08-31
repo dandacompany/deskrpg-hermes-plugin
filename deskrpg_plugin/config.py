@@ -1,16 +1,165 @@
+"""프로필 설정 읽기·쓰기.
+
+쓸 수 있는 키를 허용목록으로 제한한다. 임의 YAML 을 쓰지 않는다 — 잘못된 키
+하나가 프로필을 못 뜨게 만들 수 있다.
+"""
+
+import logging
+import time
+
+import yaml
 from aiohttp import web
 
+logger = logging.getLogger(__name__)
 
-def _stub(name):
+ALLOWED_KEYS = frozenset({"model", "provider", "toolsets"})
+
+CONFIG_FILENAME = "config.yaml"
+
+
+class ConfigUnreadable(Exception):
+    """config.yaml 이 존재하지만 읽거나 해석할 수 없다.
+
+    파일이 아예 없는 것과는 다르다 — 없으면 "아직 설정 안 함"이지만, 이건
+    "설정이 있는데 망가졌다"이다. GET/PUT 이 이 둘을 구분해서 다룬다.
+    """
+
+
+def _resolve(request, api):
+    name = request.match_info["profile"]
+    try:
+        api.validate_profile_name(name)
+    except Exception as exc:
+        raise web.HTTPBadRequest(reason=f"invalid profile name: {exc}") from exc
+    if not api.profile_exists(name):
+        raise web.HTTPNotFound(reason=f"no such profile: {name}")
+    return api.get_profile_dir(name) / CONFIG_FILENAME
+
+
+def _load(path):
+    """설정을 읽는다.
+
+    파일이 없으면 빈 dict (= 아직 설정 없음). 있는데 읽거나 파싱할 수 없으면
+    ConfigUnreadable 을 던진다 — is_file() 통과가 read_text() 성공을 보장하지
+    않고(권한/인코딩), read_text() 성공이 yaml.safe_load() 성공을 보장하지
+    않으며(문법 오류), safe_load() 성공이 dict 를 돌려준다는 보장도 없다
+    (맨 문자열·리스트·None 도 유효한 YAML 이다).
+    """
+    if not path.is_file():
+        return {}
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise ConfigUnreadable(f"config.yaml 읽기 실패: {exc}") from exc
+
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError as exc:
+        raise ConfigUnreadable(f"config.yaml 파싱 실패: {exc}") from exc
+
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ConfigUnreadable("config.yaml 최상위 구조가 매핑(dict)이 아니다")
+    return data
+
+
+def get_handler(api):
     async def handler(request):
-        return web.json_response({"error": f"{name} not implemented"}, status=501)
+        path = _resolve(request, api)
+
+        try:
+            data = _load(path)
+        except ConfigUnreadable as exc:
+            # 500 으로 새지 않는다 — 이 라우트는 설정 화면이 여는 첫 요청이라,
+            # 파일이 망가졌다고 화면 자체가 못 뜨면 고칠 방법도 없어진다.
+            # 값은 전부 null 로 두고 unreadable 플래그로 "비어있음"과 구분한다.
+            logger.warning("[deskrpg] config 읽기 실패: %s", exc)
+            return web.json_response(
+                {"model": None, "provider": None, "toolsets": None, "unreadable": True}
+            )
+
+        model_block = data.get("model") or {}
+        if not isinstance(model_block, dict):
+            model_block = {}
+        return web.json_response(
+            {
+                "model": model_block.get("default"),
+                "provider": model_block.get("provider"),
+                "toolsets": data.get("toolsets"),
+            }
+        )
 
     return handler
 
 
-def get_handler(api):
-    return _stub("get_config")
-
-
 def put_handler(api):
-    return _stub("put_config")
+    async def handler(request):
+        path = _resolve(request, api)
+
+        try:
+            payload = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="body must be JSON")
+
+        if not isinstance(payload, dict):
+            raise web.HTTPBadRequest(reason="body must be a JSON object")
+
+        unknown = set(payload) - ALLOWED_KEYS
+        if unknown:
+            raise web.HTTPBadRequest(
+                reason=f"keys not allowed: {', '.join(sorted(unknown))}"
+            )
+        if not payload:
+            raise web.HTTPBadRequest(reason="nothing to apply")
+
+        try:
+            data = _load(path)
+        except ConfigUnreadable as exc:
+            # 망가진 파일 위에 백업하고 새로 쓰면 "성공"을 보고하면서 원본을
+            # 영영 잃는다 — 여기서 거절하는 편이 백업-후-덮어쓰기보다 안전하다.
+            # 호출자가 먼저 config.yaml 을 직접 고치거나 지워야 한다.
+            logger.warning("[deskrpg] config 쓰기 거부 — 기존 파일을 해석할 수 없다: %s", exc)
+            # HTTP reason 은 개행을 못 담는다(aiohttp 가 \r\n 을 거절) — YAML
+            # 파서 에러는 여러 줄이라 reason 에는 한 줄 요약만, 자세한 사유는
+            # 응답 본문에 담는다.
+            return web.json_response(
+                {"error": "config_unreadable", "reason": str(exc)}, status=409
+            )
+
+        if path.is_file():
+            # 같은 초에 두 번 써도 백업이 서로 덮어쓰지 않도록 마이크로초까지
+            # 찍는다(identity.py 와 동일한 방식) — 백업의 존재 이유가 옛 내용
+            # 보존인데 충돌로 지워지면 목적이 무색해진다.
+            backup = path.with_name(
+                f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+                f"-{time.time_ns() % 1_000_000:06d}"
+            )
+            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+
+        model_block = dict(data.get("model") or {})
+        if "model" in payload:
+            model_block["default"] = payload["model"]
+        if "provider" in payload:
+            model_block["provider"] = payload["provider"]
+        if model_block:
+            data["model"] = model_block
+        if "toolsets" in payload:
+            data["toolsets"] = payload["toolsets"]
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        )
+
+        return web.json_response(
+            {
+                "applied": sorted(payload),
+                # Hermes 는 설정 변경 시 실행 중 에이전트를 재시작할 수 있다.
+                # 조용히 바뀌지 않도록 호출자에게 알린다.
+                "restartMayBeRequired": True,
+            }
+        )
+
+    return handler
