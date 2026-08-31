@@ -6,6 +6,7 @@
 """
 
 import hashlib
+import time
 
 from aiohttp import web
 
@@ -65,9 +66,44 @@ def get_handler(api):
 
 
 def put_handler(api):
-    """Task 4 에서 채운다."""
+    """SOUL.md 를 쓴다.
+
+    `ifRevision` 을 요구한다. 없거나 어긋나면 409 + 현재 본문을 돌려준다.
+    효과가 둘이다 — 그 사이 서버에서 누가 고쳤으면 덮어쓰지 않고, UI 가 반드시
+    먼저 읽게 강제되어 "지금 이 성격을 이걸로 바꿉니다" 를 보여줄 수 있다.
+    """
 
     async def handler(request):
-        return web.json_response({"error": "not implemented"}, status=501)
+        _name, path = _resolve(request, api)
+
+        try:
+            payload = await request.json()
+        except Exception:
+            raise web.HTTPBadRequest(reason="body must be JSON")
+
+        new_body = payload.get("body")
+        if not isinstance(new_body, str):
+            raise web.HTTPBadRequest(reason="body (string) is required")
+
+        current = path.read_text(encoding="utf-8") if path.is_file() else ""
+        current_rev = revision_of(current)
+
+        if payload.get("ifRevision") != current_rev:
+            return web.json_response(
+                {
+                    "error": "revision_mismatch",
+                    "body": current,
+                    "revision": current_rev,
+                },
+                status=409,
+            )
+
+        if path.is_file():
+            backup = path.with_name(f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}")
+            backup.write_text(current, encoding="utf-8")
+
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(new_body, encoding="utf-8")
+        return web.json_response({"revision": revision_of(new_body)})
 
     return handler
