@@ -25,6 +25,33 @@ class ConfigUnreadable(Exception):
     """
 
 
+def _value_error(key, value):
+    """키가 허용목록에 있어도 값의 타입이 틀리면 거절 사유를 돌려준다.
+
+    허용목록은 "잘못된 키 하나가 프로필을 못 뜨게 만든다"를 막으려는
+    것인데, 키만 막고 값을 열어 두면 `model.default` 에 dict/list 가 그대로
+    들어가 같은 문제가 재발한다 — 값도 목적에 맞는 타입인지 봐야 한다.
+
+    model/provider 는 빈 문자열·공백만 있는 문자열도 거절한다. 둘 다 Hermes
+    가 그대로 프로필 기동에 쓰는 식별자라, "일단 저장은 되지만 의미 없는
+    값"을 허용해 봐야 다음 GET 이나 기동 시점에 더 알기 어려운 형태로
+    터진다 — 여기서 바로 걸러 이유를 말해 주는 편이 낫다.
+    """
+    if key in ("model", "provider"):
+        if not isinstance(value, str):
+            return f"{key} must be a string"
+        if not value.strip():
+            return f"{key} must not be empty"
+        return None
+    if key == "toolsets":
+        if not isinstance(value, list):
+            return "toolsets must be a list of strings"
+        if not all(isinstance(v, str) for v in value):
+            return "toolsets must be a list of strings"
+        return None
+    return None
+
+
 def _resolve(request, api):
     name = request.match_info["profile"]
     try:
@@ -113,6 +140,11 @@ def put_handler(api):
             )
         if not payload:
             raise web.HTTPBadRequest(reason="nothing to apply")
+
+        for key, value in payload.items():
+            error = _value_error(key, value)
+            if error:
+                raise web.HTTPBadRequest(reason=f"invalid value for {key}: {error}")
 
         try:
             data = _load(path)

@@ -165,3 +165,65 @@ async def test_읽기_권한이_없는_config는_GET에서_unreadable(aiohttp_cl
 
 async def test_ALLOWED_KEYS_는_문서화된_세_키다():
     assert config.ALLOWED_KEYS == frozenset({"model", "provider", "toolsets"})
+
+
+# 허용목록은 키만 막고 값의 타입은 열어 두면 목적이 무색해진다 — model.default 에
+# dict/list/int 가 그대로 들어가면 잘못된 키를 막은 것과 같은 방식으로 Hermes 가
+# 그 프로필을 못 띄운다. 아래 네 입력은 모두 400 이고, config.yaml 은 원본 바이트
+# 그대로 남아야 한다(백업도 쓰기도 일어나지 않는다).
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"model": {"evil": 1}},
+        {"model": [1, 2]},
+        {"model": 123},
+        {"toolsets": "not-a-list"},
+    ],
+)
+async def test_허용된_키여도_값_타입이_틀리면_400이고_원본이_그대로다(aiohttp_client, fake_api, payload):
+    path = _seed(fake_api, {"model": {"provider": "openai-codex", "default": "gpt-5.6-sol"}})
+    original = path.read_bytes()
+    client = await _client(aiohttp_client, fake_api)
+
+    resp = await client.put("/p/sophie/deskrpg/config", json=payload)
+    assert resp.status == 400
+
+    assert path.read_bytes() == original
+    assert list(path.parent.glob("config.yaml.bak-*")) == []
+
+
+async def test_toolsets_원소가_문자열이_아니면_400(aiohttp_client, fake_api):
+    path = _seed(fake_api, {"model": {"provider": "openai-codex", "default": "gpt-5.6-sol"}})
+    original = path.read_bytes()
+    client = await _client(aiohttp_client, fake_api)
+
+    resp = await client.put("/p/sophie/deskrpg/config", json={"toolsets": ["ok", 1]})
+    assert resp.status == 400
+    assert path.read_bytes() == original
+
+
+async def test_빈_문자열_model은_400(aiohttp_client, fake_api):
+    # 저장은 되지만 의미 없는 값(빈 문자열)을 허용하면, 다음 GET 이나 실제
+    # 프로필 기동 시점에 더 알기 어려운 형태로 터진다 — 여기서 바로 거절한다.
+    path = _seed(fake_api, {"model": {"provider": "openai-codex", "default": "gpt-5.6-sol"}})
+    original = path.read_bytes()
+    client = await _client(aiohttp_client, fake_api)
+
+    resp = await client.put("/p/sophie/deskrpg/config", json={"model": "   "})
+    assert resp.status == 400
+    assert path.read_bytes() == original
+
+
+async def test_문자열_model과_문자열_리스트_toolsets는_여전히_200(aiohttp_client, fake_api):
+    path = _seed(fake_api, {"model": {"provider": "openai-codex", "default": "a"}})
+    client = await _client(aiohttp_client, fake_api)
+
+    resp = await client.put(
+        "/p/sophie/deskrpg/config",
+        json={"model": "gpt-5.6-terra", "provider": "openai-codex", "toolsets": ["fs", "web"]},
+    )
+    assert resp.status == 200
+    saved = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert saved["model"]["default"] == "gpt-5.6-terra"
+    assert saved["model"]["provider"] == "openai-codex"
+    assert saved["toolsets"] == ["fs", "web"]
