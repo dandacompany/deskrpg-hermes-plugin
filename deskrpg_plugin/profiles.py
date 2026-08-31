@@ -5,6 +5,7 @@
 그 사실을 README 와 등록 화면이 말해야 한다.
 """
 
+import asyncio
 import logging
 
 from aiohttp import web
@@ -105,8 +106,19 @@ def delete_handler(api):
         if not api.profile_exists(name):
             raise web.HTTPNotFound(reason=f"no such profile: {name}")
 
-        api.delete_profile(name, yes=True)
-        wrapper_removed = bool(api.remove_wrapper_script(name))
+        # 순서가 중요하다(I-3). 0.20.6 의 delete_profile 은 3단계에서 wrapper 를
+        # 스스로 지운다 — delete_profile *뒤에* remove_wrapper_script 를 부르면
+        # 이미 사라진 파일을 지우려는 것이라 True 였던 적이 있어도 항상 False 가
+        # 나온다. 그래서 우리가 먼저 지워 진짜 결과를 잡는다. delete_profile 은
+        # has_wrapper 체크 후 자기 몫을 수행하므로, 이미 없는 wrapper 를 다시
+        # 만나도 그냥 건너뛴다 — 순서를 바꿔도 안전하다.
+        #
+        # 둘 다 동기 함수다(I-5) — delete_profile 은 systemctl disable/stop
+        # (각 timeout=10) 과 재시도 있는 rmtree 를 동기로 돈다. 핸들러 안에서
+        # 직접 부르면 그동안 게이트웨이의 이벤트 루프가 멎어 다른 모든
+        # 프로필의 HTTP·Slack 응답이 함께 멈춘다 — 별도 스레드로 옮긴다.
+        wrapper_removed = bool(await asyncio.to_thread(api.remove_wrapper_script, name))
+        await asyncio.to_thread(api.delete_profile, name, yes=True)
         logger.warning("[deskrpg] 프로필 삭제: %s (wrapper=%s)", name, wrapper_removed)
         return web.json_response(
             {"name": name, "removed": {"profileDir": True, "wrapperScript": wrapper_removed}}

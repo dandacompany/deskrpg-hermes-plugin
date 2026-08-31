@@ -101,6 +101,24 @@ async def test_파일이_없으면_빈_본문_revision으로_첫_생성이_허�
     assert saved == "처음 쓰는 인격"
 
 
+async def test_SOUL_MD_가_깨진_인코딩이면_PUT은_409이고_원본을_보존한다(aiohttp_client, fake_api):
+    # I-2: put_handler 도 get 과 같은 500 이었다. 여기서는 revision 을 계산할
+    # 방법이 없으니 config.put_handler 와 같은 논리로 거절한다 — 백업-후-
+    # 덮어쓰기로 원본을 잃느니 409 로 멈춘다.
+    fake_api.create_profile("sophie")
+    d = fake_api.get_profile_dir("sophie")
+    (d / "SOUL.md").write_bytes(b"\xff\xfe\x00broken")
+
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put(
+        "/p/sophie/deskrpg/identity",
+        json={"body": "새 인격", "ifRevision": "whatever"},
+    )
+    assert resp.status == 409
+    assert (d / "SOUL.md").read_bytes() == b"\xff\xfe\x00broken"
+    assert list(d.glob("SOUL.md.bak-*")) == []
+
+
 async def test_같은_초에_두_번_써도_백업_둘_다_남는다(aiohttp_client, fake_api):
     await _seed(fake_api, "첫 인격")
     client = await _client(aiohttp_client, fake_api)

@@ -160,6 +160,23 @@ def put_handler(api):
                 {"error": "config_unreadable", "reason": str(exc)}, status=409
             )
 
+        existing_model = data.get("model")
+        if existing_model is not None and not isinstance(existing_model, dict):
+            # 기존 model: 이 스칼라/리스트면 dict(existing_model) 이 ValueError 를
+            # 던진다 — 그 전에 걸러야 한다. get_handler(:110-112) 는 이미 같은
+            # 상황을 방어하는데 put 만 놓치고 있었다(I-1). 백업보다 반드시
+            # 먼저 거절해야 "거절 전 백업 찌꺼기 0개" 가 이 경로에서도 지켜진다.
+            logger.warning(
+                "[deskrpg] config 쓰기 거부 — 기존 model 키가 매핑이 아니다: %r", existing_model
+            )
+            return web.json_response(
+                {
+                    "error": "config_unreadable",
+                    "reason": "existing 'model' key is not a mapping",
+                },
+                status=409,
+            )
+
         if path.is_file():
             # 같은 초에 두 번 써도 백업이 서로 덮어쓰지 않도록 마이크로초까지
             # 찍는다(identity.py 와 동일한 방식) — 백업의 존재 이유가 옛 내용
@@ -170,7 +187,7 @@ def put_handler(api):
             )
             backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
 
-        model_block = dict(data.get("model") or {})
+        model_block = dict(existing_model or {})
         if "model" in payload:
             model_block["default"] = payload["model"]
         if "provider" in payload:

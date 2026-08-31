@@ -49,7 +49,7 @@ tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 
 | Method | Path | Scope | 설명 |
 |---|---|---|---|
-| GET | `/deskrpg/info` | default | 플러그인 버전과 라우트 목록 |
+| GET | `/deskrpg/info` | default | 플러그인 버전과 라우트 목록 (**default 키 전용** — 프로필 키로는 발견에 쓸 수 없다) |
 | GET | `/deskrpg/profiles` | default | 프로필 목록 (`hasCustomPersona` 포함) |
 | POST | `/deskrpg/profiles` | default | 프로필 생성 |
 | DELETE | `/deskrpg/profiles/{name}` | default | 프로필 삭제 (`?confirm={name}` 필수) |
@@ -64,6 +64,13 @@ tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 정확히 일치해야 지운다. 없거나 다르면 400. `default` 프로필은 이 파라미터가
 맞아도 삭제할 수 없다(400) — 리스너 소유자 프로필이 사라지면 게이트웨이 전체가
 인증 기준을 잃는다.
+
+성공하면 `{"name": ..., "removed": {"profileDir": true, "wrapperScript": <bool>}}`
+를 돌려준다. `wrapperScript` 는 삭제 시점에 wrapper 스크립트가 실제로
+있었고 지워졌으면 `true`, 애초에 없었으면 `false` 다 — 이 값을 진짜로 만들려면
+플러그인이 Hermes 의 `delete_profile` 보다 **먼저** wrapper 를 지워 결과를
+관찰해야 한다(`delete_profile` 자신도 뒤에 wrapper 정리를 시도하므로, 순서를
+반대로 하면 이 필드는 항상 `false` 로 거짓말한다).
 
 ### PUT identity — `ifRevision` 필수
 

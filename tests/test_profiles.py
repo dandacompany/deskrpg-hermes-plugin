@@ -1,5 +1,7 @@
+import asyncio
 import os
 import stat
+import time
 
 import pytest
 from aiohttp import web
@@ -113,7 +115,7 @@ async def test_default_는_확인해도_지우지_않는다(aiohttp_client, fake
 
 
 async def test_확인이_맞으면_지우고_무엇이_사라졌는지_알린다(aiohttp_client, fake_api):
-    fake_api.create_profile("noah")
+    fake_api.create_profile("noah")  # fake 도 실제 CLI 처럼 wrapper 를 함께 만든다
     client = await _client(aiohttp_client, fake_api)
     resp = await client.delete("/deskrpg/profiles/noah?confirm=noah")
     assert resp.status == 200
@@ -121,3 +123,48 @@ async def test_확인이_맞으면_지우고_무엇이_사라졌는지_알린다
     assert payload["name"] == "noah"
     assert payload["removed"]["wrapperScript"] is True
     assert fake_api.profile_exists("noah") is False
+
+
+async def test_DELETE는_동기_삭제_중에도_이벤트_루프를_막지_않는다(aiohttp_client, fake_api):
+    # I-5: 실제 delete_profile 은 systemctl + rmtree 를 동기로 돈다. 핸들러가
+    # 이걸 직접 부르면 그동안 다른 요청이 전혀 처리되지 않는다. asyncio.to_thread
+    # 로 감쌌다면 느린 삭제가 진행 중이어도 동시 요청(/deskrpg/info)이 먼저
+    # 끝나야 한다.
+    fake_api.create_profile("noah")
+    original_delete = fake_api.delete_profile
+
+    def slow_delete(name, yes=False):
+        time.sleep(0.3)  # 스레드에서 도는지 확인할 만큼만 느리게
+        return original_delete(name, yes=yes)
+
+    fake_api.delete_profile = slow_delete
+
+    client = await _client(aiohttp_client, fake_api)
+
+    async def do_delete():
+        return await client.delete("/deskrpg/profiles/noah?confirm=noah")
+
+    async def do_info():
+        return await client.get("/deskrpg/info")
+
+    delete_task = asyncio.ensure_future(do_delete())
+    await asyncio.sleep(0.05)  # delete 가 먼저 진행되게 살짝 양보
+    info_resp = await asyncio.wait_for(do_info(), timeout=0.2)  # 막혀 있었다면 여기서 타임아웃
+    assert info_resp.status == 200
+
+    delete_resp = await delete_task
+    assert delete_resp.status == 200
+
+
+async def test_wrapper가_없던_프로필은_wrapperScript가_거짓이다(aiohttp_client, fake_api):
+    # I-3: delete_profile 이 wrapper 를 스스로 지우므로, 그 뒤에 다시 지우려
+    # 들면 항상 False 가 나오는 버그가 있었다. 이 테스트는 반대 극단을
+    # 확인한다 — wrapper 가 애초에 없던 경우에도 응답이 거짓으로 True 를
+    # 주장하지 않아야 한다.
+    fake_api.create_profile("noah")
+    fake_api.get_wrapper_path("noah").unlink()  # wrapper 가 아예 없었던 상황을 만든다
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.delete("/deskrpg/profiles/noah?confirm=noah")
+    assert resp.status == 200
+    payload = await resp.json()
+    assert payload["removed"]["wrapperScript"] is False

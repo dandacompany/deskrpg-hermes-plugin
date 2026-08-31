@@ -13,6 +13,15 @@ from aiohttp import web
 SOUL_FILENAME = "SOUL.md"
 
 
+class SoulUnreadable(Exception):
+    """SOUL.md 가 존재하지만 읽을 수 없다(권한·인코딩).
+
+    config.py 의 ConfigUnreadable 과 같은 구분이다 — 파일이 없는 것과 있는데
+    망가진 것은 다르다. GET/PUT 모두 이 둘을 500 이 아니라 명시적으로 갈라야
+    profiles.list_handler·config.get_handler 와 같은 정직함을 유지한다.
+    """
+
+
 def revision_of(body: str) -> str:
     """본문의 지문. PUT 이 이 값을 요구해 '읽지 않으면 못 쓰게' 만든다."""
     return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
@@ -50,10 +59,34 @@ def _resolve(request, api):
     return name, api.get_profile_dir(name) / SOUL_FILENAME
 
 
+def _read(path):
+    """SOUL.md 를 읽는다. 파일이 없으면 빈 본문, 있는데 읽을 수 없으면 던진다.
+
+    `list_handler` 가 같은 실패에 쓰는 `except (OSError, UnicodeDecodeError)`
+    패턴을 그대로 따른다 — 세 모듈이 같은 사건에 다른 답을 내던 것(I-2)을 고친다.
+    """
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SoulUnreadable(f"SOUL.md 읽기 실패: {exc}") from exc
+
+
 def get_handler(api):
     async def handler(request):
         _name, path = _resolve(request, api)
-        body = path.read_text(encoding="utf-8") if path.is_file() else ""
+
+        try:
+            body = _read(path)
+        except SoulUnreadable:
+            # 500 으로 새지 않는다 — 읽기 실패를 "기본 템플릿이다"(false)로
+            # 둔갑시키지도 않는다. isDefaultTemplate/revision 을 null 로 남겨
+            # UI 가 실수로 안전한 값인 척 처리하지 않게 한다.
+            return web.json_response(
+                {"body": None, "isDefaultTemplate": None, "revision": None, "unreadable": True}
+            )
+
         return web.json_response(
             {
                 "body": body,
@@ -92,7 +125,15 @@ def put_handler(api):
         if not isinstance(new_body, str):
             raise web.HTTPBadRequest(reason="body (string) is required")
 
-        current = path.read_text(encoding="utf-8") if path.is_file() else ""
+        try:
+            current = _read(path)
+        except SoulUnreadable as exc:
+            # config.put_handler 와 같은 논리다 — 읽을 수 없는 파일 위에
+            # ifRevision 을 계산할 수 없으니, 백업-후-덮어쓰기로 원본을
+            # 영영 잃느니 여기서 거절한다.
+            return web.json_response(
+                {"error": "identity_unreadable", "reason": str(exc)}, status=409
+            )
         current_rev = revision_of(current)
 
         if payload.get("ifRevision") != current_rev:

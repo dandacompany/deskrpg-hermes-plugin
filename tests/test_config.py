@@ -214,6 +214,35 @@ async def test_빈_문자열_model은_400(aiohttp_client, fake_api):
     assert path.read_bytes() == original
 
 
+async def test_기존_model이_스칼라면_PUT은_409이고_백업_찌꺼기가_없다(aiohttp_client, fake_api):
+    # I-1: dict(data.get("model") or {}) 가 스칼라에서 ValueError 를 던져 500 이
+    # 나가고, 그 전에 백업(:163-171)이 이미 만들어져 찌꺼기가 남았었다.
+    # get_handler(:110-112) 는 이미 이 상황을 dict 로 치환해 방어하는데
+    # put_handler 만 놓쳤다 — 이제는 병합 시도 전에 409 로 거절하고, 백업은
+    # 아예 만들어지지 않는다(상태 코드뿐 아니라 백업 개수까지 고정한다).
+    path = _seed(fake_api, {"model": "gpt-5", "memory": "on"})
+    original = path.read_bytes()
+    client = await _client(aiohttp_client, fake_api)
+
+    resp = await client.put("/p/sophie/deskrpg/config", json={"model": "claude"})
+    assert resp.status == 409
+
+    assert path.read_bytes() == original
+    assert list(path.parent.glob("config.yaml.bak-*")) == []  # 백업 찌꺼기 0개
+
+
+async def test_기존_model이_리스트여도_PUT은_409이고_백업_찌꺼기가_없다(aiohttp_client, fake_api):
+    path = _seed(fake_api, {"model": ["gpt-5", "claude"]})
+    original = path.read_bytes()
+    client = await _client(aiohttp_client, fake_api)
+
+    resp = await client.put("/p/sophie/deskrpg/config", json={"provider": "openai-codex"})
+    assert resp.status == 409
+
+    assert path.read_bytes() == original
+    assert list(path.parent.glob("config.yaml.bak-*")) == []
+
+
 async def test_문자열_model과_문자열_리스트_toolsets는_여전히_200(aiohttp_client, fake_api):
     path = _seed(fake_api, {"model": {"provider": "openai-codex", "default": "a"}})
     client = await _client(aiohttp_client, fake_api)
