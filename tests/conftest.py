@@ -90,3 +90,19 @@ def fake_api(tmp_path):
         DEFAULT_SOUL_MD="You are Hermes Agent",
         is_legacy_template_soul=lambda text: False,
     )
+
+@pytest.fixture(autouse=True)
+def _isolated_user_home(tmp_path, monkeypatch):
+    """유닛 파일 탐색이 **실제 홈을 절대 보지 않게** 한다.
+
+    없으면 테스트 결과가 실행하는 사람의 머신에 달린다 — 실제로
+    `~/Library/LaunchAgents/ai.hermes.gateway-noah.plist` 가 있는 Mac 에서
+    삭제 테스트가 409 로 떨어졌다. 가드가 제대로 문 것이지만, 테스트가
+    환경에 좌우되면 회귀를 잡는 그물이 못 된다.
+    """
+    from deskrpg_plugin import safedelete
+
+    home = tmp_path / "isolated-home"
+    home.mkdir()
+    monkeypatch.setattr(safedelete, "user_home", lambda: home)
+    return home

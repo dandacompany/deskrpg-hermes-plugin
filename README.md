@@ -70,11 +70,39 @@ tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 인증 기준을 잃는다.
 
 성공하면 `{"name": ..., "removed": {"profileDir": true, "wrapperScript": <bool>}}`
-를 돌려준다. `wrapperScript` 는 삭제 시점에 wrapper 스크립트가 실제로
-있었고 지워졌으면 `true`, 애초에 없었으면 `false` 다 — 이 값을 진짜로 만들려면
-플러그인이 Hermes 의 `delete_profile` 보다 **먼저** wrapper 를 지워 결과를
-관찰해야 한다(`delete_profile` 자신도 뒤에 wrapper 정리를 시도하므로, 순서를
-반대로 하면 이 필드는 항상 `false` 로 거짓말한다).
+를 돌려준다. `wrapperScript` 는 삭제 시점에 wrapper 스크립트가 실제로 있었고
+지워졌으면 `true`, 애초에 없었으면 `false` 다.
+
+**이 라우트는 Hermes 의 `delete_profile` 을 부르지 않는다 — 그 함수는 멀티플렉스
+게이트웨이를 죽인다.** `_cleanup_gateway_service()` 가 지울 프로필의 서비스를
+정리하려고 `os.environ["HERMES_HOME"]` 을 바꾼 뒤 `get_service_name()` 을 부르는데,
+그 안의 `get_hermes_home()` 은 **컨텍스트 로컬 override → 환경변수 → 기본값** 순으로
+해소한다(`hermes_constants.py:114`). 게이트웨이 안에서는 override 가 살아 있어
+환경변수가 무시되고, 서비스 이름이 `hermes-gateway` — 지금 돌고 있는 게이트웨이
+자신 — 으로 접힌다. 실측(v0.21.0):
+
+```
+⚠ Service cleanup: Command '['systemctl','--user','stop','hermes-gateway']'
+    timed out after 10 seconds
+✓ Removed /home/dante/.hermes/profiles/probe-tmp
+Main process exited, code=exited, status=1/FAILURE
+```
+
+서빙 중이던 모든 프로필이 함께 멈췄다. `Restart=always` 가 걸려 있는데도 되살아나지
+않는다 — 명시적 `systemctl stop` 에는 재시작 정책이 적용되지 않는다. `disable` 은
+성공하므로 재부팅 생존성까지 잃는다. 유닛 파일 삭제는 그 앞의 타임아웃 예외가
+우연히 막았다.
+
+그래서 이 라우트는 **대상 프로필이 자기 유닛(`hermes-gateway-{name}.service`,
+macOS 는 `ai.hermes.gateway-{name}.plist`)을 가졌는지 먼저 확인**하고,
+
+- **가졌으면 아무것도 지우지 않고 409** `{"error": "profile_has_service", "unit": ...}`
+  — 지우면 고아 유닛이 남는다. 셸에서 `hermes profile delete {name}` 로 정리하도록 안내한다.
+- **없으면 디렉토리만 지운다.** 서비스 관리자를 아예 건드리지 않는다. DeskRPG 가 만드는
+  NPC 프로필은 거의 항상 여기 해당한다.
+
+디렉토리만 지워도 그 프로필은 다음 요청부터 사라진다 — 서빙 집합은 요청마다
+`profiles_to_serve()` 로 다시 계산되기 때문이다(실측 확인).
 
 ### PUT identity — `ifRevision` 필수
 

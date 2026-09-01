@@ -161,19 +161,25 @@ async def test_확인이_맞으면_지우고_무엇이_사라졌는지_알린다
     assert fake_api.profile_exists("noah") is False
 
 
-async def test_DELETE는_동기_삭제_중에도_이벤트_루프를_막지_않는다(aiohttp_client, fake_api):
+async def test_DELETE는_동기_삭제_중에도_이벤트_루프를_막지_않는다(aiohttp_client, fake_api, monkeypatch):
     # I-5: 실제 delete_profile 은 systemctl + rmtree 를 동기로 돈다. 핸들러가
     # 이걸 직접 부르면 그동안 다른 요청이 전혀 처리되지 않는다. asyncio.to_thread
     # 로 감쌌다면 느린 삭제가 진행 중이어도 동시 요청(/deskrpg/info)이 먼저
     # 끝나야 한다.
     fake_api.create_profile("noah")
-    original_delete = fake_api.delete_profile
+    # 느리게 만들 대상은 **핸들러가 실제로 부르는 것**이어야 한다. 예전에는
+    # fake_api.delete_profile 을 느리게 했는데, 안전 삭제로 바꾸면서 그 함수를
+    # 더 이상 부르지 않게 되자 이 테스트가 조용히 아무것도 지키지 않게 됐다
+    # (실측: to_thread 를 벗겨도 전부 통과).
+    from deskrpg_plugin import safedelete
 
-    def slow_delete(name, yes=False):
+    original_tree = safedelete.delete_profile_tree
+
+    def slow_tree(name, profile_dir, home=None):
         time.sleep(0.3)  # 스레드에서 도는지 확인할 만큼만 느리게
-        return original_delete(name, yes=yes)
+        return original_tree(name, profile_dir, home)
 
-    fake_api.delete_profile = slow_delete
+    monkeypatch.setattr(safedelete, "delete_profile_tree", slow_tree)
 
     client = await _client(aiohttp_client, fake_api)
 
@@ -212,3 +218,52 @@ async def test_wrapper가_없던_프로필은_wrapperScript가_거짓이다(aioh
     assert resp.status == 200
     payload = await resp.json()
     assert payload["removed"]["wrapperScript"] is False
+
+
+async def test_전용_서비스가_있으면_지우지_않고_409(aiohttp_client, fake_api, tmp_path, monkeypatch):
+    # Hermes 의 delete_profile 은 이 상황에서 게이트웨이 자신에게 systemctl stop 을
+    # 걸어 전체를 죽인다. 우리는 그 함수를 부르지 않고, 전용 유닛이 있으면 아예
+    # 손대지 않는다 — 지우면 고아 유닛이 남기 때문이다.
+    from deskrpg_plugin import safedelete
+
+    fake_api.create_profile("noah")
+    # 유닛이 어디 사는지는 플랫폼마다 다르다. 경로를 테스트에 하드코딩하면
+    # 한쪽 OS 에서만 무는 테스트가 된다 — 구현이 보는 그 자리에 놓는다.
+    unit_path = safedelete._candidate_unit_paths("noah", tmp_path / "home")[0]
+    unit_path.parent.mkdir(parents=True)
+    unit_path.write_text("[Unit]\n", encoding="utf-8")
+    monkeypatch.setattr(safedelete, "user_home", lambda: tmp_path / "home")
+
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.delete("/deskrpg/profiles/noah?confirm=noah")
+    body = await resp.json()
+    assert resp.status == 409
+    assert body["error"] == "profile_has_service"
+    assert body["unit"] == "hermes-gateway-noah"
+    assert "hermes profile delete noah" in body["reason"]
+    assert fake_api.profile_exists("noah")  # 아무것도 지우지 않았다
+
+
+async def test_삭제는_Hermes의_delete_profile을_부르지_않는다(aiohttp_client, fake_api, tmp_path, monkeypatch):
+    # 이 한 줄이 게이트웨이를 죽였다. 다시 호출되면 즉시 알아야 한다.
+    from deskrpg_plugin import safedelete
+
+    monkeypatch.setattr(safedelete, "user_home", lambda: tmp_path / "empty")
+    called = []
+    fake_api.delete_profile = lambda *a, **k: called.append(a)
+
+    fake_api.create_profile("noah")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.delete("/deskrpg/profiles/noah?confirm=noah")
+    assert resp.status == 200
+    assert called == [], "Hermes 의 delete_profile 을 부르면 게이트웨이가 죽는다"
+    assert not fake_api.profile_exists("noah")
+
+
+def test_유닛_이름은_프로필별로_갈리고_공용_게이트웨이와_겹치지_않는다():
+    from deskrpg_plugin import safedelete
+
+    assert safedelete.service_unit_name("noah") == "hermes-gateway-noah"
+    # 공용 게이트웨이의 유닛 이름과 절대 같아지지 않는다 — 같아지는 순간
+    # 우리가 지금 도는 게이트웨이를 지우게 된다.
+    assert safedelete.service_unit_name("noah") != safedelete.SERVICE_BASE

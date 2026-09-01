@@ -10,7 +10,7 @@ import logging
 
 from aiohttp import web
 
-from . import keyissue
+from . import keyissue, safedelete
 from .identity import SOUL_FILENAME, is_default_template
 
 logger = logging.getLogger(__name__)
@@ -121,19 +121,42 @@ def delete_handler(api):
         if not api.profile_exists(name):
             raise web.HTTPNotFound(reason=f"no such profile: {name}")
 
-        # 순서가 중요하다(I-3). 0.20.6 의 delete_profile 은 3단계에서 wrapper 를
-        # 스스로 지운다 — delete_profile *뒤에* remove_wrapper_script 를 부르면
-        # 이미 사라진 파일을 지우려는 것이라 True 였던 적이 있어도 항상 False 가
-        # 나온다. 그래서 우리가 먼저 지워 진짜 결과를 잡는다. delete_profile 은
-        # has_wrapper 체크 후 자기 몫을 수행하므로, 이미 없는 wrapper 를 다시
-        # 만나도 그냥 건너뛴다 — 순서를 바꿔도 안전하다.
+        # Hermes 의 delete_profile 을 **부르지 않는다.** 그것은 멀티플렉스
+        # 게이트웨이 안에서 자기 자신에게 `systemctl stop` 을 걸어 게이트웨이를
+        # 죽인다(실측 2026-09-01, v0.21.0 — safedelete 모듈 주석에 근인과 로그).
+        # 대신 전용 유닛 유무를 먼저 보고, 없을 때만 디렉토리를 지운다.
         #
-        # 둘 다 동기 함수다(I-5) — delete_profile 은 systemctl disable/stop
-        # (각 timeout=10) 과 재시도 있는 rmtree 를 동기로 돈다. 핸들러 안에서
-        # 직접 부르면 그동안 게이트웨이의 이벤트 루프가 멎어 다른 모든
-        # 프로필의 HTTP·Slack 응답이 함께 멈춘다 — 별도 스레드로 옮긴다.
+        # wrapper 는 우리가 직접 지운다. 그 함수는 파일 하나를 지울 뿐
+        # 서비스 관리자를 건드리지 않아 안전하다. 순서는 wrapper 가 먼저다 —
+        # 디렉토리가 사라진 뒤에는 판정할 근거가 없어질 수 있다.
+        #
+        # 둘 다 동기 파일 I/O 라 별도 스레드로 옮긴다(I-5). 핸들러 안에서 직접
+        # 부르면 그동안 게이트웨이의 이벤트 루프가 멎어 다른 모든 프로필의
+        # HTTP·Slack 응답이 함께 멈춘다.
         wrapper_removed = bool(await asyncio.to_thread(api.remove_wrapper_script, name))
-        await asyncio.to_thread(api.delete_profile, name, yes=True)
+        try:
+            await asyncio.to_thread(
+                safedelete.delete_profile_tree,
+                name,
+                api.get_profile_dir(name),
+            )
+        except safedelete.ProfileHasService as exc:
+            # 아무것도 지우지 않았다. 지웠다면 고아 유닛이 남고, Hermes 에게
+            # 맡겼다면 게이트웨이가 죽었을 것이다 — 사람에게 넘긴다.
+            logger.warning("[deskrpg] 삭제 거절 — 전용 서비스 있음: %s (%s)", name, exc.unit)
+            return web.json_response(
+                {
+                    "error": "profile_has_service",
+                    "name": name,
+                    "unit": exc.unit,
+                    "reason": (
+                        f"프로필 '{name}' 은 자기 서비스({exc.unit})를 갖고 있어 "
+                        f"여기서 지울 수 없습니다. 셸에서 정리하세요: "
+                        f"hermes profile delete {name}"
+                    ),
+                },
+                status=409,
+            )
         logger.warning("[deskrpg] 프로필 삭제: %s (wrapper=%s)", name, wrapper_removed)
         return web.json_response(
             {"name": name, "removed": {"profileDir": True, "wrapperScript": wrapper_removed}}
