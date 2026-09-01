@@ -4,12 +4,38 @@
 require_auth 로 감싸므로, 핸들러를 빠뜨릴 자리가 없다.
 """
 
+from pathlib import Path
+
 from .auth import Scope, require_auth
 from . import identity as _identity
 from . import profiles as _profiles
 from . import config as _config
 
-PLUGIN_VERSION = "0.1.0"
+
+def _read_plugin_version() -> str:
+    """`plugin.yaml` 의 version 을 정본으로 읽는다.
+
+    예전에는 이 값을 여기 문자열로 박아 뒀는데, 버전을 두 번 올리는 동안(0.2.0·0.3.0)
+    **두 번 다 여기를 놓쳐** `/deskrpg/info` 가 계속 `0.1.0` 을 보고했다. 스테이징에서
+    DeskRPG 가 그 값을 캐시하는 걸 보고서야 드러났다 — 같은 사실이 두 곳에 적혀 있으면
+    반드시 갈라진다.
+
+    yaml 파서를 쓰지 않는다. 이 플러그인은 Hermes 가 주는 것 외에 의존을 두지 않고,
+    필요한 것은 최상위 `version:` 한 줄이다. 읽지 못하면 예외를 던지지 않고
+    `"unknown"` 을 돌려준다 — 버전을 모르는 것이 라우트를 못 뜨게 할 이유는 아니다.
+    """
+    try:
+        for line in (Path(__file__).resolve().parent.parent / "plugin.yaml").read_text(
+            encoding="utf-8"
+        ).splitlines():
+            if line.startswith("version:"):
+                return line.split(":", 1)[1].strip().strip("\"'")
+    except OSError:
+        pass
+    return "unknown"
+
+
+PLUGIN_VERSION = _read_plugin_version()
 
 # (method, path, handler_name, scope)
 ROUTES = [
