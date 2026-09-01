@@ -71,6 +71,42 @@ async def test_생성하면_201(aiohttp_client, fake_api):
     assert fake_api.profile_exists("noah")
 
 
+async def test_생성_응답이_새_프로필의_키를_싣는다(aiohttp_client, fake_api):
+    # Hermes 는 빈 .env 를 씨딩할 뿐이라, 키가 없으면 갓 만든 프로필은 인증
+    # fail-closed 에 막혀 아무도 말을 걸 수 없다. 생성 시점이 이 키가 평문으로
+    # 오가는 유일한 순간이므로, 응답이 그것을 실어 나르지 못하면 사용자는
+    # 결국 셸로 돌아가야 한다 — 이 플러그인의 존재 이유가 무너진다.
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post("/deskrpg/profiles", json={"name": "noah"})
+    body = await resp.json()
+    assert resp.status == 201
+    assert body["keyIssued"] is True
+    assert len(body["apiKey"]) >= 16
+    env = (fake_api.get_profile_dir("noah") / ".env").read_text(encoding="utf-8")
+    assert f"API_SERVER_KEY={body['apiKey']}" in env
+
+
+async def test_키_발급이_실패해도_프로필이_생겼다는_사실을_숨기지_않는다(
+    aiohttp_client, fake_api, monkeypatch
+):
+    # 500 으로 덮으면 사용자는 만들어진 프로필을 모른 채 같은 이름으로 다시
+    # 시도하고 409 를 만난다 — 무엇이 잘못됐는지 알 방법이 없어진다.
+    from deskrpg_plugin import keyissue
+
+    def boom(_dir):
+        raise keyissue.KeyIssueFailed(".env 을 쓸 수 없다: PermissionError")
+
+    monkeypatch.setattr(keyissue, "issue", boom)
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post("/deskrpg/profiles", json={"name": "noah"})
+    body = await resp.json()
+    assert resp.status == 201
+    assert body["keyIssued"] is False
+    assert "PermissionError" in body["keyError"]
+    assert "apiKey" not in body
+    assert fake_api.profile_exists("noah")  # 프로필은 실제로 남아 있다
+
+
 async def test_본문이_객체가_아니면_400(aiohttp_client, fake_api):
     client = await _client(aiohttp_client, fake_api)
     resp = await client.post("/deskrpg/profiles", json=["noah"])

@@ -1,5 +1,5 @@
 name: deskrpg
-version: 0.1.0
+version: 0.2.0
 description: "DeskRPG 전용 라우트를 Hermes API Server 에 등록한다 — 프로필 목록·생성·삭제와 SOUL.md 읽기/쓰기."
 author: Dante Labs
 kind: standalone

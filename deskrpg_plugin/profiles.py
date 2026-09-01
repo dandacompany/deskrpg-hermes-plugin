@@ -10,6 +10,7 @@ import logging
 
 from aiohttp import web
 
+from . import keyissue
 from .identity import SOUL_FILENAME, is_default_template
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,21 @@ def create_handler(api):
             return web.json_response({"error": "already_exists", "name": name}, status=409)
         api.create_profile(name)
         logger.info("[deskrpg] 프로필 생성: %s", name)
-        return web.json_response({"name": name}, status=201)
+
+        # Hermes 는 빈 .env 를 씨딩할 뿐이라, 키를 발급하지 않으면 이 프로필은
+        # 아무도 말을 걸 수 없는 상태로 태어난다(keyissue 모듈 주석 참조).
+        # 키 발급이 실패해도 **프로필은 이미 존재한다** — 500 으로 덮으면
+        # 사용자는 만들어진 프로필을 모른 채 같은 이름으로 다시 시도하고 409 를
+        # 만난다. 만들어졌다는 사실(201)과 키가 없다는 사실을 함께 말한다.
+        body = {"name": name}
+        try:
+            body["apiKey"] = keyissue.issue(api.get_profile_dir(name))
+            body["keyIssued"] = True
+        except keyissue.KeyIssueFailed as exc:
+            body["keyIssued"] = False
+            body["keyError"] = exc.reason
+            logger.warning("[deskrpg] 키 발급 실패: %s — %s", name, exc.reason)
+        return web.json_response(body, status=201)
 
     return handler
 

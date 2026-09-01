@@ -55,7 +55,7 @@ tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 |---|---|---|---|
 | GET | `/deskrpg/info` | default | 플러그인 버전과 라우트 목록 (**default 키 전용** — 프로필 키로는 발견에 쓸 수 없다) |
 | GET | `/deskrpg/profiles` | default | 프로필 목록 (`hasCustomPersona` 포함) |
-| POST | `/deskrpg/profiles` | default | 프로필 생성 |
+| POST | `/deskrpg/profiles` | default | 프로필 생성 (**응답이 새 키를 한 번만 싣는다**) |
 | DELETE | `/deskrpg/profiles/{name}` | default | 프로필 삭제 (`?confirm={name}` 필수) |
 | GET | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 읽기 (읽을 수 없으면 200 + `unreadable: true`) |
 | PUT | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 쓰기 (`ifRevision` 필수 · 읽을 수 없으면 409 `identity_unreadable`) |
@@ -107,6 +107,30 @@ SOUL.md 의 revision(내용의 SHA-256 앞 16자)과 일치하지 않으면 덮�
 를 돌려주고, `PUT` 은 백업-후-덮어쓰기 대신 `409 {"error": "config_unreadable",
 "reason": "..."}` 로 거절한다(망가진 파일 위에 쓰면 "성공"을 보고하면서 원본을
 영영 잃을 수 있어서다).
+
+### 생성 응답의 `apiKey` — 한 번만 지나간다
+
+Hermes 의 `create_profile` 은 `.env` 를 **빈 파일로** 씨딩한다. 그런데 named
+프로필의 API 인증은 fail-closed 라 자기 `.env` 의 `API_SERVER_KEY` 를 요구한다.
+그래서 갓 만든 프로필은 **아무도 말을 걸 수 없는 상태**로 태어나고, 키를 넣으려면
+셸로 들어가야 한다 — DeskRPG 가 사용자를 셸에서 빼내려고 이 플러그인을 쓴다는
+점에서 그건 목적을 배반한다.
+
+그래서 `POST /deskrpg/profiles` 는 강한 키(`secrets.token_urlsafe(32)`)를 만들어
+프로필 `.env` 에 기록하고(기존 줄은 보존, 권한 0600), **201 응답 본문에 딱 한 번**
+돌려준다:
+
+```json
+{"name": "olivia", "apiKey": "...", "keyIssued": true}
+```
+
+이것이 키가 평문으로 오가는 유일한 순간이다. 클라이언트는 즉시 저장해야 하며,
+다시 조회할 방법은 없다. 서버는 이 값을 어떤 로그에도 남기지 않는다.
+
+키 발급이 실패해도 응답은 **201 이다** — 프로필은 실제로 만들어졌기 때문이다.
+그때는 `{"keyIssued": false, "keyError": "..."}` 가 오고 `apiKey` 는 없다.
+500 으로 덮으면 사용자는 만들어진 프로필을 모른 채 같은 이름으로 다시 시도해
+409 를 만나게 된다.
 
 ## 테스트
 
