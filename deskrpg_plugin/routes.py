@@ -10,6 +10,7 @@ from .auth import Scope, require_auth
 from . import identity as _identity
 from . import profiles as _profiles
 from . import config as _config
+from . import catalog as _catalog
 
 
 def _read_plugin_version() -> str:
@@ -46,6 +47,7 @@ ROUTES = [
     ("GET", "/p/{profile}/deskrpg/identity", "get_identity", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/identity", "put_identity", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/config", "get_config", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/catalog", "get_catalog", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/config", "put_config", Scope.PROFILE),
 ]
 
@@ -85,6 +87,7 @@ _HANDLERS = {
     "put_identity": lambda api: _identity.put_handler(api),
     "get_config": lambda api: _config.get_handler(api),
     "put_config": lambda api: _config.put_handler(api),
+    "get_catalog": lambda api: _catalog.get_handler(api),
 }
 
 

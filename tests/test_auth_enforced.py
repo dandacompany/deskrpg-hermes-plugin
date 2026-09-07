@@ -48,8 +48,8 @@ def test_경로_변수명이_어긋나면_검사기가_잡는다():
                 raise AssertionError(f"{method} {path} ({handler_name}) 어긋남")
 
 
-async def test_라우트_테이블이_스펙의_여덟_개다():
-    assert len(routes.ROUTES) == 8
+async def test_라우트_테이블이_스펙의_아홉_개다():
+    assert len(routes.ROUTES) == 9
     assert {(m, p) for m, p, _h, _s in routes.ROUTES} == {
         ("GET", "/deskrpg/info"),
         ("GET", "/deskrpg/profiles"),
@@ -59,4 +59,8 @@ async def test_라우트_테이블이_스펙의_여덟_개다():
         ("PUT", "/p/{profile}/deskrpg/identity"),
         ("GET", "/p/{profile}/deskrpg/config"),
         ("PUT", "/p/{profile}/deskrpg/config"),
+        # catalog 는 프로필 스코프다. 실측(2026-09-07)에서는 프로필끼리 인증 상태가
+        # 같지만(루트 auth 폴백), 프로필이 자기 자격증명을 갖는 순간 갈린다 —
+        # 그때 스코프를 좁히면 이미 쓰던 화면이 깨지므로 처음부터 좁게 둔다.
+        ("GET", "/p/{profile}/deskrpg/catalog"),
     }

@@ -60,6 +60,7 @@ tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 | GET | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 읽기 (읽을 수 없으면 200 + `unreadable: true`) |
 | PUT | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 쓰기 (`ifRevision` 필수 · 읽을 수 없으면 409 `identity_unreadable`) |
 | GET | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 읽기 (읽을 수 없으면 200 + `unreadable: true`) |
+| GET | `/p/{profile}/deskrpg/catalog` | profile | 모델·프로바이더·추론 강도 목록 |
 | PUT | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 쓰기 (읽을 수 없으면 409 `config_unreadable`) |
 
 ### DELETE — `?confirm={name}` 필수
@@ -159,6 +160,38 @@ Hermes 의 `create_profile` 은 `.env` 를 **빈 파일로** 씨딩한다. 그�
 그때는 `{"keyIssued": false, "keyError": "..."}` 가 오고 `apiKey` 는 없다.
 500 으로 덮으면 사용자는 만들어진 프로필을 모른 채 같은 이름으로 다시 시도해
 409 를 만나게 된다.
+
+### GET catalog — 목록을 우리가 만들지 않는다
+
+드롭다운에 채울 **프로바이더·모델·추론 강도**를 준다. 목록을 이 플러그인이 복제하지
+않고 Hermes 자신의 것을 그대로 옮긴다:
+
+- 프로바이더 — `hermes_cli.auth.PROVIDER_REGISTRY` (실측 79개)
+- 인증 여부 — `get_auth_status(pid)` 의 `configured` **또는** `logged_in`
+  (API 키형은 앞을, OAuth 형은 뒤를 채운다 — 한쪽만 보면 절반을 놓친다)
+- 모델 — `model_setup_flows_common._models_dev_merged(pid, curated)`
+  = models.dev 의 agentic 모델 + `model_catalog.get_catalog()` 의 큐레이션
+- 추론 강도 — `hermes_cli/models.py:73` 과 `config_defaults.py:1244` 를 합친 값.
+  Hermes 가 상수로 export 하지 않아 이 플러그인이 적어 두었다(늘어나면 갱신 필요)
+
+그래서 Hermes 가 모델을 추가하거나 models.dev 가 갱신되면(20분 TTL) **자동으로
+따라간다.** 우리가 목록을 들고 있으면 반드시 낡는다.
+
+```json
+{"providers": [{"id": "copilot", "name": "Copilot", "authenticated": true}, ...],
+ "models": {"copilot": ["claude-opus-5", ...]},
+ "reasoningEfforts": ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]}
+```
+
+**인증되지 않은 프로바이더도 목록에 남는다**(모델만 비운다). 지우면 사용자가 "왜 내가
+쓰는 모델이 없지" 를 알 수 없다 — Hermes 의 CLI 피커도 못 쓰는 것을 회색으로 보여주지
+지우지 않는다. 인증된 것이 목록 앞으로 온다(실측: 79개 중 4개).
+
+**프로필 스코프인 이유**: `_auth_file_path()` 가 `HERMES_HOME` 을 따르므로 프로필별
+인증이 가능한 구조다. 실측(2026-09-07)에서는 프로필끼리 같은 값이 나오는데, 프로필
+`auth.json` 의 `providers` 가 비어 있고 `auth.py:467` 의 루트 폴백이 채우기 때문이다.
+지금은 사실상 전역이지만, 프로필이 자기 자격증명을 갖는 순간 갈린다 — 그때 스코프를
+좁히면 이미 쓰던 화면이 깨지므로 처음부터 좁게 둔다.
 
 ## 테스트
 
