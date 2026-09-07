@@ -10,9 +10,15 @@ import time
 import yaml
 from aiohttp import web
 
+from .catalog import REASONING_EFFORTS
+
 logger = logging.getLogger(__name__)
 
-ALLOWED_KEYS = frozenset({"model", "provider", "toolsets"})
+ALLOWED_KEYS = frozenset({"model", "provider", "toolsets", "reasoning_effort"})
+
+# `reasoning_effort` 는 **config 최상위 키**다(`model` 블록 안이 아니다) —
+# `agent/auxiliary_client.py:5555` 가 `config.get("reasoning_effort")` 로 읽는다.
+# 허용값은 catalog.REASONING_EFFORTS 와 같은 출처를 쓴다.
 
 CONFIG_FILENAME = "config.yaml"
 
@@ -42,6 +48,14 @@ def _value_error(key, value):
             return f"{key} must be a string"
         if not value.strip():
             return f"{key} must not be empty"
+        return None
+    if key == "reasoning_effort":
+        # 빈 문자열은 "지정 안 함" 이라는 뜻으로 Hermes 가 다루므로 허용한다
+        # (model/provider 와 다르다 — 그 둘은 빈 값이 곧 고장이다).
+        if not isinstance(value, str):
+            return "reasoning_effort must be a string"
+        if value and value not in REASONING_EFFORTS:
+            return f"reasoning_effort must be one of: {', '.join(REASONING_EFFORTS)}"
         return None
     if key == "toolsets":
         if not isinstance(value, list):
@@ -196,6 +210,13 @@ def put_handler(api):
             data["model"] = model_block
         if "toolsets" in payload:
             data["toolsets"] = payload["toolsets"]
+        if "reasoning_effort" in payload:
+            # 최상위 키다. 빈 문자열이면 키를 지운다 — 빈 값을 남기면 Hermes 가
+            # 그것을 "지정됨" 으로 읽을지 "미지정" 으로 읽을지 확실하지 않다.
+            if payload["reasoning_effort"]:
+                data["reasoning_effort"] = payload["reasoning_effort"]
+            else:
+                data.pop("reasoning_effort", None)
 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(

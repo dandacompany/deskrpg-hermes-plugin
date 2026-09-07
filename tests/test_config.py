@@ -163,8 +163,8 @@ async def test_읽기_권한이_없는_config는_GET에서_unreadable(aiohttp_cl
         p.chmod(stat.S_IRUSR | stat.S_IWUSR)  # tmp_path 정리가 지울 수 있도록 복구
 
 
-async def test_ALLOWED_KEYS_는_문서화된_세_키다():
-    assert config.ALLOWED_KEYS == frozenset({"model", "provider", "toolsets"})
+async def test_ALLOWED_KEYS_는_문서화된_네_키다():
+    assert config.ALLOWED_KEYS == frozenset({"model", "provider", "toolsets", "reasoning_effort"})
 
 
 # 허용목록은 키만 막고 값의 타입은 열어 두면 목적이 무색해진다 — model.default 에
@@ -256,3 +256,42 @@ async def test_문자열_model과_문자열_리스트_toolsets는_여전히_200(
     assert saved["model"]["default"] == "gpt-5.6-terra"
     assert saved["model"]["provider"] == "openai-codex"
     assert saved["toolsets"] == ["fs", "web"]
+
+
+async def test_reasoning_effort_는_최상위_키로_저장된다(aiohttp_client, fake_api):
+    # model 블록 안이 아니다 — agent/auxiliary_client.py:5555 가
+    # config.get("reasoning_effort") 로 최상위에서 읽는다.
+    fake_api.create_profile("noah")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/noah/deskrpg/config", json={"reasoning_effort": "high"})
+    assert resp.status == 200
+
+    import yaml
+
+    data = yaml.safe_load((fake_api.get_profile_dir("noah") / "config.yaml").read_text())
+    assert data["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in (data.get("model") or {})
+
+
+async def test_빈_reasoning_effort_는_키를_지운다(aiohttp_client, fake_api):
+    # 빈 값을 남기면 Hermes 가 "지정됨" 으로 읽을지 "미지정" 으로 읽을지 확실하지 않다.
+    fake_api.create_profile("noah")
+    (fake_api.get_profile_dir("noah") / "config.yaml").write_text(
+        "reasoning_effort: high\nmemory: enabled\n", encoding="utf-8"
+    )
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/noah/deskrpg/config", json={"reasoning_effort": ""})
+    assert resp.status == 200
+
+    import yaml
+
+    data = yaml.safe_load((fake_api.get_profile_dir("noah") / "config.yaml").read_text())
+    assert "reasoning_effort" not in data
+    assert data["memory"] == "enabled"  # 남의 키를 건드리지 않았다
+
+
+async def test_허용되지_않은_effort_값은_거절한다(aiohttp_client, fake_api):
+    fake_api.create_profile("noah")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/noah/deskrpg/config", json={"reasoning_effort": "turbo"})
+    assert resp.status == 400
