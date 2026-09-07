@@ -118,7 +118,13 @@ def get_handler(api):
             # 값은 전부 null 로 두고 unreadable 플래그로 "비어있음"과 구분한다.
             logger.warning("[deskrpg] config 읽기 실패: %s", exc)
             return web.json_response(
-                {"model": None, "provider": None, "toolsets": None, "unreadable": True}
+                {
+                    "model": None,
+                    "provider": None,
+                    "toolsets": None,
+                    "reasoning_effort": None,
+                    "unreadable": True,
+                }
             )
 
         model_block = data.get("model") or {}
@@ -129,6 +135,8 @@ def get_handler(api):
                 "model": model_block.get("default"),
                 "provider": model_block.get("provider"),
                 "toolsets": data.get("toolsets"),
+                # 최상위 키다 — model 블록 안에서 찾지 않는다.
+                "reasoning_effort": data.get("reasoning_effort"),
             }
         )
 

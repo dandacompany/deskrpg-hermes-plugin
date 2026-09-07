@@ -295,3 +295,23 @@ async def test_허용되지_않은_effort_값은_거절한다(aiohttp_client, fa
     client = await _client(aiohttp_client, fake_api)
     resp = await client.put("/p/noah/deskrpg/config", json={"reasoning_effort": "turbo"})
     assert resp.status == 400
+
+
+async def test_GET_은_reasoning_effort_를_최상위에서_읽어_돌려준다(aiohttp_client, fake_api):
+    fake_api.create_profile("noah")
+    (fake_api.get_profile_dir("noah") / "config.yaml").write_text(
+        "reasoning_effort: xhigh\n", encoding="utf-8"
+    )
+    client = await _client(aiohttp_client, fake_api)
+    body = await (await client.get("/p/noah/deskrpg/config")).json()
+    assert body["reasoning_effort"] == "xhigh"
+
+
+async def test_GET_은_읽기_실패시에도_reasoning_effort_필드를_준다(aiohttp_client, fake_api):
+    # 화면이 필드 부재와 "값 없음" 을 구분하지 못하면 폼이 조용히 비어 버린다.
+    fake_api.create_profile("noah")
+    (fake_api.get_profile_dir("noah") / "config.yaml").write_text("[", encoding="utf-8")
+    client = await _client(aiohttp_client, fake_api)
+    body = await (await client.get("/p/noah/deskrpg/config")).json()
+    assert body["unreadable"] is True
+    assert body["reasoning_effort"] is None
