@@ -1,7 +1,6 @@
 name: deskrpg
-version: 0.5.0
-description: "DeskRPG 전용 라우트를 Hermes API Server 에 등록한다 — 프로필 목록·생성·삭제와 SOUL.md 읽기/쓰기."
+version: 0.6.0
+description: "DeskRPG 전용 라우트를 Hermes API Server 에 등록한다 — 프로필 목록·생성·삭제, SOUL.md 읽기/쓰기, 칸반·크론·사건(events) 스트림."
 author: Dante Labs
 kind: standalone
-requires:
-  hermes: ">=0.20.6"
+requires_hermes: ">=0.21.1"

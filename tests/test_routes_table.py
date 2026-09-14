@@ -18,3 +18,19 @@ def test_보고하는_버전이_plugin_yaml_과_일치한다():
     declared = re.search(r"^version:\s*(.+)$", raw, re.M).group(1).strip().strip("\"'")
     assert PLUGIN_VERSION == declared
     assert PLUGIN_VERSION != "unknown"
+
+
+def test_plugin_yaml_이_requires_hermes_를_최상위에_선언하고_버전은_0_6_0_이다():
+    """`requires: {hermes: …}` 처럼 중첩하면 Hermes 는 모르는 키로 무시한다 — 실제 필드는
+    최상위 `requires_hermes` 다(hermes_cli/plugin_validate.py). 무시되면 0.20.x 에 설치돼도
+    경고 없이 로드된 뒤 칸반 심볼이 없어 죽는다.
+    """
+    import pathlib
+
+    import yaml
+
+    raw = (pathlib.Path(__file__).resolve().parent.parent / "plugin.yaml").read_text(encoding="utf-8")
+    manifest = yaml.safe_load(raw)
+    assert manifest["version"] == "0.6.0"
+    assert manifest["requires_hermes"] == ">=0.21.1"
+    assert "requires" not in manifest
