@@ -199,3 +199,40 @@ def _isolated_user_home(tmp_path, monkeypatch):
     home.mkdir()
     monkeypatch.setattr(safedelete, "user_home", lambda: home)
     return home
+
+
+# ---------------------------------------------------------------------------
+# 통합 테스트 훅 (T6) — `HERMES_INTEGRATION_REQUIRED=1` 이면 skip 을 실패로 바꾼다.
+#
+# CI 의 integration 잡은 Hermes 를 설치한 뒤 `-m integration` 으로 돈다. 설치가 조용히 실패해 전부
+# skip 되면 잡이 초록으로 끝나는데, 그건 "통과" 가 아니라 "안 돌았다" 다(spec T3). 수집 단계의 skip
+# (`pytest.importorskip("hermes_cli")`)과 실행 단계의 skip 을 둘 다 잡는다.
+# ---------------------------------------------------------------------------
+
+import os as _os
+
+
+def _integration_required() -> bool:
+    return _os.environ.get("HERMES_INTEGRATION_REQUIRED", "").strip() in ("1", "true", "yes")
+
+
+def _fail_skipped_report(report, what: str) -> None:
+    if report.skipped and _integration_required():
+        reason = report.longrepr[2] if isinstance(report.longrepr, tuple) else str(report.longrepr)
+        report.outcome = "failed"
+        report.longrepr = (
+            f"HERMES_INTEGRATION_REQUIRED=1 인데 {what} 이(가) skip 됐다 — Hermes 가 설치되지 않았거나 "
+            f"importorskip 이 걸렸다: {reason}"
+        )
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_make_collect_report(collector):
+    outcome = yield
+    _fail_skipped_report(outcome.get_result(), f"수집 {collector.nodeid or collector.name}")
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    outcome = yield
+    _fail_skipped_report(outcome.get_result(), item.nodeid)
