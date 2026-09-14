@@ -35,20 +35,20 @@ def _only(kanban, conn, fake_api):
 
 
 def test_created_는_task_created_로_나오고_id_ts_board_task_id_를_단다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드", assignee="sophie")
+    task = kanban.make_task(conn, title="카드", assignee="sophie", triage=True)
     [ev] = _tail(fake_api, conn)
     assert ev["kind"] == "task.created"
     assert ev["id"] == f"k:{kanban.boards['default'].events[0].id}"
     assert ev["board"] == "default"
     assert ev["task_id"] == task.id
     assert ev["ts"] == kanban.boards["default"].events[0].created_at
-    assert ev["payload"]["status"] == "todo"
+    assert ev["payload"]["status"] == "triage"
     assert set(ev) <= PLUGIN_EVENT_KEYS
     assert ev["kind"] in EVENT_KINDS
 
 
 def test_commented_는_task_comment(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.emit("default", task.id, "commented", {"author": "dante", "len": 3})
     [ev] = _only(kanban, conn, fake_api)
     assert ev["kind"] == "task.comment"
@@ -57,7 +57,7 @@ def test_commented_는_task_comment(fake_api, kanban, conn):
 
 @pytest.mark.parametrize("kind", ["linked", "unlinked"])
 def test_linked_unlinked_는_task_link_에_action_을_붙인다(fake_api, kanban, conn, kind):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.emit("default", task.id, kind, {"parent_id": "t0001"})
     [ev] = _only(kanban, conn, fake_api)
     assert ev["kind"] == "task.link"
@@ -65,7 +65,7 @@ def test_linked_unlinked_는_task_link_에_action_을_붙인다(fake_api, kanban
 
 
 def test_spawned_는_task_run_started_에_run_id_를_싣고_claimed_는_무시된다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     created_id = kanban.boards["default"].events[-1].id
     kanban.emit("default", task.id, "claimed", {"profile": "sophie"}, run_id=7)
     kanban.emit("default", task.id, "spawned", {"pid": 123}, run_id=7)
@@ -80,14 +80,14 @@ def test_spawned_는_task_run_started_에_run_id_를_싣고_claimed_는_무시�
     sorted(events.IGNORED_KINDS) + ["decomposed", "totally_unknown_kind"],
 )
 def test_무시_목록과_모르는_kind_는_사건을_내지_않는다(fake_api, kanban, conn, kind):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.emit("default", task.id, kind, {"x": 1})
     assert _only(kanban, conn, fake_api) == []
 
 
 @pytest.mark.parametrize("kind", sorted(events.STATUS_KINDS))
 def test_상태_kind_는_전부_task_status_로_나온다(fake_api, kanban, conn, kind):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.emit("default", task.id, kind, None)
     [ev] = _only(kanban, conn, fake_api)
     assert ev["kind"] == "task.status"
@@ -106,7 +106,7 @@ def test_상태_kind_는_전부_task_status_로_나온다(fake_api, kanban, conn
     ],
 )
 def test_갱신_kind_는_task_updated_에_fields_를_싣는다(fake_api, kanban, conn, kind, payload, expected_fields):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.emit("default", task.id, kind, payload)
     [ev] = _only(kanban, conn, fake_api)
     assert ev["kind"] == "task.updated"
@@ -119,24 +119,24 @@ def test_갱신_kind_는_task_updated_에_fields_를_싣는다(fake_api, kanban,
 
 
 def test_to_는_payload_의_status_가_우선이다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드", triage=True)
     kanban.set_status("default", task.id, "running")  # 현재 상태는 다르게 둔다
     kanban.emit("default", task.id, "status", {"status": "review"})
     [ev] = _only(kanban, conn, fake_api)
     assert ev["payload"]["to"] == "review"
-    assert ev["payload"]["from"] == "todo"  # created 의 status
+    assert ev["payload"]["from"] == "triage"  # created 의 status
 
 
 def test_payload_없는_promoted_는_ready_로_보고_현재_상태에_의존하지_않는다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드", triage=True)
     kanban.emit("default", task.id, "promoted", None)
     kanban.set_status("default", task.id, "done")  # 그 뒤에 또 바뀌었다
     [ev] = _only(kanban, conn, fake_api)
-    assert ev["payload"] == {"from": "todo", "to": "ready", "parent_count": 0, "title": "카드", "assignee": None}
+    assert ev["payload"] == {"from": "triage", "to": "ready", "parent_count": 0, "title": "카드", "assignee": None}
 
 
 def test_기본표에_없는_kind_는_현재_tasks_status_를_to_로_쓴다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.set_status("default", task.id, "review")
     kanban.emit("default", task.id, "specified", {"changed_fields": ["body"]})
     [ev] = _only(kanban, conn, fake_api)
@@ -144,18 +144,18 @@ def test_기본표에_없는_kind_는_현재_tasks_status_를_to_로_쓴다(fake
 
 
 def test_from_은_같은_task_의_더_작은_id_상태_사건의_to_이다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
-    other = kanban.create_task(conn, title="다른 카드")
+    task = kanban.make_task(conn, title="카드", triage=True)
+    other = kanban.make_task(conn, title="다른 카드")
     kanban.emit("default", task.id, "status", {"status": "ready"})
     kanban.emit("default", other.id, "status", {"status": "blocked"})  # 다른 카드는 섞이지 않는다
     kanban.emit("default", task.id, "status", {"status": "running"})
     evs = _tail(fake_api, conn)
     mine = [e for e in evs if e["task_id"] == task.id and e["kind"] == "task.status"]
-    assert [(e["payload"]["from"], e["payload"]["to"]) for e in mine] == [("todo", "ready"), ("ready", "running")]
+    assert [(e["payload"]["from"], e["payload"]["to"]) for e in mine] == [("triage", "ready"), ("ready", "running")]
 
 
 def test_from_은_created_가_없으면_null(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.boards["default"].events.clear()  # 오래된 이력이 잘린 카드
     kanban.emit("default", task.id, "status", {"status": "ready"})
     [ev] = _tail(fake_api, conn)
@@ -163,16 +163,16 @@ def test_from_은_created_가_없으면_null(fake_api, kanban, conn):
 
 
 def test_parent_count_는_task_links_로_센다(fake_api, kanban, conn):
-    p1 = kanban.create_task(conn, title="부모1")
-    p2 = kanban.create_task(conn, title="부모2")
-    child = kanban.create_task(conn, title="자식", parents=[p1.id, p2.id])
+    p1 = kanban.make_task(conn, title="부모1")
+    p2 = kanban.make_task(conn, title="부모2")
+    child = kanban.make_task(conn, title="자식", parents=[p1.id, p2.id])
     kanban.emit("default", child.id, "status", {"status": "ready"})
     [ev] = _only(kanban, conn, fake_api)
     assert ev["payload"]["parent_count"] == 2
 
 
 def test_카드가_이미_지워졌으면_to_는_null_parent_count_는_0(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.emit("default", task.id, "specified", None)
     kanban.boards["default"].tasks.pop(task.id)  # 카드만 없고 사건은 남은 경계 상황
     [ev] = _only(kanban, conn, fake_api)
@@ -182,7 +182,7 @@ def test_카드가_이미_지워졌으면_to_는_null_parent_count_는_0(fake_ap
 
 
 def test_title_assignee_는_현재_카드에서_읽는다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="원래 제목", assignee="sophie")
+    task = kanban.make_task(conn, title="원래 제목", assignee="sophie")
     kanban.boards["default"].tasks[task.id].title = "바뀐 제목"
     kanban.emit("default", task.id, "status", {"status": "ready"})
     [ev] = _only(kanban, conn, fake_api)
@@ -196,7 +196,7 @@ def test_title_assignee_는_현재_카드에서_읽는다(fake_api, kanban, conn
 
 
 def test_completed_는_run_finished_와_status_변화_한_건을_같이_낸다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.emit("default", task.id, "status", {"status": "running"})
     kanban.set_status("default", task.id, "done")
     row = kanban.emit("default", task.id, "completed", {"summary": "끝"}, run_id=3)
@@ -212,7 +212,7 @@ def test_completed_는_run_finished_와_status_변화_한_건을_같이_낸다(f
 
 @pytest.mark.parametrize("kind", ["reclaimed", "gave_up", "timed_out", "crashed", "stale"])
 def test_상태가_그대로면_run_finished_만_낸다(fake_api, kanban, conn, kind):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.emit("default", task.id, "status", {"status": "ready"})
     kanban.set_status("default", task.id, "ready")  # 되돌아온 상태가 직전과 같다
     kanban.emit("default", task.id, kind, {"reason": "x"}, run_id=9)
@@ -222,7 +222,7 @@ def test_상태가_그대로면_run_finished_만_낸다(fake_api, kanban, conn, 
 
 
 def test_run_finished_의_status_가_payload_에_있으면_그것을_to_로_쓴다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.emit("default", task.id, "timed_out", {"status": "blocked", "retry_status": "blocked"})
     evs = _only(kanban, conn, fake_api)
     assert [e["kind"] for e in evs] == ["task.run.finished", "task.status"]
@@ -230,7 +230,7 @@ def test_run_finished_의_status_가_payload_에_있으면_그것을_to_로_쓴�
 
 
 def test_run_finished_뒤의_상태_사건은_그_전이를_from_으로_본다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.set_status("default", task.id, "done")
     kanban.emit("default", task.id, "completed", None)
     kanban.emit("default", task.id, "archived", None)
@@ -239,7 +239,7 @@ def test_run_finished_뒤의_상태_사건은_그_전이를_from_으로_본다(f
 
 
 def test_카드가_지워졌으면_run_finished_만_내고_status_는_내지_않는다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     kanban.emit("default", task.id, "crashed", None)
     kanban.boards["default"].tasks.pop(task.id)
     evs = _only(kanban, conn, fake_api)
@@ -252,7 +252,7 @@ def test_카드가_지워졌으면_run_finished_만_내고_status_는_내지_않
 
 
 def test_tail_은_since_id_초과만_id_순으로_limit_행까지_읽는다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     for i in range(5):
         kanban.emit("default", task.id, "commented", {"i": i})
     first = kanban.boards["default"].events[0].id
@@ -262,7 +262,7 @@ def test_tail_은_since_id_초과만_id_순으로_limit_행까지_읽는다(fake
 
 
 def test_깨진_payload_는_빈_dict_로_본다(fake_api, kanban, conn):
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     ev = kanban.emit("default", task.id, "commented", None)
     ev.payload = None
     # JSON 이 아닌 문자열이 들어 있는 행을 흉내 낸다 — 가짜 연결이 dumps 하므로 문자열 payload 는 "\"...\"" 이 된다.

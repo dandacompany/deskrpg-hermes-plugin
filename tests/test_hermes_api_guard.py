@@ -69,6 +69,12 @@ def test_새_모듈이_아예_없으면_던진다(monkeypatch):
 
 
 def test_hermes_가_아예_없으면_던진다(monkeypatch):
+    # 실제 Hermes 가 설치된 venv 에서(통합 테스트가 같은 프로세스에서 먼저 돌았을 때) `hermes_cli.profiles`
+    # 가 이미 sys.modules 에 캐시돼 있으면 부모를 None 으로 둬도 `import_module` 이 캐시를 그대로 돌려준다.
+    # 캐시를 걷어내야 "Hermes 없음" 이 진짜로 재현된다 — 가짜 venv 에서는 걷어낼 것이 없어 같은 결과다.
+    for key in list(sys.modules):
+        if key == "hermes_cli" or key.startswith("hermes_cli."):
+            monkeypatch.delitem(sys.modules, key)
     monkeypatch.setitem(sys.modules, "hermes_cli", None)
     with pytest.raises(_hermes_api.MissingHermesApi):
         _hermes_api.load()

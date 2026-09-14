@@ -164,7 +164,7 @@ def _iso(epoch: float) -> str:
 async def test_작은_limit_으로_여러_번_불러도_모든_사건이_정확히_한_번_시간순으로_나온다(aiohttp_client, fake_api, kanban, store):
     base = int(time.time()) - 1000
     conn = kanban.connect(board="default")
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     created = kanban.boards["default"].events[0]
     created.created_at = base + 1
     running = kanban.emit("default", task.id, "status", {"status": "running"}, ts=base + 3)
@@ -220,7 +220,7 @@ async def test_작은_limit_으로_여러_번_불러도_모든_사건이_정확�
 async def test_잘린_사건은_다음_호출에_다시_나온다(aiohttp_client, fake_api, kanban, store):
     base = int(time.time()) - 100
     conn = kanban.connect(board="default")
-    task = kanban.create_task(conn, title="카드")
+    task = kanban.make_task(conn, title="카드")
     created = kanban.boards["default"].events[0]
     created.created_at = base + 1
     c1 = kanban.emit("default", task.id, "commented", {"i": 1}, ts=base + 2)

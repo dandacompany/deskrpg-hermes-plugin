@@ -27,6 +27,7 @@ from aiohttp import web
 
 from . import cron as _cron
 from . import cron_results
+from . import deleted_log
 from .common import RequestError, board_conn, log_event, parse_board_slug, run_blocking
 
 logger = logging.getLogger("deskrpg_plugin")
@@ -36,7 +37,7 @@ CURSOR_PREFIX = CURSOR_VERSION + "."
 LIMIT_DEFAULT = 200
 LIMIT_MAX = 500
 
-DELETED_LOG_FILENAME = "deskrpg_deleted.jsonl"
+DELETED_LOG_FILENAME = deleted_log.FILENAME
 
 # 병합 tie-break 의 출처 순서(E5): k < d < c.
 _SOURCE_RANK = {"k": 0, "d": 1, "c": 2}
@@ -286,42 +287,16 @@ def max_event_id(conn) -> int:
 
 
 def deleted_log_path(api, slug) -> Path:
-    """`board_dir(slug)/deskrpg_deleted.jsonl` — default 보드도 `board_dir("default")` 아래다."""
-    return Path(api.board_dir(slug)) / DELETED_LOG_FILENAME
+    return Path(deleted_log.log_path(api, slug))
 
 
 def read_deleted_since(api, slug, after_n) -> list:
-    """삭제 기록의 `n > after_n` 줄. 각 줄은 `{"n", "task_id", "title", "ts"}` JSON 이다.
+    """삭제 기록의 `n > after_n` 줄 — `deleted_log.read_deleted_since` 그대로다(파일 형식·줄 번호 규칙의 정본은 거기).
 
-    파일은 append 전용이고 회전하지 않으므로 줄 번호가 커서다. `n` 이 없는 줄은 1-기반 줄 번호로
-    본다. 깨진 줄은 건너뛴다 — 한 줄 때문에 스트림 전체를 막지 않는다.
+    예전엔 여기 따로 읽기 코드가 있었는데, 쓰는 쪽(`kanban_board.delete_task_handler` → `deleted_log`)과
+    읽는 쪽이 갈라지면 줄 번호 해석이 어긋나 커서가 엉뚱한 곳을 가리킨다. 한 모듈만 파일을 안다.
     """
-    path = deleted_log_path(api, slug)
-    if not path.is_file():
-        return []
-    out = []
-    try:
-        with path.open("r", encoding="utf-8") as fh:
-            for line_no, line in enumerate(fh, start=1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(record, dict):
-                    continue
-                n = record.get("n")
-                if not _is_int(n):
-                    n = line_no
-                if n <= int(after_n):
-                    continue
-                out.append({**record, "n": n})
-    except OSError as exc:
-        logger.warning("[deskrpg] 삭제 기록 읽기 실패 board=%s: %s", slug, exc)
-        return []
-    return out
+    return deleted_log.read_deleted_since(api, slug, int(after_n))
 
 
 def deleted_tail(api, slug, after_n) -> list:

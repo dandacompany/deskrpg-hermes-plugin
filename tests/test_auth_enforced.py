@@ -1,3 +1,5 @@
+import re
+
 import pytest
 from aiohttp import web
 
@@ -11,10 +13,21 @@ def _app(adapter, fake_api):
     return app
 
 
-@pytest.mark.parametrize("method,path", [
-    (m, p.replace("{profile}", "sophie").replace("{name}", "sophie"))
-    for m, p, _handler, _scope in routes.ROUTES
-])
+# 경로 변수 → 실제 요청에 넣을 값. 0.6.0 에서 변수가 늘었으므로 이름별 치환이 아니라 표로 둔다 —
+# 새 변수를 더하고 여기 빠뜨리면 `{…}` 가 그대로 URL 에 실려 404 로 떨어지고, 아래 단정이 잡는다.
+_PATH_VALUES = {
+    "profile": "sophie", "name": "sophie", "slug": "deskrpg-abc", "task_id": "t0001", "id": "t0001",
+    "action": "approve",
+}
+
+
+def _concrete(path: str) -> str:
+    out = re.sub(r"\{(\w+)\}", lambda m: _PATH_VALUES[m.group(1)], path)
+    assert "{" not in out, f"치환되지 않은 경로 변수: {path}"
+    return out
+
+
+@pytest.mark.parametrize("method,path", [(m, _concrete(p)) for m, p, _handler, _scope in routes.ROUTES])
 async def test_모든_라우트가_무인증을_거절한다(aiohttp_client, fake_api, method, path):
     # 인증이 미들웨어가 아니라 핸들러마다 호출이라, 한 곳만 빠뜨려도 무인증
     # 프로필 CRUD 가 열린다. 라우트를 새로 더하고 감싸지 않으면 이 테스트가 잡는다.
@@ -22,6 +35,20 @@ async def test_모든_라우트가_무인증을_거절한다(aiohttp_client, fak
     client = await aiohttp_client(_app(adapter, fake_api))
     resp = await client.request(method, path, json={})
     assert resp.status == 401, f"{method} {path} 가 무인증을 통과했다"
+    # 404(라우트 없음)가 아니라 어댑터가 실제로 불렸다 — 감싸지 않은 채 등록된 라우트는 없다.
+    assert adapter.checked == [path]
+
+
+def test_모든_등록_핸들러가_require_auth_로_감싸여_스코프_표식을_단다(fake_api):
+    # `attach` 가 아닌 다른 경로로 add_route 를 부르면 `__deskrpg_scope__` 가 없다. 등록된 라우트
+    # 전부를 실제 라우터에서 되읽어 표의 스코프와 하나씩 대조한다.
+    app = _app(FakeAdapter(authorized=True), fake_api)
+    seen = {}
+    for resource in app.router.resources():
+        for route in resource:
+            seen[(route.method, resource.canonical)] = getattr(route.handler, "__deskrpg_scope__", None)
+    expected = {(m, p): scope for m, p, _h, scope in routes.ROUTES}
+    assert seen == expected
 
 
 def test_인증_스코프가_경로_변수_profile_에_정확히_걸려있다():
@@ -46,21 +73,3 @@ def test_경로_변수명이_어긋나면_검사기가_잡는다():
         for method, path, handler_name, scope in broken:
             if scope is routes.Scope.PROFILE and routes.PROFILE_PATH_VAR not in path:
                 raise AssertionError(f"{method} {path} ({handler_name}) 어긋남")
-
-
-async def test_라우트_테이블이_스펙의_아홉_개다():
-    assert len(routes.ROUTES) == 9
-    assert {(m, p) for m, p, _h, _s in routes.ROUTES} == {
-        ("GET", "/deskrpg/info"),
-        ("GET", "/deskrpg/profiles"),
-        ("POST", "/deskrpg/profiles"),
-        ("DELETE", "/deskrpg/profiles/{name}"),
-        ("GET", "/p/{profile}/deskrpg/identity"),
-        ("PUT", "/p/{profile}/deskrpg/identity"),
-        ("GET", "/p/{profile}/deskrpg/config"),
-        ("PUT", "/p/{profile}/deskrpg/config"),
-        # catalog 는 프로필 스코프다. 실측(2026-09-07)에서는 프로필끼리 인증 상태가
-        # 같지만(루트 auth 폴백), 프로필이 자기 자격증명을 갖는 순간 갈린다 —
-        # 그때 스코프를 좁히면 이미 쓰던 화면이 깨지므로 처음부터 좁게 둔다.
-        ("GET", "/p/{profile}/deskrpg/catalog"),
-    }

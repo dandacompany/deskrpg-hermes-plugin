@@ -11,6 +11,12 @@ from . import identity as _identity
 from . import profiles as _profiles
 from . import config as _config
 from . import catalog as _catalog
+from . import kanban_board as _kanban_board
+from . import kanban_actions as _kanban_actions
+from . import kanban_files as _kanban_files
+from . import kanban_ops as _kanban_ops
+from . import cron as _cron
+from . import events as _events
 
 
 def _read_plugin_version() -> str:
@@ -49,6 +55,48 @@ ROUTES = [
     ("GET", "/p/{profile}/deskrpg/config", "get_config", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/catalog", "get_catalog", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/config", "put_config", Scope.PROFILE),
+    # ---- 0.6.0 칸반 (소유자 키, spec §5) ------------------------------------------------
+    # 칸반은 프로필과 무관한 호스트 공유 저장소(HERMES_KANBAN_HOME)라 전부 소유자 키다(C7).
+    ("GET", "/deskrpg/kanban/boards", "kanban_list_boards", Scope.DEFAULT),
+    ("POST", "/deskrpg/kanban/boards", "kanban_create_board", Scope.DEFAULT),
+    ("PATCH", "/deskrpg/kanban/boards/{slug}", "kanban_patch_board", Scope.DEFAULT),
+    ("GET", "/deskrpg/kanban/board", "kanban_get_board", Scope.DEFAULT),
+    ("POST", "/deskrpg/kanban/tasks", "kanban_create_task", Scope.DEFAULT),
+    ("GET", "/deskrpg/kanban/tasks/{task_id}", "kanban_get_task", Scope.DEFAULT),
+    ("PATCH", "/deskrpg/kanban/tasks/{task_id}", "kanban_patch_task", Scope.DEFAULT),
+    ("DELETE", "/deskrpg/kanban/tasks/{task_id}", "kanban_delete_task", Scope.DEFAULT),
+    # `/tasks/{id}/<고정 세그먼트>` 는 아래 `{action}` 와일드카드보다 **앞에** 둔다 — aiohttp 는 같은
+    # 프리픽스 안에서 등록 순서대로 첫 매치를 고르므로, 뒤에 두면 comments/attachments POST 가
+    # 동작 디스패처로 흘러 404 가 난다.
+    ("POST", "/deskrpg/kanban/tasks/{task_id}/comments", "kanban_add_comment", Scope.DEFAULT),
+    ("GET", "/deskrpg/kanban/tasks/{id}/attachments", "kanban_list_attachments", Scope.DEFAULT),
+    ("POST", "/deskrpg/kanban/tasks/{id}/attachments", "kanban_upload_attachment", Scope.DEFAULT),
+    ("GET", "/deskrpg/kanban/tasks/{id}/log", "kanban_worker_log", Scope.DEFAULT),
+    ("POST", "/deskrpg/kanban/tasks/{id}/{action}", "kanban_task_action", Scope.DEFAULT),
+    ("GET", "/deskrpg/kanban/attachments/{id}", "kanban_download_attachment", Scope.DEFAULT),
+    ("DELETE", "/deskrpg/kanban/attachments/{id}", "kanban_delete_attachment", Scope.DEFAULT),
+    ("POST", "/deskrpg/kanban/links", "kanban_add_link", Scope.DEFAULT),
+    ("DELETE", "/deskrpg/kanban/links", "kanban_remove_link", Scope.DEFAULT),
+    ("POST", "/deskrpg/kanban/dispatch", "kanban_dispatch", Scope.DEFAULT),
+    ("GET", "/deskrpg/kanban/orchestration", "kanban_get_orchestration", Scope.DEFAULT),
+    ("PUT", "/deskrpg/kanban/orchestration", "kanban_put_orchestration", Scope.DEFAULT),
+    ("GET", "/deskrpg/kanban/profiles", "kanban_profiles", Scope.DEFAULT),
+    # ---- 0.6.0 사건 (소유자 키, spec §6) ------------------------------------------------
+    ("GET", "/deskrpg/events", "events", Scope.DEFAULT),
+    # ---- 0.6.0 크론 (프로필 키, spec §7) ------------------------------------------------
+    # 프로필 프리픽스 미러는 Hermes 가 자기 라우트에만 만들어 주므로 여기 직접 적는다(C1).
+    ("GET", "/p/{profile}/deskrpg/cron/jobs", "cron_list_jobs", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/cron/jobs", "cron_create_job", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/cron/jobs/{id}", "cron_get_job", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/cron/jobs/{id}", "cron_update_job", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/cron/jobs/{id}", "cron_delete_job", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/cron/jobs/{id}/runs", "cron_list_runs", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/cron/jobs/{id}/pause", "cron_pause", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/cron/jobs/{id}/resume", "cron_resume", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/cron/jobs/{id}/run", "cron_run", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/cron/delivery-targets", "cron_delivery_targets", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/cron/blueprints", "cron_blueprints", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/cron/blueprints/instantiate", "cron_instantiate_blueprint", Scope.PROFILE),
 ]
 
 # Hermes 의 프로필 프리픽스 미들웨어는 `request.match_info.get("profile")` 로
@@ -88,7 +136,76 @@ _HANDLERS = {
     "get_config": lambda api: _config.get_handler(api),
     "put_config": lambda api: _config.put_handler(api),
     "get_catalog": lambda api: _catalog.get_handler(api),
+    # 칸반
+    "kanban_list_boards": lambda api: _kanban_board.list_boards_handler(api),
+    "kanban_create_board": lambda api: _kanban_board.create_board_handler(api),
+    "kanban_patch_board": lambda api: _kanban_board.patch_board_handler(api),
+    "kanban_get_board": lambda api: _kanban_board.get_board_handler(api),
+    "kanban_create_task": lambda api: _kanban_board.create_task_handler(api),
+    "kanban_get_task": lambda api: _kanban_board.get_task_handler(api),
+    "kanban_patch_task": lambda api: _kanban_board.patch_task_handler(api),
+    "kanban_delete_task": lambda api: _kanban_board.delete_task_handler(api),
+    "kanban_add_comment": lambda api: _kanban_board.add_comment_handler(api),
+    "kanban_list_attachments": lambda api: _kanban_files.list_attachments_handler(api),
+    "kanban_upload_attachment": lambda api: _kanban_files.upload_attachment_handler(api),
+    "kanban_worker_log": lambda api: _kanban_files.worker_log_handler(api),
+    "kanban_task_action": lambda api: _make_task_action(api),
+    "kanban_download_attachment": lambda api: _kanban_files.download_attachment_handler(api),
+    "kanban_delete_attachment": lambda api: _kanban_files.delete_attachment_handler(api),
+    "kanban_add_link": lambda api: _kanban_board.link_handler(api, "add"),
+    "kanban_remove_link": lambda api: _kanban_board.link_handler(api, "remove"),
+    "kanban_dispatch": lambda api: _kanban_ops.dispatch_handler(api),
+    "kanban_get_orchestration": lambda api: _kanban_ops.get_orchestration_handler(api),
+    "kanban_put_orchestration": lambda api: _kanban_ops.put_orchestration_handler(api),
+    "kanban_profiles": lambda api: _kanban_ops.profiles_handler(api),
+    # 사건
+    "events": lambda api: _events.events_handler(api),
+    # 크론
+    "cron_list_jobs": lambda api: _cron.list_jobs_handler(api),
+    "cron_create_job": lambda api: _cron.create_job_handler(api),
+    "cron_get_job": lambda api: _cron.get_job_handler(api),
+    "cron_update_job": lambda api: _cron.update_job_handler(api),
+    "cron_delete_job": lambda api: _cron.delete_job_handler(api),
+    "cron_list_runs": lambda api: _cron.list_runs_handler(api),
+    "cron_pause": lambda api: _cron.pause_handler(api),
+    "cron_resume": lambda api: _cron.resume_handler(api),
+    "cron_run": lambda api: _cron.run_handler(api),
+    "cron_delivery_targets": lambda api: _cron.delivery_targets_handler(api),
+    "cron_blueprints": lambda api: _cron.blueprints_handler(api),
+    "cron_instantiate_blueprint": lambda api: _cron.instantiate_blueprint_handler(api),
 }
+
+
+def _assert_every_route_has_a_handler():
+    # 테이블 행과 팩토리 매핑이 어긋나면 attach 가 첫 요청이 아니라 게이트웨이 기동에서 KeyError 로 죽는다.
+    # 그래도 import 시점이 더 이르다 — 테스트 수집만으로 걸린다.
+    missing = [name for _m, _p, name, _s in ROUTES if name not in _HANDLERS]
+    if missing:
+        raise AssertionError(f"ROUTES 에 있지만 _HANDLERS 에 없는 핸들러: {missing}")
+
+
+_assert_every_route_has_a_handler()
+
+
+def _make_task_action(api):
+    """`POST /deskrpg/kanban/tasks/{id}/{action}` — 동작 이름으로 `kanban_actions.action_handler` 에 배분한다.
+
+    10개 동작을 행 10개로 적는 대신 와일드카드 한 행으로 둔다. 모르는 이름은 404 — 오타 난 동작이
+    405 나 다른 카드 라우트로 흘러가지 않게 여기서 끊는다. 핸들러들은 구성 시점에 한 번만 만든다.
+    """
+    from .common import json_error
+    from .contract_fields import KANBAN_TASK_ACTIONS
+
+    handlers = {name: _kanban_actions.action_handler(api, name) for name in KANBAN_TASK_ACTIONS}
+
+    async def handler(request):
+        action = request.match_info["action"]
+        target = handlers.get(action)
+        if target is None:
+            return json_error(404, "unknown_action", action)
+        return await target(request)
+
+    return handler
 
 
 def _info_timezone(api):

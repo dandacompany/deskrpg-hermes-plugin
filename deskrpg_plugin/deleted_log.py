@@ -22,8 +22,12 @@ FILENAME = "deskrpg_deleted.jsonl"
 _lock = threading.Lock()
 
 
-def _path(api, slug: str):
+def log_path(api, slug: str):
+    """`board_dir(slug)/deskrpg_deleted.jsonl` — default 보드도 `board_dir("default")` 아래다."""
     return api.board_dir(slug) / FILENAME
+
+
+_path = log_path
 
 
 def _read_lines(path) -> list[str]:

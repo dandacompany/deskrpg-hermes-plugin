@@ -1,21 +1,41 @@
 # deskrpg-hermes-plugin
 
 DeskRPG 전용 라우트를 Hermes API Server 에 등록하는 Hermes 플러그인이다.
-프로필 목록·생성·삭제, SOUL.md(인격) 읽기/쓰기, 프로필 설정(model/provider/toolsets)
-읽기/쓰기 — 여덟 개 라우트를 제공한다.
+프로필 목록·생성·삭제, SOUL.md(인격) 읽기/쓰기, 프로필 설정 읽기/쓰기에 더해
+**0.6.0 부터 칸반(보드·카드·동작·첨부·디스패치)·통합 사건 스트림·크론(프로필별 잡)** 을
+제공한다 — 마흔세 개 라우트다. DeskRPG 가 Hermes 관리 화면(대시보드) 없이 자기 화면에서
+칸반과 크론을 보고 조작하도록, DeskRPG 설계 문서 부록 A 의 HTTP 계약을 그대로 낸다.
 
 ## 요구사항
 
-- Hermes `>=0.20.6`
-- 런타임 의존은 `aiohttp` 와 `PyYAML` 뿐이다.
+- Hermes `>=0.21.1` (`plugin.yaml` 의 최상위 `requires_hermes`). 스테이징은 0.21.2(커밋 `3f86ed75`)로 검증했다.
+  0.21.0 이하에는 칸반 보드(`kanban_db_connect`)·크론 실행 장부(`cron.executions`) 심볼이 없어 **플러그인 전체가
+  로드를 포기한다** — 프로필만 되고 칸반만 500 을 내는 반쯤 뜬 상태는 만들지 않는다(`deskrpg_plugin/_hermes_api.py`).
+- 런타임 의존은 Hermes 가 이미 가진 `aiohttp` 와 `PyYAML` 뿐이다. 새 의존을 두지 않는다.
 
-## 설치
+## 설치 · 업데이트 · 확인
 
 ```bash
+# 처음 설치
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin
 hermes plugins enable deskrpg
 systemctl --user restart hermes-gateway   # 또는 게이트웨이를 다시 시작하는 방법
+
+# 업데이트 (이미 설치된 경우)
+hermes plugins update deskrpg
+systemctl --user restart hermes-gateway   # 라우트는 게이트웨이 기동 시에만 붙는다 — 재시작 없이는 옛 버전이 돈다
 ```
+
+설치·업데이트 뒤 **버전과 capability 를 게이트웨이에서 직접 확인**한다(default 키):
+
+```bash
+curl -s -H "Authorization: Bearer $API_SERVER_KEY" http://127.0.0.1:8642/deskrpg/info | jq '{version, capabilities, kanban}'
+# {"version":"0.6.0","capabilities":["kanban","cron","events"],
+#  "kanban":{"dispatcher_present":true,"attachments":true,"attachment_max_bytes":10000000}}
+```
+
+`version` 이 낮으면 재시작을 빠뜨린 것이고, `capabilities` 가 셋이 아니면 이 버전이 아니다(부분 로드는 없다 —
+심볼이 하나라도 없으면 `hermes plugins doctor deskrpg` 가 `MissingHermesApi` 로 실패한다).
 
 **`hermes plugins enable` 을 빠뜨리지 말 것.** `hermes plugins doctor deskrpg`
 가 통과해도 런타임에 라우트가 붙는다는 뜻이 아니다 — doctor 는 플러그인
@@ -33,16 +53,19 @@ hermes plugins doctor deskrpg
 나오면 된다. `registrations: 0 tool(s), 0 hook(s)` 는 정상이다 — 이 플러그인은
 tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 
-## ⚠️ 경고 — 프로필 목록·생성·삭제는 게이트웨이 전체 권한이다
+## ⚠️ 경고 — 프로필 CRUD·칸반·사건 스트림은 게이트웨이 전체 권한이다
 
-`GET/POST /deskrpg/profiles` 와 `DELETE /deskrpg/profiles/{name}` 은
-**프리픽스 없는 경로**다. Hermes 의 API Server 는 프리픽스 없는 경로를
-**default(리스너 소유자) 키**로 인증한다 — 특정 프로필의 키가 아니다.
+`GET/POST /deskrpg/profiles`·`DELETE /deskrpg/profiles/{name}`, 그리고 0.6.0 의
+**`/deskrpg/kanban/*` 전부와 `/deskrpg/events`** 는 **프리픽스 없는 경로**다. Hermes 의
+API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키**로 인증한다 — 특정
+프로필의 키가 아니다.
 
-즉 이 세 라우트를 호출할 수 있는 클라이언트는 게이트웨이에 등록된 **모든**
-프로필을 만들고 지울 수 있다. `API_SERVER_KEY`(default 키)를 스코프가 좁은
-클라이언트나 외부로 노출하지 말 것. 프로필 하나의 인격/설정만 다루는 나머지
-다섯 라우트는 `/p/{profile}/...` 프리픽스가 있어 그 프로필의 키로만
+즉 이 라우트들을 호출할 수 있는 클라이언트는 게이트웨이에 등록된 **모든** 프로필을 만들고
+지울 수 있고, **호스트의 모든 칸반 보드**(칸반은 프로필과 무관한 공유 저장소 `HERMES_KANBAN_HOME` 이다)의
+카드를 만들고·지우고·워커를 종료(`terminate` 는 실제 SIGTERM→SIGKILL)하며, 사건 스트림으로
+**모든 프로필의 크론 실행 결과 본문**(`cron.run.finished.payload.result_text`)을 읽을 수 있다.
+`API_SERVER_KEY`(default 키)를 스코프가 좁은 클라이언트나 외부로 노출하지 말 것.
+프로필 하나의 인격/설정/크론만 다루는 `/p/{profile}/...` 라우트는 그 프로필의 키로만
 인증된다 — **단, 이는 `gateway.multiplex_profiles` 가 켜진 게이트웨이에서만
 참이다.** 이 옵션이 꺼진 게이트웨이(단일 프로필 구성이 많다)에서는 자기
 프로필을 가리키는 `/p/{profile}/...` 프리픽스가 `None` 으로 해소되어, 그
@@ -51,9 +74,15 @@ tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 
 ## 라우트
 
+스코프 `default` = 프리픽스 없음, 리스너 소유자 키. `profile` = `/p/{profile}/...`, 그 프로필의 키
+(위 경고의 멀티플렉스 단서 포함). 모든 행은 `deskrpg_plugin/routes.py` 의 테이블 한 곳에 있고 예외 없이
+`require_auth` 로 감싸인다 — `tests/test_routes_table.py` 가 이 표와 같은 43 행을 손으로 적어 대조한다.
+
+### 플러그인·프로필 (0.5.0 까지의 아홉 개)
+
 | Method | Path | Scope | 설명 |
 |---|---|---|---|
-| GET | `/deskrpg/info` | default | 플러그인 버전과 라우트 목록 (**default 키 전용** — 프로필 키로는 발견에 쓸 수 없다) |
+| GET | `/deskrpg/info` | default | 버전·라우트 목록·`capabilities`·`timezone`·`kanban{dispatcher_present, attachments, attachment_max_bytes}` (**default 키 전용**) |
 | GET | `/deskrpg/profiles` | default | 프로필 목록 (`hasCustomPersona` 포함) |
 | POST | `/deskrpg/profiles` | default | 프로필 생성 (**응답이 새 키를 한 번만 싣는다**) |
 | DELETE | `/deskrpg/profiles/{name}` | default | 프로필 삭제 (`?confirm={name}` 필수) |
@@ -62,6 +91,98 @@ tool/hook 이 아니라 `api_server` 플랫폼 핸들러 하나만 등록한다.
 | GET | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 읽기 (읽을 수 없으면 200 + `unreadable: true`) |
 | GET | `/p/{profile}/deskrpg/catalog` | profile | 모델·프로바이더·추론 강도 목록 |
 | PUT | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 쓰기 (읽을 수 없으면 409 `config_unreadable`) |
+
+### 칸반 (0.6.0 · 전부 default · `?board=<slug>` 필수인 곳은 표시)
+
+| Method | Path | Scope | 설명 |
+|---|---|---|---|
+| GET | `/deskrpg/kanban/boards` | default | `{boards:[BoardMeta+{total, counts}], current}` |
+| POST | `/deskrpg/kanban/boards` | default | `{slug, name, default_workdir?}` → 새로 만들면 201, 이미 있으면 200 + 기존(멱등, name 불변). slug 는 Hermes 규칙 `^[a-z0-9][a-z0-9\-_]{0,63}$` |
+| PATCH | `/deskrpg/kanban/boards/{slug}` | default | `{name?, description?, default_workdir?}` (`""` 는 비움) |
+| GET | `/deskrpg/kanban/board?board=&include_archived=` | default | 열 순서 `triage, todo, scheduled, ready, running, blocked, review, done`(+`archived`) · `tenants`·`assignees`·`latest_event_id`·`now` |
+| POST | `/deskrpg/kanban/tasks?board=` | default | 카드 생성 → 201 `{task, warning?}`. `X-DeskRPG-Actor` 헤더가 `created_by = deskrpg:<값>` 이 된다. 게이트웨이 디스패처가 없으면 `warning:"dispatcher_missing"` |
+| GET | `/deskrpg/kanban/tasks/{id}?board=` | default | `{task, comments, events, attachments, links:{parents,children}, runs}` |
+| PATCH | `/deskrpg/kanban/tasks/{id}?board=` | default | `title/body/priority/assignee/status/model_override/provider_override/reasoning_effort` 부분 갱신. 전이 거절 409 `invalid_transition` |
+| DELETE | `/deskrpg/kanban/tasks/{id}?board=` | default | `{ok:true}` — 삭제 기록(`deskrpg_deleted.jsonl`)에 한 줄 남겨 사건 스트림이 `task.deleted` 를 합성한다 |
+| POST | `/deskrpg/kanban/tasks/{id}/comments?board=` | default | `{author?, body}` → 201 `{comment}` |
+| POST | `/deskrpg/kanban/tasks/{id}/{action}?board=` | default | `reassign · reclaim · specify · decompose · estimate(501) · approve · request-changes · unblock · terminate · archive` — 응답 `{task, …}`. 모르는 이름 404 `unknown_action` |
+| GET | `/deskrpg/kanban/tasks/{id}/attachments?board=` | default | `{attachments}` |
+| POST | `/deskrpg/kanban/tasks/{id}/attachments?board=` | default | multipart `file` 파트 → 201 `{attachment}`. 초과 시 413 `attachment_too_large` (아래 상한) |
+| GET | `/deskrpg/kanban/attachments/{id}?board=` | default | 파일 바이트 (`Content-Type`·`Content-Disposition`) |
+| DELETE | `/deskrpg/kanban/attachments/{id}?board=` | default | `{ok}` — Hermes 가 blob 도 지운다 |
+| POST | `/deskrpg/kanban/links?board=` | default | `{parent_id, child_id}` → `{ok}`. 순환 400 `cycle`, 없는 카드 404 |
+| DELETE | `/deskrpg/kanban/links?board=` | default | 링크 해제 |
+| POST | `/deskrpg/kanban/dispatch?board=&max=8` | default | 디스패처 한 틱 → `{spawned, skipped_locked, warning?}` (`kanban.dispatch_in_gateway` 가 꺼져 있으면 `warning:"embedded_dispatcher_disabled"`) |
+| GET | `/deskrpg/kanban/tasks/{id}/log?board=&tail=` | default | 워커 로그 `{exists, size_bytes, content, truncated}` (tail 기본 16384, 최대 1 MiB) |
+| GET | `/deskrpg/kanban/orchestration` | default | `kanban.*` 운영 설정 + 해소된 프로필 |
+| PUT | `/deskrpg/kanban/orchestration` | default | 같은 모양 + `restart_required` (`max_in_progress*` 는 디스패처가 기동 시에만 읽는다) |
+| GET | `/deskrpg/kanban/profiles` | default | `{profiles:[{name, is_default, description}]}` |
+
+### 사건 스트림 (0.6.0)
+
+| Method | Path | Scope | 설명 |
+|---|---|---|---|
+| GET | `/deskrpg/events?board=&cursor=&limit=200` | default | 칸반·삭제·크론 사건을 시간순으로 합친 `{events, cursor, has_more}` (아래) |
+
+### 크론 (0.6.0 · 전부 profile — 잡은 그 프로필의 `cron/jobs.json` 에만 산다)
+
+| Method | Path | Scope | 설명 |
+|---|---|---|---|
+| GET | `/p/{profile}/deskrpg/cron/jobs?include_disabled=` | profile | `{jobs:[CronJob]}` (`state` 는 `effective_job_state`) |
+| POST | `/p/{profile}/deskrpg/cron/jobs` | profile | `{schedule 필수, prompt?, name?, deliver?, model?, provider?, skills?, paused?, repeat?, script?}` → 201 `{job}`. `origin={"source":"deskrpg"}` |
+| GET | `/p/{profile}/deskrpg/cron/jobs/{id}` | profile | `{job}` |
+| PUT | `/p/{profile}/deskrpg/cron/jobs/{id}` | profile | `{updates:{schedule, prompt, name, deliver, model, provider, enabled, skills, script}}` (그 외 키 400) |
+| DELETE | `/p/{profile}/deskrpg/cron/jobs/{id}` | profile | `{ok:true}` |
+| GET | `/p/{profile}/deskrpg/cron/jobs/{id}/runs?limit=20` | profile | `{runs:[{id, started_at, ended_at, status, summary, result_text}], limit}` (세션 DB 기준, limit 최대 50) |
+| POST | `/p/{profile}/deskrpg/cron/jobs/{id}/pause` | profile | `{job}` |
+| POST | `/p/{profile}/deskrpg/cron/jobs/{id}/resume` | profile | `{job}` · 끝난 일회성 409 `job_terminal` |
+| POST | `/p/{profile}/deskrpg/cron/jobs/{id}/run` | profile | 202 `{accepted:true, job}` — 다음 스케줄러 틱이 돌린다 · 일시정지 중 409 `job_paused` · 끝난 일회성 409 `job_terminal` |
+| GET | `/p/{profile}/deskrpg/cron/delivery-targets` | profile | `{targets:[{id:"local", …}, …]}` |
+| GET | `/p/{profile}/deskrpg/cron/blueprints` | profile | Hermes 템플릿 카탈로그(`deliver` 옵션은 위 배달처로 교체) |
+| POST | `/p/{profile}/deskrpg/cron/blueprints/instantiate` | profile | `{blueprint, values}` → 201 `{job}` · 모르는 키 404 · 값 오류 422 `invalid_blueprint_values` |
+
+오류 본문은 전부 `{"error": <code>, "detail"?: <str>}` 다. 상태 코드: 400 잘못된 입력 · 404 없음 ·
+409 상태 충돌(Hermes 가 전이를 거절) · 413 본문 초과 · 422 템플릿 값 오류 · 424 크론 스케줄러 등록 실패 ·
+501 미구현 · 504 LLM 타임아웃(`specify`/`decompose`) · 500 예상 못 한 예외(본문·비밀은 싣지 않는다).
+
+### 첨부 상한 — 실효 10 MB
+
+`info.kanban.attachment_max_bytes = min(게이트웨이 MAX_REQUEST_BYTES, KANBAN_ATTACHMENT_MAX_BYTES)`.
+실측(Hermes 0.21.2): 게이트웨이 본문 상한 10,000,000 바이트 < 칸반 자체 상한 25 MiB 이므로 **10 MB** 가
+실효 상한이다. 첨부는 요청 본문에 실려 오므로 게이트웨이가 먼저 자른다 — 이 플러그인이 올릴 수 없는 값이다.
+클라이언트는 업로드 전에 이 값으로 거른다. 분할 업로드는 없다(`docs/BACKLOG.md`).
+
+### 사건 스트림 — kind 와 커서
+
+`GET /deskrpg/events?board=<slug>&cursor=<token>&limit=200` 은 세 출처를 `ts` 오름차순으로 합친다.
+
+- **kind**: `task.created` · `task.status`(payload `{from, to, parent_count, title, assignee}`) · `task.comment` ·
+  `task.link`(payload 에 `action: linked|unlinked`) · `task.updated`(payload `{fields}`) · `task.run.started` ·
+  `task.run.finished`(+ 상태가 바뀌었으면 `task.status` 한 건 더) · `task.deleted`(플러그인이 지운 경우만) ·
+  `cron.run.started`(`{job_id, job_name, profile, session_id, started_at}`) ·
+  `cron.run.finished`(+ `{status: ok|error, ended_at, result_text}`).
+- **사건 id**: 칸반 `k:<task_events.id>`, 삭제 `d:<줄 번호>`, 크론 `c:<profile>:<exec_id>:<started|finished>`.
+- **커서는 불투명 토큰**이다(`v1.` + base64url JSON). DeskRPG 는 해석하지 않고 되돌려 준다.
+  - **첫 호출은 `cursor` 없이** 부른다 → `{events: [], cursor: <지금>, has_more: false}`. "지금" 이전 사건은 주지 않는다.
+  - 파싱 실패·버전 불일치 → **400 `unknown_cursor`** → 커서 없이 다시 시작한다.
+  - 각 출처의 위치는 **실제로 응답에 실은 사건까지만** 전진한다. `limit` 에 잘린 사건은 다음 호출에 다시 나온다 —
+    구멍보다 중복이 낫고, 응답 기준으로는 중복도 없다. `has_more` 는 어느 출처든 잘린 것이 있을 때 참.
+  - 보드 slug 가 없으면 404 `board_not_found` (크론 부분은 시도하지 않는다).
+- **크론 사건은 호스트의 모든 프로필**을 본다 — 프로필별 `cron/executions.db` 가 **파일로 있을 때만** 읽고
+  (열면 Hermes 가 파일을 만들어 버린다), 없는 프로필은 잡 레코드(`fire_claim`·`last_run_at`)로 폴백한다.
+- `result_text` 의 출처: 그 실행에 대응하는 세션(`state.db` 의 `source='cron'`, id `cron_<job_id>_…`, 시작 시각
+  ±120 초)의 **마지막 assistant 메시지** → 없으면 잡 출력 폴더의 해당 실행 파일 → 없으면 `""`. 20,000 자 초과분은
+  잘라내고 끝에 `…`.
+
+### 크론 — 알아둘 규칙
+
+- **`prompt` 는 `script` 가 없을 때 필수**(400). `script` 는 프로필 홈의 `scripts/` 아래로 샌드박스된다.
+- `run` 은 **동기 실행이 아니다** — `trigger_job` 으로 다음 틱에 돌도록 표시만 하고 202 를 준다. 실행은 게이트웨이의
+  스케줄러 틱이 한다. 일시정지 중이면 409 `job_paused`(Hermes 의 `trigger_job` 은 재개까지 해 버리므로 막는다).
+  끝난 일회성(`state: completed|error`)은 `run`·`resume` 모두 409 `job_terminal`.
+- 과거 시각의 일회성 잡은 Hermes 가 생성을 거절한다(실측: "more than 120s in the past") → 400 `invalid_schedule`.
+- 스케줄러 등록 실패는 424. 외부 프로바이더 + 프로필 2개 이상이면 프로바이더 재조정을 건너뛴다(대시보드와 같다).
+- 실행 결과(`runs[].result_text`, `cron.run.finished.result_text`)의 출처는 위 사건 스트림 절과 같다.
 
 ### DELETE — `?confirm={name}` 필수
 
@@ -195,9 +316,25 @@ Hermes 의 `create_profile` 은 `.env` 를 **빈 파일로** 씨딩한다. 그�
 
 ## 테스트
 
+두 벌이다. 둘 다 초록이어야 한다(spec §9 T4).
+
 ```bash
-python -m pytest
+# 1. 가짜 단위 테스트 — Hermes 없이. `_hermes_api` 를 SimpleNamespace 로 바꿔 라우트별 인증 스코프·상태 코드·
+#    응답 필드 집합·커서 왕복·전이 규칙을 고정한다. CI 의 `test` 잡.
+python -m pytest -q
+
+# 2. 통합 테스트 — 실제 Hermes 가 설치된 venv 에서만. `hermes_cli` 를 import 할 수 없으면 skip 되고,
+#    `HERMES_INTEGRATION_REQUIRED=1` 이면 그 skip 이 실패가 된다(조용히 안 도는 초록 금지). CI 의 `integration` 잡.
+python -m venv .venv-hermes && .venv-hermes/bin/pip install -r requirements-dev.txt \
+  "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@3f86ed75dad1933036c52018e991dbd839837126"
+HERMES_INTEGRATION_REQUIRED=1 .venv-hermes/bin/python -m pytest -q -m integration tests/integration
+.venv-hermes/bin/python -m pytest -q      # 가짜 스위트도 실제 Hermes 옆에서 한 번 더
 ```
 
-`hermes plugins doctor` 는 Hermes 설치가 있어야 돌아가므로 CI 에 넣지 않았다.
-설치 후 수동으로 위 명령을 돌려 확인할 것.
+통합 테스트는 `HERMES_HOME`·`HERMES_KANBAN_HOME` 을 **테스트마다 `tmp_path` 아래 새 폴더**로 돌려놓고, 실제
+`kanban_db`·`cron.jobs`·`cron.executions`·`SessionDB` 를 만들어 보드 생성→카드→링크→댓글→전이→삭제→사건 tail,
+크론 생성→pause/resume/run→실행 장부→사건 합성·`result_text` 를 검증한다. 사용자의 `~/.hermes` 는 건드리지 않고
+(fixture 가 단정한다), 디스패치 실제 스폰도 하지 않는다(`dry_run=True`). 셸의 `*_API_KEY` 는 테스트 프로세스
+안에서 지운다 — Hermes 가 자격증명 풀에 ingest 하는 것을 막는다.
+
+`hermes plugins doctor deskrpg` 는 설치된 게이트웨이에서 수동으로 돌려 확인한다.
