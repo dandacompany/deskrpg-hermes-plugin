@@ -91,8 +91,37 @@ _HANDLERS = {
 }
 
 
+def _info_timezone(api):
+    """`hermes_time.get_timezone()` 의 ZoneInfo 를 IANA 이름으로. 없거나 실패하면 null.
+
+    Hermes 는 타임존이 미설정이면 None(서버 로컬)을 돌려준다. 설정 파일이 깨져 예외가
+    나더라도 info 가 죽어선 안 된다 — DeskRPG 는 이 응답으로 자동화 기능을 켜고 끈다.
+    """
+    try:
+        tz = api.get_timezone()
+    except Exception:
+        return None
+    key = getattr(tz, "key", None)
+    return key if isinstance(key, str) and key else None
+
+
+def _info_dispatcher_present(api) -> bool:
+    """디스패처(게이트웨이의 kanban.dispatch_in_gateway)가 살아 있는지. 예외는 fail-open(true).
+
+    Hermes 의 `_check_dispatcher_presence` 자체도 fail-open 이다 — 경고를 놓치는 쪽이
+    멀쩡한 게이트웨이에 "디스패처 없음" 을 외치는 쪽보다 낫다.
+    """
+    try:
+        present, _message = api._check_dispatcher_presence(api.get_hermes_home())
+        return bool(present)
+    except Exception:
+        return True
+
+
 def _make_info(api):
     from aiohttp import web
+
+    from .contract_fields import CAPABILITIES
 
     async def handler(request):
         return web.json_response(
@@ -100,6 +129,17 @@ def _make_info(api):
                 "plugin": "deskrpg",
                 "version": PLUGIN_VERSION,
                 "routes": [f"{m} {p}" for m, p, _h, _s in ROUTES],
+                "capabilities": list(CAPABILITIES),
+                "timezone": _info_timezone(api),
+                "kanban": {
+                    "dispatcher_present": _info_dispatcher_present(api),
+                    "attachments": True,
+                    # 첨부는 요청 본문에 실려 오므로 api_server 의 본문 상한과 칸반 자체 상한
+                    # 중 작은 쪽이 실효 상한이다. 클라이언트가 이 값으로 업로드 전에 거른다.
+                    "attachment_max_bytes": min(
+                        int(api.MAX_REQUEST_BYTES), int(api.KANBAN_ATTACHMENT_MAX_BYTES)
+                    ),
+                },
             }
         )
 

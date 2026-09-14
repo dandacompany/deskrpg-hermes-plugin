@@ -1,3 +1,4 @@
+import contextlib
 import re
 import types
 import pytest
@@ -77,7 +78,7 @@ def fake_api(tmp_path):
             wrapper.unlink()
         return d
 
-    return types.SimpleNamespace(
+    api = types.SimpleNamespace(
         get_profile_dir=get_profile_dir,
         get_wrapper_path=get_wrapper_path,
         profile_exists=profile_exists,
@@ -89,7 +90,99 @@ def fake_api(tmp_path):
         read_profile_meta=lambda d: {"description": ""},
         DEFAULT_SOUL_MD="You are Hermes Agent",
         is_legacy_template_soul=lambda text: False,
+        # 0.6.0 — hermes_cli.profiles 추가분
+        get_active_profile_name=lambda: "default",
+        normalize_profile_name=lambda name: (name or "").strip().lower(),
     )
+    _add_automation_fakes(api, tmp_path)
+    return api
+
+
+def _add_automation_fakes(api, tmp_path):
+    """0.6.0 이 `_hermes_api.SPEC` 에 더한 모든 심볼의 기본 가짜.
+
+    칸반 DB 는 `tests/fakes_kanban.py` 의 인메모리 골격이고, 나머지는 현실적인 기본값을
+    돌려주는 람다다. 테스트가 특정 동작을 원하면 `fake_api.<name> = …` 로 덮는다.
+    `_hermes_api.REQUIRED` 의 모든 이름이 여기 있는지는 test_info 가 단정한다.
+    """
+    from zoneinfo import ZoneInfo
+
+    from tests.fakes_kanban import install_fake_kanban
+
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir(exist_ok=True)
+    kanban_root = tmp_path / "kanban"
+    kanban_root.mkdir(exist_ok=True)
+    api.kanban = install_fake_kanban(api, kanban_root)
+
+    class _Config(dict):
+        pass
+
+    config = _Config({"kanban": {}, "timezone": "Asia/Seoul"})
+
+    class _CronSchedulerRegistrationError(RuntimeError):
+        pass
+
+    class _BlueprintFillError(ValueError):
+        pass
+
+    class _InProcessCronScheduler:
+        pass
+
+    class _SessionDB:
+        def __init__(self, *a, **k):
+            pass
+
+    api.__dict__.update(
+        # kanban_db_dispatch / specify / decompose / diagnostics / kanban
+        dispatch_once=lambda *a, **k: types.SimpleNamespace(spawned=[]),
+        _terminate_reclaimed_worker=lambda *a, **k: None,
+        specify_task=lambda *a, **k: None,
+        decompose_task=lambda *a, **k: [],
+        compute_task_diagnostics=lambda *a, **k: [],
+        config_from_runtime_config=lambda *a, **k: {},
+        _check_dispatcher_presence=lambda hermes_home=None: (True, ""),
+        # hermes_cli.config
+        load_config=lambda *a, **k: config,
+        save_config=lambda cfg, *a, **k: None,
+        # hermes_constants / hermes_time
+        set_hermes_home_override=lambda path: object(),
+        reset_hermes_home_override=lambda token: None,
+        get_hermes_home=lambda: hermes_home,
+        get_timezone=lambda: ZoneInfo("Asia/Seoul"),
+        # cron.jobs
+        use_cron_store=lambda home: _noop_context(),
+        list_jobs=lambda include_disabled=False: [],
+        get_job=lambda job_id: None,
+        update_job=lambda job_id, updates, **k: None,
+        pause_job=lambda job_id, **k: False,
+        resume_job=lambda job_id, **k: False,
+        trigger_job=lambda job_id, **k: False,
+        remove_job=lambda job_id, **k: False,
+        effective_job_state=lambda job: job.get("state", "scheduled") if isinstance(job, dict) else "scheduled",
+        get_cron_output_dir=lambda *a, **k: tmp_path / "cron-output",
+        # cron.scheduler / scheduler_delivery / blueprint_catalog / executions / scheduler_provider
+        create_job_with_scheduler_registration=lambda **kwargs: {"id": "job-1", **kwargs},
+        CronSchedulerRegistrationError=_CronSchedulerRegistrationError,
+        cron_delivery_targets=lambda: [],
+        CATALOG=[],
+        get_blueprint=lambda key: None,
+        blueprint_catalog_entry=lambda bp: {},
+        fill_blueprint=lambda *a, **k: {},
+        BlueprintFillError=_BlueprintFillError,
+        list_executions=lambda *a, **k: [],
+        get_execution=lambda execution_id: None,
+        resolve_cron_scheduler=lambda: _InProcessCronScheduler(),
+        InProcessCronScheduler=_InProcessCronScheduler,
+        # hermes_state / api_server
+        SessionDB=_SessionDB,
+        MAX_REQUEST_BYTES=10_000_000,
+    )
+
+
+@contextlib.contextmanager
+def _noop_context():
+    yield
 
 @pytest.fixture(autouse=True)
 def _isolated_user_home(tmp_path, monkeypatch):
