@@ -77,7 +77,7 @@ def test_clamp_limit_은_기본_200_최대_500_최소_1():
 
 async def test_커서가_없으면_빈_목록과_지금_토큰을_돌려준다(aiohttp_client, fake_api, kanban, store):
     conn = kanban.connect(board="default")
-    task = kanban.create_task(conn, title="첫 카드")
+    task = kanban.make_task(conn, title="첫 카드")
     kanban.add_comment(conn, task.id, "dante", "댓글")
     append_deleted(fake_api, "default", "t9999", "지운 카드", 1_700_000_000)
     fake_api.create_profile("sophie")
@@ -101,7 +101,7 @@ async def test_커서가_없으면_빈_목록과_지금_토큰을_돌려준다(a
 
 async def test_지금_토큰으로_바로_다시_부르면_사건이_없다(aiohttp_client, fake_api, kanban, store):
     conn = kanban.connect(board="default")
-    kanban.create_task(conn, title="있던 카드")
+    kanban.make_task(conn, title="있던 카드")
     client = await events_client(aiohttp_client, fake_api)
     first = await (await client.get("/deskrpg/events?board=default")).json()
     second = await (await client.get(f"/deskrpg/events?board=default&cursor={first['cursor']}")).json()

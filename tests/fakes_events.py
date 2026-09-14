@@ -1,8 +1,9 @@
 """사건 스트림(T5) 테스트용 가짜 — `tests/fakes_kanban.py` 를 **상속**해 raw SQL 을 받는 연결을 더한다.
 
-`events.py` 는 대시보드처럼 `task_events` 를 raw SQL 로 tail 한다. `FakeConn` 은 슬러그만 든 표식이라
-`execute` 가 없으므로, 여기서 `events.SQL_*` 문자열을 **그대로** 대조해 인메모리 사건 목록으로 답하는
-연결을 만든다 — SQL 이 바뀌면 이 파일도 같이 바뀌어야 하고, 모르는 SQL 은 AssertionError 로 잡힌다.
+`events.py` 는 대시보드처럼 `task_events` 를 raw SQL 로 tail 한다. T2 의 `FakeConn(db, board)` 는 보드
+핸들러가 내는 SQL 만 아는 아주 작은 흉내라, 여기서 `events.SQL_*` 문자열을 **그대로** 대조해 인메모리
+사건 목록으로 답하는 연결을 얹는다 — SQL 이 바뀌면 이 파일도 같이 바뀌어야 한다. 사건 tail 이 아닌 문장은
+T2 의 `FakeConn.execute` 로 넘겨, 같은 연결 위에서 보드·카드 핸들러도 함께 돌 수 있게 한다(배선 테스트).
 
 그 밖에 테스트가 상태를 심는 도우미: `emit`(kind·ts·payload 를 고른 사건 행), `remove_task`(Hermes 가
 카드와 사건을 같이 지운 뒤 상태), `set_status`, 그리고 삭제 기록 파일에 §5.3 형식 그대로 한 줄을 붙이는
@@ -16,7 +17,7 @@ from typing import Optional
 
 from aiohttp import web
 
-from deskrpg_plugin import events
+from deskrpg_plugin import deleted_log, events
 from tests.fakes_kanban import KANBAN_DB_SYMBOLS, FakeConn, FakeEvent, FakeKanbanDb
 
 
@@ -35,8 +36,7 @@ class FakeEventsConn(FakeConn):
     """`execute(sql, params)` 를 받는 연결. `events.SQL_*` 세 문장만 안다."""
 
     def __init__(self, db, board):
-        super().__init__(board=board)
-        self.db = db
+        super().__init__(db=db, board=board)
         self.executed = []
 
     def _rows(self):
@@ -64,7 +64,8 @@ class FakeEventsConn(FakeConn):
         if sql == events.SQL_MAX_ID:
             ids = [e.id for e in self._rows()]
             return _Result([{"max_id": max(ids) if ids else 0}])
-        raise AssertionError(f"가짜 연결이 모르는 SQL: {sql!r}")
+        # 사건 tail 이 아닌 문장(보드 롤업·UPDATE 등)은 T2 의 작은 SQL 흉내가 처리한다.
+        return super().execute(sql, params)
 
 
 class FakeEventsKanban(FakeKanbanDb):
@@ -75,6 +76,10 @@ class FakeEventsKanban(FakeKanbanDb):
         if slug not in self.boards:
             raise KeyError(f"unknown board: {slug}")
         return FakeEventsConn(self, slug)
+
+    def make_task(self, conn, **kwargs):
+        """`create_task` 는 Hermes 처럼 id 문자열을 돌려준다 — 사건 테스트는 카드 객체가 편하므로 여기서 되읽는다."""
+        return self.get_task(conn, self.create_task(conn, **kwargs))
 
     def emit(self, board: str, task_id: str, kind: str, payload=None, *, ts=None, run_id=None) -> FakeEvent:
         """사건 행 하나. `payload=None` 은 진짜처럼 NULL 로 저장된다."""
@@ -107,7 +112,7 @@ def install_fake_events(fake_api, root) -> FakeEventsKanban:
 
 def append_deleted(api, slug: str, task_id: str, title: str, ts) -> int:
     """§5.3 형식 그대로 `{"n","task_id","title","ts"}` 한 줄을 append 한다. 붙인 줄의 `n` 을 돌려준다."""
-    path = Path(api.board_dir(slug)) / events.DELETED_LOG_FILENAME
+    path = Path(api.board_dir(slug)) / deleted_log.FILENAME
     path.parent.mkdir(parents=True, exist_ok=True)
     n = 0
     if path.is_file():
