@@ -10,6 +10,7 @@
 
 import asyncio
 import contextlib
+import functools
 import logging
 import re
 
@@ -38,8 +39,8 @@ def json_error(status: int, code: str, detail=None, **extra) -> web.Response:
 class RequestError(Exception):
     """핸들러가 `json_error` 로 바꿔 돌려줄 요청 오류. `status`·`code`·`detail` 을 담는다.
 
-    도우미(`parse_board_slug`, `require_str` …)가 이걸 던지고, 핸들러는
-    `except RequestError as e: return e.response()` 한 줄로 받는다.
+    도우미(`parse_board_slug`, `require_str` …)가 이걸 던지고, 핸들러를 감싼 `guarded` 가
+    `response()` 로 바꿔 돌려준다 — 핸들러 안에서 따로 받을 필요가 없다.
     """
 
     def __init__(self, status: int, code: str, detail=None):
@@ -50,6 +51,30 @@ class RequestError(Exception):
 
     def response(self) -> web.Response:
         return json_error(self.status, self.code, self.detail)
+
+
+def guarded(fn):
+    """aiohttp 핸들러의 마지막 방어선. **모든 핸들러 팩토리가 이것으로 감싼다.**
+
+    `RequestError` 는 그 응답(`json_error`)으로, 그 밖의 어떤 예외도 500
+    `{"error":"internal_error","detail":"<예외 타입 이름>"}` 으로 바꾼다. 응답에는 예외 메시지를 싣지
+    않는다 — Hermes 의 예외 문자열에는 카드 본문·경로·시크릿이 섞여 들어올 수 있다. 로그도 타입 이름만
+    남기고 트레이스는 `logger.exception` 이 붙인다.
+
+    이게 없으면 aiohttp 가 텍스트 500 을 내고 클라이언트는 `{error}` 모양을 못 받는다.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(request):
+        try:
+            return await fn(request)
+        except RequestError as exc:
+            return exc.response()
+        except Exception as exc:  # noqa: BLE001 — 마지막 방어선. 내용은 로그에만, 그것도 타입만.
+            logger.exception("[deskrpg] 핸들러 예외: %s", type(exc).__name__)
+            return json_error(500, "internal_error", type(exc).__name__)
+
+    return wrapper
 
 
 async def run_blocking(fn, *args):

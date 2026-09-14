@@ -9,14 +9,24 @@ import 시점에 경로를 굳히는 모듈(`cron.jobs.CRON_DIR` 등)이 있어 
 그 skip 이 실패가 된다 — 상위 `tests/conftest.py` 의 훅.
 """
 
+import atexit
+import importlib.util
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
 import pytest
 
+# Hermes 가 없는 venv(가짜 스위트)에서는 임시 폴더를 만들기 **전에** skip 한다 — 아래 mkdtemp 가 먼저 돌면
+# 매 실행마다 폴더 하나가 남는다.
+if importlib.util.find_spec("hermes_cli") is None:
+    pytest.importorskip("hermes_cli")
+
 # Hermes 를 import 하기 전에 홈을 임시 폴더로. 이 값은 부트스트랩용이고, 각 테스트는 fixture 로 다시 바꾼다.
+# 세션 fixture(tmp_path_factory)는 import 시점에 없으므로 mkdtemp 를 쓰되, 인터프리터가 끝날 때 반드시 지운다.
 _BOOTSTRAP = Path(tempfile.mkdtemp(prefix="deskrpg-hermes-it-"))
+atexit.register(shutil.rmtree, _BOOTSTRAP, True)
 os.environ["HERMES_HOME"] = str(_BOOTSTRAP / "home")
 os.environ["HERMES_KANBAN_HOME"] = str(_BOOTSTRAP / "kanban")
 (_BOOTSTRAP / "home").mkdir(parents=True, exist_ok=True)

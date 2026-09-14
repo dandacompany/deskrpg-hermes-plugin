@@ -297,3 +297,38 @@ async def test_로그는_없는_카드면_404(aiohttp_client, fake_api, kanban):
     client = await _client(aiohttp_client, fake_api)
     resp = await client.get(f"/deskrpg/kanban/tasks/t9999/log?board={BOARD}")
     assert resp.status == 404
+
+
+# ---------------------------------------------------------------------------
+# 단일 직렬화기 · 500
+# ---------------------------------------------------------------------------
+
+
+async def test_첨부_직렬화는_상세_목록_업로드가_같은_모양이고_계약_키의_상위집합이다(aiohttp_client, fake_api, kanban):
+    from deskrpg_plugin.contract_fields import KANBAN_ATTACHMENT_KEYS
+    from deskrpg_plugin.kanban_common import attachment_payload
+
+    task = _task(kanban)
+    client = await _client(aiohttp_client, fake_api)
+    uploaded = (await (await _upload(client, task.id, b"hello")).json())["attachment"]
+    listed = (await (await client.get(f"/deskrpg/kanban/tasks/{task.id}/attachments?board={BOARD}")).json())["attachments"]
+    direct = attachment_payload(kanban.get_attachment(_conn(kanban), uploaded["id"]))
+    assert set(uploaded) == set(listed[0]) == set(direct) == {"id", "filename", "size", "content_type", "created_at"}
+    assert KANBAN_ATTACHMENT_KEYS <= set(uploaded)
+    assert uploaded == listed[0] == direct
+    assert uploaded["content_type"] == "text/plain" and isinstance(uploaded["created_at"], int)
+
+
+async def test_Hermes_가_예상_못_한_예외를_던지면_500_internal_error_JSON(aiohttp_client, fake_api, kanban):
+    task = _task(kanban)
+
+    def boom(*a, **kw):
+        raise RuntimeError("secret stored_path")
+
+    fake_api.list_attachments = boom
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.get(f"/deskrpg/kanban/tasks/{task.id}/attachments?board={BOARD}")
+    assert resp.status == 500
+    body = await resp.json()
+    assert body == {"error": "internal_error", "detail": "RuntimeError"}
+    assert "secret" not in await resp.text()

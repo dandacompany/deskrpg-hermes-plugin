@@ -5,15 +5,13 @@ FastAPI 를 import 하므로 함수를 가져오지 않고 **규칙만** 옮겼�
 전이 분기(`_drag_to`/`_set_status_direct`), 제목·본문·우선순위의 raw UPDATE + 사건 기록.
 
 모든 핸들러는 `xxx_handler(api)` 팩토리다(`profiles.py` 와 같은 꼴). DB 작업은 전부
-`run_blocking` 안에서 `board_conn` 으로 연결을 열고 닫는다(C3). 오류는 `RequestError` →
-`json_error` 로, 예상 못 한 예외는 500 `internal_error` 로 — 메시지에 본문·비밀을 싣지 않는다(C4·C6).
+`run_blocking` 안에서 `board_conn` 으로 연결을 열고 닫는다(C3). 오류 변환은 `common.guarded` 가
+한다 — `RequestError` 는 그 응답으로, 예상 못 한 예외는 500 `internal_error`(메시지에 본문·비밀 없음, C4·C6).
 
-응답 모양은 `contract_fields` 의 키 집합으로 **투영**한다. Hermes 가 주는 추가 필드(claim_lock,
-db_path …)는 계약에 없으므로 내보내지 않는다 — DeskRPG 는 계약 키만 읽고, 키 집합이 고정돼야
-테스트가 계약 위반을 잡는다.
+카드 조회·직렬화·행위자 판정은 `kanban_common` 의 공개 도우미를 쓴다(동작·첨부·운영 모듈과 공유).
+응답 모양은 `contract_fields` 의 키 집합으로 **투영**한다.
 """
 
-import functools
 import json
 import os
 import time
@@ -26,9 +24,8 @@ from .common import (
     BOARD_SLUG_RE,
     RequestError,
     board_conn,
-    json_error,
+    guarded,
     log_event,
-    logger,
     parse_board_slug,
     read_json_object,
     require_bool,
@@ -42,46 +39,33 @@ from .contract_fields import (
     BOARD_META_KEYS,
     CARD_STATUSES,
     CREATE_TASK_KEYS,
-    KANBAN_ATTACHMENT_KEYS,
     KANBAN_COMMENT_KEYS,
     KANBAN_EVENT_KEYS,
     KANBAN_RUN_KEYS,
-    KANBAN_TASK_FULL_KEYS,
     KANBAN_TASK_KEYS,
     UPDATE_BOARD_KEYS,
     UPDATE_TASK_KEYS,
     WORKSPACE_KINDS,
 )
-
-# 카드 요약(보드 열)에 싣는 latest_summary 미리보기 길이 — 대시보드와 같다. 전문은 상세에서.
-_CARD_SUMMARY_PREVIEW_CHARS = 200
-# Hermes `kanban_diagnostics.SEVERITY_ORDER` 와 같은 순서(낮음 → 높음).
-_SEVERITY_ORDER = ("warning", "error", "critical")
-# 댓글 작성자 상한 — DeskRPG 닉네임을 `deskrpg:<nick>` 으로 넘기므로 넉넉하되 무한하지 않게.
-_AUTHOR_MAX_CHARS = 100
-_DEFAULT_ACTOR = "deskrpg"
-_ACTOR_HEADER = "X-DeskRPG-Actor"
+from .kanban_common import (
+    ACTOR_MAX_CHARS,
+    CARD_SUMMARY_PREVIEW_CHARS,
+    DEFAULT_ACTOR,
+    actor_from_request,
+    attachment_payload,
+    compute_diagnostics,
+    decorate,
+    project,
+    require_task,
+    rollups,
+    task_dict,
+    task_payload,
+)
 
 
 # ---------------------------------------------------------------------------
-# 공통 — 오류 변환, 보드 확인, 투영
+# 공통 — 보드 확인
 # ---------------------------------------------------------------------------
-
-
-def _guarded(fn):
-    """핸들러 본문을 감싼다: `RequestError` 는 그 응답으로, 나머지 예외는 500(내용 없이)."""
-
-    @functools.wraps(fn)
-    async def wrapper(request):
-        try:
-            return await fn(request)
-        except RequestError as exc:
-            return exc.response()
-        except Exception as exc:  # noqa: BLE001 — 마지막 방어선. 내용은 로그에만, 그것도 타입만.
-            logger.exception("[deskrpg] kanban 핸들러 예외: %s", type(exc).__name__)
-            return json_error(500, "internal_error", type(exc).__name__)
-
-    return wrapper
 
 
 def _require_board(api, slug: str) -> str:
@@ -101,26 +85,10 @@ def _board_from_path(api, request) -> str:
     return _require_board(api, slug)
 
 
-def _actor(request) -> str:
-    value = (request.headers.get(_ACTOR_HEADER) or "").strip()
-    return f"{_DEFAULT_ACTOR}:{value}" if value else _DEFAULT_ACTOR
-
-
 def _reject_unknown_keys(body: dict, allowed) -> None:
     unknown = sorted(set(body) - set(allowed))
     if unknown:
         raise RequestError(400, "unknown_field", ", ".join(unknown))
-
-
-def _project(d: dict, keys) -> dict:
-    return {k: v for k, v in d.items() if k in keys}
-
-
-def _require_task(api, conn, task_id: str):
-    task = api.get_task(conn, task_id)
-    if task is None:
-        raise RequestError(404, "task_not_found", task_id)
-    return task
 
 
 def _validate_workdir(path):
@@ -138,7 +106,7 @@ def _validate_workdir(path):
 
 
 def _board_meta(api, meta: dict, *, total=None, counts=None) -> dict:
-    out = _project(dict(meta), BOARD_META_KEYS)
+    out = project(dict(meta), BOARD_META_KEYS)
     out["slug"] = meta["slug"]
     out["is_current"] = meta["slug"] == api.get_current_board()
     if total is not None:
@@ -167,7 +135,7 @@ def _find_board(api, slug: str):
 
 
 def list_boards_handler(api):
-    @_guarded
+    @guarded
     async def handler(request):
         def work():
             out = []
@@ -184,7 +152,7 @@ def list_boards_handler(api):
 def create_board_handler(api):
     """새로 만들면 201, 이미 있으면 200 + 기존(이름을 덮어쓰지 않는다). 현재 보드는 바꾸지 않는다."""
 
-    @_guarded
+    @guarded
     async def handler(request):
         body = await read_json_object(request)
         _reject_unknown_keys(body, {"slug", "name", "default_workdir"})
@@ -211,7 +179,7 @@ def create_board_handler(api):
 
 
 def patch_board_handler(api):
-    @_guarded
+    @guarded
     async def handler(request):
         slug = _board_from_path(api, request)
         body = await read_json_object(request)
@@ -236,94 +204,8 @@ def patch_board_handler(api):
 # ---------------------------------------------------------------------------
 
 
-def _placeholders(ids) -> str:
-    return ",".join("?" for _ in ids)
-
-
-def _compute_diagnostics(api, conn, task_ids=None) -> dict:
-    """`{task_id: [diagnostic_dict…]}` — 진단이 없는 카드는 빠진다. 대시보드 `_compute_task_diagnostics` 이식."""
-    if task_ids is not None and not task_ids:
-        return {}
-    diag_config = api.config_from_runtime_config(api.load_config())
-    if task_ids is not None:
-        rows = conn.execute(f"SELECT * FROM tasks WHERE id IN ({_placeholders(task_ids)})", tuple(task_ids)).fetchall()
-    else:
-        rows = conn.execute("SELECT * FROM tasks WHERE status != 'archived'").fetchall()
-    if not rows:
-        return {}
-    row_ids = [r["id"] for r in rows]
-
-    def rows_by_task(table: str) -> dict:
-        by_task = {tid: [] for tid in row_ids}
-        for row in conn.execute(
-            f"SELECT * FROM {table} WHERE task_id IN ({_placeholders(row_ids)}) ORDER BY id", tuple(row_ids)
-        ):
-            by_task.setdefault(row["task_id"], []).append(row)
-        return by_task
-
-    events_by_task = rows_by_task("task_events")
-    runs_by_task = rows_by_task("task_runs")
-    graph_by_task = api.task_graph_contexts(conn, row_ids)
-    out = {}
-    for r in rows:
-        tid = r["id"]
-        diags = api.compute_task_diagnostics(
-            r, events_by_task[tid], runs_by_task[tid], config=diag_config, graph=graph_by_task.get(tid)
-        )
-        if diags:
-            out[tid] = [d.to_dict() for d in diags]
-    return out
-
-
-def _warnings_summary(diagnostics) -> dict | None:
-    """카드 배지용 `{count, highest_severity}`; 진단이 없으면 None."""
-    if not diagnostics:
-        return None
-    count, highest = 0, -1
-    for d in diagnostics:
-        count += d.get("count", 1)
-        sev = d.get("severity")
-        if sev in _SEVERITY_ORDER:
-            highest = max(highest, _SEVERITY_ORDER.index(sev))
-    return {"count": count, "highest_severity": _SEVERITY_ORDER[highest] if highest >= 0 else None}
-
-
-def _task_dict(task, *, latest_summary=None) -> dict:
-    d = asdict(task)
-    d["latest_summary"] = latest_summary
-    return d
-
-
-def _rollups(conn) -> tuple[dict, dict, dict]:
-    """(link_counts, comment_counts, progress) — 각각 집계 질의 한 번. 대시보드와 같은 SQL."""
-    link_counts: dict = {}
-    for row in conn.execute("SELECT parent_id, child_id FROM task_links").fetchall():
-        link_counts.setdefault(row["parent_id"], {"parents": 0, "children": 0})["children"] += 1
-        link_counts.setdefault(row["child_id"], {"parents": 0, "children": 0})["parents"] += 1
-    comment_counts = {
-        r["task_id"]: r["n"] for r in conn.execute("SELECT task_id, COUNT(*) AS n FROM task_comments GROUP BY task_id")
-    }
-    progress: dict = {}
-    for row in conn.execute(
-        "SELECT l.parent_id AS pid, t.status AS cstatus FROM task_links l JOIN tasks t ON t.id = l.child_id"
-    ).fetchall():
-        p = progress.setdefault(row["pid"], {"done": 0, "total": 0})
-        p["total"] += 1
-        p["done"] += row["cstatus"] == "done"
-    return link_counts, comment_counts, progress
-
-
-def _decorate(d: dict, task_id: str, link_counts, comment_counts, progress, diagnostics) -> None:
-    d["link_counts"] = link_counts.get(task_id, {"parents": 0, "children": 0})
-    d["comment_count"] = comment_counts.get(task_id, 0)
-    d["progress"] = progress.get(task_id)  # 자식이 없으면 None
-    d["warnings"] = _warnings_summary(diagnostics)
-    if diagnostics:
-        d["diagnostics"] = diagnostics
-
-
 def get_board_handler(api):
-    @_guarded
+    @guarded
     async def handler(request):
         slug = _board_from_query(api, request)
         include_archived = request.query.get("include_archived", "").lower() in ("1", "true", "yes")
@@ -331,8 +213,8 @@ def get_board_handler(api):
         def work():
             with board_conn(api, slug) as conn:
                 tasks = api.list_tasks(conn, include_archived=include_archived)
-                link_counts, comment_counts, progress = _rollups(conn)
-                diagnostics = _compute_diagnostics(api, conn, task_ids=None)
+                link_counts, comment_counts, progress = rollups(conn)
+                diagnostics = compute_diagnostics(api, conn, task_ids=None)
                 latest_event_id = conn.execute("SELECT COALESCE(MAX(id), 0) AS m FROM task_events").fetchone()["m"]
                 summary_map = api.latest_summaries(conn, [t.id for t in tasks])
                 columns = {c: [] for c in BOARD_COLUMNS}
@@ -340,9 +222,9 @@ def get_board_handler(api):
                     columns["archived"] = []
                 for t in tasks:
                     full = summary_map.get(t.id)
-                    d = _task_dict(t, latest_summary=(full[:_CARD_SUMMARY_PREVIEW_CHARS] if full else None))
-                    _decorate(d, t.id, link_counts, comment_counts, progress, diagnostics.get(t.id))
-                    columns[t.status if t.status in columns else "todo"].append(_project(d, KANBAN_TASK_KEYS))
+                    d = task_dict(t, latest_summary=(full[:CARD_SUMMARY_PREVIEW_CHARS] if full else None))
+                    decorate(d, t.id, link_counts, comment_counts, progress, diagnostics.get(t.id))
+                    columns[t.status if t.status in columns else "todo"].append(project(d, KANBAN_TASK_KEYS))
                 tenants = [
                     r["tenant"]
                     for r in conn.execute("SELECT DISTINCT tenant FROM tasks WHERE tenant IS NOT NULL ORDER BY tenant")
@@ -371,32 +253,22 @@ def get_board_handler(api):
 # ---------------------------------------------------------------------------
 
 
-def _task_full(api, conn, task_id: str) -> dict:
-    """KanbanTaskFull — 상세·생성·수정 응답이 공유한다. latest_summary 는 전문."""
-    task = _require_task(api, conn, task_id)
-    d = _task_dict(task, latest_summary=api.latest_summary(conn, task_id))
-    link_counts, comment_counts, progress = _rollups(conn)
-    diagnostics = _compute_diagnostics(api, conn, task_ids=[task_id]).get(task_id)
-    _decorate(d, task_id, link_counts, comment_counts, progress, diagnostics)
-    return _project(d, KANBAN_TASK_FULL_KEYS)
-
-
 def get_task_handler(api):
-    @_guarded
+    @guarded
     async def handler(request):
         slug = _board_from_query(api, request)
         task_id = request.match_info["task_id"]
 
         def work():
             with board_conn(api, slug) as conn:
-                task = _task_full(api, conn, task_id)
+                task = task_payload(api, conn, task_id)
                 return {
                     "task": task,
-                    "comments": [_project(asdict(c), KANBAN_COMMENT_KEYS) for c in api.list_comments(conn, task_id)],
-                    "events": [_project(asdict(e), KANBAN_EVENT_KEYS) for e in api.list_events(conn, task_id)],
-                    "attachments": [_project(asdict(a), KANBAN_ATTACHMENT_KEYS) for a in api.list_attachments(conn, task_id)],
+                    "comments": [project(asdict(c), KANBAN_COMMENT_KEYS) for c in api.list_comments(conn, task_id)],
+                    "events": [project(asdict(e), KANBAN_EVENT_KEYS) for e in api.list_events(conn, task_id)],
+                    "attachments": [attachment_payload(a) for a in api.list_attachments(conn, task_id)],
                     "links": {"parents": api.parent_ids(conn, task_id), "children": api.child_ids(conn, task_id)},
-                    "runs": [_project(asdict(r), KANBAN_RUN_KEYS) for r in api.list_runs(conn, task_id)],
+                    "runs": [project(asdict(r), KANBAN_RUN_KEYS) for r in api.list_runs(conn, task_id)],
                 }
 
         return web.json_response(await run_blocking(work))
@@ -443,12 +315,12 @@ def _dispatcher_missing(api) -> bool:
 
 
 def create_task_handler(api):
-    @_guarded
+    @guarded
     async def handler(request):
         slug = _board_from_query(api, request)
         body = await read_json_object(request)
         fields = _parse_create_body(body)
-        created_by = _actor(request)
+        created_by = actor_from_request(request)
 
         def work():
             with board_conn(api, slug) as conn:
@@ -456,7 +328,7 @@ def create_task_handler(api):
                     task_id = api.create_task(conn, created_by=created_by, board=slug, **fields)
                 except ValueError as exc:
                     raise RequestError(400, "invalid_task", str(exc))
-                out = {"task": _task_full(api, conn, task_id)}
+                out = {"task": task_payload(api, conn, task_id)}
             if _dispatcher_missing(api):
                 out["warning"] = "dispatcher_missing"
             log_event("task.create", board=slug, task_id=task_id, title_len=len(fields["title"]))
@@ -518,7 +390,7 @@ def _set_status_direct(api, conn, task_id: str, new_status: str) -> bool:
             (task_id, run_id, json.dumps({"status": effective, "requested_status": new_status}), int(time.time())),
         )
         if reopening_parent:
-            result = api.invalidate_descendants_for_parent_reopen(conn, task_id, author=_DEFAULT_ACTOR)
+            result = api.invalidate_descendants_for_parent_reopen(conn, task_id, author=DEFAULT_ACTOR)
             terminations.extend(result["terminations"])
     for pid, claim_lock in terminations:
         api._terminate_reclaimed_worker(pid, claim_lock)
@@ -642,7 +514,7 @@ def _parse_patch_body(body: dict) -> dict:
 
 
 def patch_task_handler(api):
-    @_guarded
+    @guarded
     async def handler(request):
         slug = _board_from_query(api, request)
         task_id = request.match_info["task_id"]
@@ -650,7 +522,7 @@ def patch_task_handler(api):
 
         def work():
             with board_conn(api, slug) as conn:
-                _require_task(api, conn, task_id)
+                require_task(api, conn, task_id)
                 status = p.get("status")
                 assignee = p.get("assignee", _MISSING)
                 # 담당자+review 를 함께 주면 request_review 가 구현자를 먼저 기록해야 하므로 assign 을 미룬다.
@@ -683,7 +555,7 @@ def patch_task_handler(api):
                 if "title" in p or "body" in p:
                     _patch_title_body(api, conn, task_id, p.get("title", _MISSING), p.get("body", _MISSING), slug)
                 log_event("task.patch", board=slug, task_id=task_id, fields=sorted(p))
-                return {"task": _task_full(api, conn, task_id)}
+                return {"task": task_payload(api, conn, task_id)}
 
         return web.json_response(await run_blocking(work))
 
@@ -698,14 +570,14 @@ def patch_task_handler(api):
 def delete_task_handler(api):
     """`delete_task` 뒤 삭제 장부에 한 줄 — 사건 스트림이 `task.deleted` 를 여기서 합성한다."""
 
-    @_guarded
+    @guarded
     async def handler(request):
         slug = _board_from_query(api, request)
         task_id = request.match_info["task_id"]
 
         def work():
             with board_conn(api, slug) as conn:
-                task = _require_task(api, conn, task_id)
+                task = require_task(api, conn, task_id)
                 if not api.delete_task(conn, task_id):
                     raise RequestError(404, "task_not_found", task_id)
             line_no = deleted_log.append_deleted(api, slug, task_id, task.title)
@@ -718,23 +590,23 @@ def delete_task_handler(api):
 
 
 def add_comment_handler(api):
-    @_guarded
+    @guarded
     async def handler(request):
         slug = _board_from_query(api, request)
         task_id = request.match_info["task_id"]
         body = await read_json_object(request)
         _reject_unknown_keys(body, {"author", "body"})
         text = require_str(body, "body")
-        author = (require_str(body, "author", required=False) or _DEFAULT_ACTOR)[:_AUTHOR_MAX_CHARS]
+        author = (require_str(body, "author", required=False) or DEFAULT_ACTOR)[:ACTOR_MAX_CHARS]
 
         def work():
             with board_conn(api, slug) as conn:
-                _require_task(api, conn, task_id)
+                require_task(api, conn, task_id)
                 comment_id = api.add_comment(conn, task_id, author=author, body=text)
                 for c in api.list_comments(conn, task_id):
                     if c.id == comment_id:
                         log_event("task.comment", board=slug, task_id=task_id, comment_id=comment_id, body_len=len(text))
-                        return _project(asdict(c), KANBAN_COMMENT_KEYS)
+                        return project(asdict(c), KANBAN_COMMENT_KEYS)
             raise RuntimeError(f"add_comment 가 돌려준 id {comment_id} 가 목록에 없다")
 
         return web.json_response({"comment": await run_blocking(work)}, status=201)
@@ -743,11 +615,11 @@ def add_comment_handler(api):
 
 
 def link_handler(api, op: str):
-    """`op` ∈ add|remove. 순환 400 `cycle`, 없는 카드 404. remove 는 `{ok: 실제로 지웠는지}`."""
+    """`op` ∈ add|remove. 순환 400 `link_cycle`, 없는 카드 404. remove 는 `{ok: 실제로 지웠는지}`."""
     if op not in ("add", "remove"):
         raise ValueError(f"link_handler op 는 add|remove 다: {op!r}")
 
-    @_guarded
+    @guarded
     async def handler(request):
         slug = _board_from_query(api, request)
         body = await read_json_object(request)
@@ -758,7 +630,7 @@ def link_handler(api, op: str):
         def work():
             with board_conn(api, slug) as conn:
                 for tid in (parent_id, child_id):
-                    _require_task(api, conn, tid)
+                    require_task(api, conn, tid)
                 if op == "remove":
                     ok = bool(api.unlink_tasks(conn, parent_id, child_id))
                 else:
@@ -766,7 +638,7 @@ def link_handler(api, op: str):
                         api.link_tasks(conn, parent_id, child_id)
                     except ValueError as exc:
                         msg = str(exc)
-                        code = "cycle" if ("cycle" in msg or "itself" in msg) else "invalid_link"
+                        code = "link_cycle" if ("cycle" in msg or "itself" in msg) else "invalid_link"
                         raise RequestError(400, code, msg)
                     ok = True
                 log_event(f"link.{op}", board=slug, parent_id=parent_id, child_id=child_id, ok=ok)

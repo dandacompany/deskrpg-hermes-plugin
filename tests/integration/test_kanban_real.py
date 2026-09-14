@@ -130,7 +130,7 @@ async def test_카드_조회는_댓글_사건_링크_실행을_함께_준다(cli
 
     # 순환은 400 cycle, 없는 카드는 404
     resp = await client.post(f"/deskrpg/kanban/links{B}", json={"parent_id": child["id"], "child_id": parent["id"]})
-    assert resp.status == 400 and (await resp.json())["error"] == "cycle"
+    assert resp.status == 400 and (await resp.json())["error"] == "link_cycle"
     resp = await client.post(f"/deskrpg/kanban/links{B}", json={"parent_id": "nope", "child_id": parent["id"]})
     assert resp.status == 404
     resp = await client.delete(f"/deskrpg/kanban/links{B}", json={"parent_id": parent["id"], "child_id": child["id"]})

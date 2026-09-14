@@ -487,3 +487,19 @@ async def test_Hermes_가_RuntimeError_를_던지면_409_invalid_transition(aioh
     body = await resp.json()
     assert resp.status == 409
     assert body == {"error": "invalid_transition", "detail": "still running"}
+
+
+async def test_Hermes_가_예상_못_한_예외를_던지면_500_internal_error_JSON(aiohttp_client, fake_api, kanban):
+    task = _task(kanban)
+
+    def boom(*a, **kw):
+        raise RuntimeError("secret claim_lock")
+
+    # RuntimeError/ValueError 는 동작 본체가 409 로 삼키므로 그 바깥(보드 열기)에서 터뜨린다.
+    fake_api.board_exists = boom
+    client = await _client(aiohttp_client, fake_api)
+    resp = await _post(client, task.id, "archive")
+    assert resp.status == 500
+    body = await resp.json()
+    assert body == {"error": "internal_error", "detail": "RuntimeError"}
+    assert "secret" not in await resp.text()

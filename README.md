@@ -110,9 +110,9 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 | POST | `/deskrpg/kanban/tasks/{id}/attachments?board=` | default | multipart `file` 파트 → 201 `{attachment}`. 초과 시 413 `attachment_too_large` (아래 상한) |
 | GET | `/deskrpg/kanban/attachments/{id}?board=` | default | 파일 바이트 (`Content-Type`·`Content-Disposition`) |
 | DELETE | `/deskrpg/kanban/attachments/{id}?board=` | default | `{ok}` — Hermes 가 blob 도 지운다 |
-| POST | `/deskrpg/kanban/links?board=` | default | `{parent_id, child_id}` → `{ok}`. 순환 400 `cycle`, 없는 카드 404 |
+| POST | `/deskrpg/kanban/links?board=` | default | `{parent_id, child_id}` → `{ok}`. 순환(자기 자신 포함) 400 `link_cycle`, 없는 카드 404 |
 | DELETE | `/deskrpg/kanban/links?board=` | default | 링크 해제 |
-| POST | `/deskrpg/kanban/dispatch?board=&max=8` | default | 디스패처 한 틱 → `{spawned, skipped_locked, warning?}` (`kanban.dispatch_in_gateway` 가 꺼져 있으면 `warning:"embedded_dispatcher_disabled"`) |
+| POST | `/deskrpg/kanban/dispatch?board=&max=8` | default | **수동** 디스패치 한 틱 → `{spawned:[{task_id, profile}], skipped_locked, warning?}`. `kanban.*` 운영 설정(`max_in_progress*` 등)을 적용하지 않고 `dispatch_once` 를 바로 부른다 — 대시보드의 수동 디스패치와 같다 (`kanban.dispatch_in_gateway` 가 꺼져 있으면 `warning:"embedded_dispatcher_disabled"`) |
 | GET | `/deskrpg/kanban/tasks/{id}/log?board=&tail=` | default | 워커 로그 `{exists, size_bytes, content, truncated}` (tail 기본 16384, 최대 1 MiB) |
 | GET | `/deskrpg/kanban/orchestration` | default | `kanban.*` 운영 설정 + 해소된 프로필 |
 | PUT | `/deskrpg/kanban/orchestration` | default | 같은 모양 + `restart_required` (`max_in_progress*` 는 디스패처가 기동 시에만 읽는다) |
@@ -137,7 +137,7 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 | POST | `/p/{profile}/deskrpg/cron/jobs/{id}/pause` | profile | `{job}` |
 | POST | `/p/{profile}/deskrpg/cron/jobs/{id}/resume` | profile | `{job}` · 끝난 일회성 409 `job_terminal` |
 | POST | `/p/{profile}/deskrpg/cron/jobs/{id}/run` | profile | 202 `{accepted:true, job}` — 다음 스케줄러 틱이 돌린다 · 일시정지 중 409 `job_paused` · 끝난 일회성 409 `job_terminal` |
-| GET | `/p/{profile}/deskrpg/cron/delivery-targets` | profile | `{targets:[{id:"local", …}, …]}` |
+| GET | `/p/{profile}/deskrpg/cron/delivery-targets` | profile | `{targets:[{id, name, home_target_set, home_env_var}, …]}` — `local` 이 항상 첫 항목. `home_env_var` 는 **null 일 수 있다**(local 은 항상 null; 플랫폼 배달처도 환경변수로 홈을 정하지 않으면 null) |
 | GET | `/p/{profile}/deskrpg/cron/blueprints` | profile | Hermes 템플릿 카탈로그(`deliver` 옵션은 위 배달처로 교체) |
 | POST | `/p/{profile}/deskrpg/cron/blueprints/instantiate` | profile | `{blueprint, values}` → 201 `{job}` · 모르는 키 404 · 값 오류 422 `invalid_blueprint_values` |
 

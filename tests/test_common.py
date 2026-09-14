@@ -141,3 +141,40 @@ def test_log_event_는_본문을_찍지_않는다(caplog):
     assert "body_bytes=2" in line
     assert "parents_count=2" in line
     assert "board=proj" in line and "task_id=t1" in line and "ok=True" in line
+
+
+# ---------------------------------------------------------------------------
+# guarded — 모든 핸들러 팩토리의 마지막 방어선
+# ---------------------------------------------------------------------------
+
+
+async def test_guarded_는_RequestError_를_그_응답으로_바꾼다():
+    @common.guarded
+    async def handler(request):
+        raise common.RequestError(409, "invalid_transition", "why")
+
+    resp = await handler(None)
+    assert resp.status == 409
+    assert resp.text == '{"error": "invalid_transition", "detail": "why"}'
+
+
+async def test_guarded_는_예상_못_한_예외를_500_internal_error_타입_이름만으로_바꾼다(caplog):
+    @common.guarded
+    async def handler(request):
+        raise RuntimeError("secret-token-abc /home/dante/.hermes/config.yaml")
+
+    with caplog.at_level("ERROR", logger="deskrpg_plugin"):
+        resp = await handler(None)
+    assert resp.status == 500
+    assert resp.text == '{"error": "internal_error", "detail": "RuntimeError"}'
+    assert "secret-token-abc" not in resp.text
+    # 로그 메시지 자체에도 타입 이름만 — 트레이스는 exc_info 로 붙는다.
+    assert any(r.getMessage() == "[deskrpg] 핸들러 예외: RuntimeError" and r.exc_info for r in caplog.records)
+
+
+async def test_guarded_는_정상_응답을_그대로_돌려준다():
+    @common.guarded
+    async def handler(request):
+        return web.json_response({"ok": True})
+
+    assert (await handler(None)).status == 200

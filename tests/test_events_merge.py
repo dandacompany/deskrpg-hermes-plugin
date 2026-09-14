@@ -64,6 +64,19 @@ def test_쌍만_남았고_limit_이_1_이면_쌍을_통째로_싣는다():
     assert has_more is False
 
 
+def test_limit_1_에서_run_finished_status_쌍이_첫_원소면_limit_plus_1_개를_싣는다_의도된_유일한_예외():
+    # 쌍 앞에 비울 사건이 없고 limit=1 이면 쌍을 반으로 자를 수 없다 — 이때만 응답이 limit+1(=2)개다.
+    # 쌍 뒤에 사건이 더 있어도 마찬가지이고 has_more 가 그것을 알린다. 그 밖의 어떤 경우에도 limit 을 넘지 않는다.
+    emitted, has_more, by = events.merge([_k(2, 2), _k(2, 2, sub=1), _k(3, 3)], [_d(4, 1)], [], 1)
+    assert [e["id"] for e in emitted] == ["k:2", "k:2:status"]
+    assert len(emitted) == 2 == 1 + 1
+    assert has_more is True
+    assert by["k"] == emitted and by["d"] == []
+    # limit ≥ 2 면 쌍 앞을 비우는 쪽을 택해 limit 을 지킨다.
+    emitted, has_more, _ = events.merge([_k(1, 1), _k(2, 2), _k(2, 2, sub=1), _k(3, 3)], [], [], 2)
+    assert [e["id"] for e in emitted] == ["k:1"] and has_more is True
+
+
 # ---------------------------------------------------------------------------
 # 출처별 전진 — 실은 것까지만
 # ---------------------------------------------------------------------------

@@ -275,3 +275,31 @@ def test_프로필_스코프_안에서만_장부를_읽는다(fake_api, store, h
     _run(fake_api, {})
     assert store.scope_log and all(entry == (home, home) for entry in store.scope_log)
     assert store.current_home is None and store.home_override_stack == []
+
+
+# ---------------------------------------------------------------------------
+# job_name 은 null 이 되지 않는다 — 잡이 없거나 이름이 비면 잡 id
+# ---------------------------------------------------------------------------
+
+
+def test_장부_사건의_job_name_은_잡이_지워졌으면_잡_id_다(fake_api, store, home):
+    base = time.time() - 60
+    # 잡 레코드 없이 장부만 — 실행 뒤 잡을 지운 경우.
+    store.add_execution(home, id="exec1", job_id="gone01", status="running", claimed_at=_iso(base), started_at=_iso(base + 1))
+    evs, _ = _run(fake_api, {})
+    assert evs[0]["payload"]["job_name"] == "gone01"
+
+
+def test_장부_사건의_job_name_은_이름이_비어_있으면_잡_id_다(fake_api, store, home):
+    base = time.time() - 60
+    store.add_job(home, id="job001", name="")
+    store.add_execution(home, id="exec1", job_id="job001", status="running", claimed_at=_iso(base), started_at=_iso(base + 1))
+    evs, _ = _run(fake_api, {})
+    assert evs[0]["payload"]["job_name"] == "job001"
+
+
+def test_잡_레코드_폴백의_job_name_도_이름이_없으면_잡_id_다(fake_api, store, home):
+    at = _iso(time.time() - 30)
+    store.add_job(home, id="job001", name=None, fire_claim={"at": at, "by": "m:1"})
+    evs, _ = _run(fake_api, {})
+    assert evs[0]["payload"]["job_name"] == "job001"

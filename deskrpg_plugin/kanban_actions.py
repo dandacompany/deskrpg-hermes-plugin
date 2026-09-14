@@ -16,13 +16,11 @@ specify/decompose 는 보조 LLM 을 부른다. 타임아웃은 Hermes 인자(`t
 `conn` 을 받지 않고 현재 보드를 스스로 열므로 `scoped_current_board(slug)` 로 보드를 고정한다.
 """
 
-import contextlib
-
 from aiohttp import web
 
 from .common import (
     RequestError,
-    board_conn,
+    guarded,
     log_event,
     parse_board_slug,
     read_json_object,
@@ -31,46 +29,16 @@ from .common import (
     run_blocking,
 )
 from .contract_fields import KANBAN_TASK_ACTIONS
-from .kanban_board import _require_task, _task_full
+# 카드 조회(404)·KanbanTaskFull 직렬화·행위자 판정은 `kanban_common` 의 것을 쓴다 —
+# 상세·생성·수정 응답과 동작 응답의 모양이 갈라지면 안 된다.
+from .kanban_common import actor_from_request, open_board, require_task, task_payload
 
 # 보조 LLM 호출의 타임아웃(초). Hermes 기본(120/180)과 같고, 운영에서 조정할 수 있게 상수로 둔다.
 SPECIFY_TIMEOUT_SECONDS = 120
 DECOMPOSE_TIMEOUT_SECONDS = 180
 
-ACTOR_HEADER = "X-DeskRPG-Actor"
-DEFAULT_ACTOR = "deskrpg"
 RECLAIM_REASON = "reclaimed by deskrpg"
 TERMINATE_REASON = "terminated by deskrpg"
-
-
-# ---------------------------------------------------------------------------
-# 다른 칸반 핸들러(첨부·디스패치)도 같이 쓰는 도우미
-# ---------------------------------------------------------------------------
-
-
-def actor_from_request(request) -> str:
-    """`X-DeskRPG-Actor: <값>` 이 있으면 `deskrpg:<값>`, 없으면 `deskrpg`(spec §5.3 created_by 규칙과 같다)."""
-    raw = (request.headers.get(ACTOR_HEADER) or "").strip()
-    return f"{DEFAULT_ACTOR}:{raw[:100]}" if raw else DEFAULT_ACTOR
-
-
-@contextlib.contextmanager
-def open_board(api, slug: str):
-    """보드 존재를 확인한 뒤 연결을 연다. **워커 스레드 안에서만** 쓴다. 없으면 404.
-
-    `board_conn` 은 `init_db(board=)` 부터 부르는데, 모르는 슬러그로 그걸 부르면 Hermes 가
-    빈 보드를 만들어 버릴 수 있다 — 존재 검사가 먼저다.
-    """
-    if not api.board_exists(slug):
-        raise RequestError(404, "board_not_found", slug)
-    with board_conn(api, slug) as conn:
-        yield conn
-
-
-# 카드 조회(404)와 KanbanTaskFull 직렬화(계약 키 투영 + 롤업)는 T2 `kanban_board` 의 것을 그대로 쓴다 —
-# 상세·생성·수정 응답과 동작 응답의 모양이 갈라지면 안 된다.
-require_task = _require_task
-task_payload = _task_full
 
 
 def transition_error(detail) -> RequestError:
@@ -208,6 +176,7 @@ def action_handler(api, name: str):
     if name not in KANBAN_TASK_ACTIONS:
         raise ValueError(f"모르는 칸반 동작: {name!r}")
 
+    @guarded
     async def handler(request):
         task_id = request.match_info["id"]
         try:
@@ -221,8 +190,9 @@ def action_handler(api, name: str):
                 body = await read_json_object(request) if request.can_read_body else {}
                 payload, extra = await run_blocking(_run_simple_action, api, slug, task_id, name, body, actor)
         except RequestError as exc:
+            # 상태 코드만 남기고 `guarded` 에 넘긴다 — 응답 변환은 한 곳에서.
             log_event(f"kanban.{name}", board=slug_or_none(request), task_id=task_id, status=str(exc.status))
-            return exc.response()
+            raise
         log_event(f"kanban.{name}", board=slug, task_id=task_id, status="200")
         return web.json_response({"task": payload, **extra})
 

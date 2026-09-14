@@ -411,3 +411,22 @@ async def test_배달처는_local_을_앞에_붙인다(aiohttp_client, fake_api,
     assert targets[0] == {"id": "local", "name": "Local", "home_target_set": True, "home_env_var": None}
     for target in targets:
         assert set(target) == DELIVERY_TARGET_KEYS
+
+
+# ---------------------------------------------------------------------------
+# 예상 못 한 예외 → 500 internal_error (타입 이름만)
+# ---------------------------------------------------------------------------
+
+
+async def test_Hermes_가_예상_못_한_예외를_던지면_500_internal_error_JSON(aiohttp_client, fake_api, store, profile):
+    def boom(*a, **kw):
+        raise RuntimeError("secret jobs.json")
+
+    fake_api.list_jobs = boom
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.get("/p/sophie/deskrpg/cron/jobs")
+    assert resp.status == 500
+    body = await resp.json()
+    assert body == {"error": "internal_error", "detail": "RuntimeError"}
+    assert "secret" not in await resp.text()
+    assert store.current_home is None  # 스코프는 예외에도 원상복구된다

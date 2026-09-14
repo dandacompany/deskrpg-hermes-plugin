@@ -13,6 +13,7 @@ from aiohttp import web
 
 from .common import (
     RequestError,
+    guarded,
     log_event,
     parse_board_slug,
     read_json_object,
@@ -21,7 +22,7 @@ from .common import (
     run_blocking,
 )
 from .contract_fields import UPDATE_ORCHESTRATION_KEYS
-from .kanban_actions import open_board
+from .kanban_common import open_board
 
 DEFAULT_DISPATCH_MAX = 8
 _PROFILE_KEYS = ("orchestrator_profile", "default_assignee")
@@ -75,17 +76,18 @@ def _spawned_entry(item) -> dict:
 
 
 def dispatch_handler(api):
+    """수동 틱 — `kanban.*` 운영 설정(max_in_progress* 등)을 거치지 않고 `dispatch_once` 를 바로 부른다.
+    대시보드의 수동 디스패치와 같다; 설정을 적용하는 것은 게이트웨이의 주기 디스패처다."""
+
+    @guarded
     async def handler(request):
         def work(slug, max_spawn):
             with open_board(api, slug) as conn:
                 return api.dispatch_once(conn, board=slug, max_spawn=max_spawn)
 
-        try:
-            slug = parse_board_slug(request)
-            max_spawn = _parse_max(request)
-            result = await run_blocking(work, slug, max_spawn)
-        except RequestError as exc:
-            return exc.response()
+        slug = parse_board_slug(request)
+        max_spawn = _parse_max(request)
+        result = await run_blocking(work, slug, max_spawn)
         spawned = [_spawned_entry(item) for item in (getattr(result, "spawned", None) or [])]
         body = {"spawned": spawned, "skipped_locked": bool(getattr(result, "skipped_locked", False))}
         if not _dispatch_in_gateway(api):
@@ -134,6 +136,7 @@ def orchestration_payload(api) -> dict:
 
 
 def get_orchestration_handler(api):
+    @guarded
     async def handler(request):
         return web.json_response(await run_blocking(orchestration_payload, api))
 
@@ -194,12 +197,10 @@ def _apply_orchestration(api, body: dict) -> dict:
 
 
 def put_orchestration_handler(api):
+    @guarded
     async def handler(request):
-        try:
-            body = await read_json_object(request)
-            payload = await run_blocking(_apply_orchestration, api, body)
-        except RequestError as exc:
-            return exc.response()
+        body = await read_json_object(request)
+        payload = await run_blocking(_apply_orchestration, api, body)
         return web.json_response(payload)
 
     return handler
@@ -227,6 +228,7 @@ def _profile_summaries(api) -> list:
 
 
 def profiles_handler(api):
+    @guarded
     async def handler(request):
         return web.json_response({"profiles": await run_blocking(_profile_summaries, api)})
 

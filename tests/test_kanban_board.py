@@ -222,3 +222,21 @@ async def test_보드_보기_경고_요약은_진단에서_계산한다(aiohttp_
     assert card["warnings"] == {"count": 4, "highest_severity": "error"}
     assert seen["config"] == {"from": "Asia/Seoul"}  # load_config() 를 거쳐 왔다
     assert seen["graph"] == {"parents": [], "children": []}
+
+
+# ---------------------------------------------------------------------------
+# 예상 못 한 예외 → 500 internal_error (타입 이름만)
+# ---------------------------------------------------------------------------
+
+
+async def test_Hermes_가_예상_못_한_예외를_던지면_500_internal_error_JSON(aiohttp_client, fake_api):
+    def boom(**kw):
+        raise RuntimeError("secret /path/to/board.db")
+
+    fake_api.list_boards = boom
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.get("/deskrpg/kanban/boards")
+    assert resp.status == 500
+    body = await resp.json()
+    assert body == {"error": "internal_error", "detail": "RuntimeError"}
+    assert "secret" not in await resp.text()

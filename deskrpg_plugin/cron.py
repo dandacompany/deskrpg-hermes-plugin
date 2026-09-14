@@ -22,6 +22,8 @@ from aiohttp import web
 from . import cron_results
 from .common import (
     RequestError,
+    guarded,
+    json_error,
     log_event,
     read_json_object,
     require_bool,
@@ -227,26 +229,25 @@ def create_job_in_scope(api, profile_name, spec: dict):
         try:
             job = api.create_job_with_scheduler_registration(**spec)
         except api.CronSchedulerRegistrationError as exc:
-            raise _RegistrationFailed(exc) from exc
+            # 잡은 저장됐다 — 424 본문에 실어 보내려고 스코프 안에서 state 까지 붙여 둔다.
+            job = getattr(exc, "job", None)
+            raise _RegistrationFailed(exc, with_state(api, job) if isinstance(job, dict) else None) from exc
         except ValueError as exc:
             raise RequestError(400, "invalid_schedule", str(exc)) from exc
         reconcile_provider(api, profile_name)
         return with_state(api, job)
 
 
-class _RegistrationFailed(Exception):
-    """424 응답에 저장된 잡을 실어 보내기 위한 운반체."""
+class _RegistrationFailed(RequestError):
+    """424 응답에 저장된 잡을 실어 보내기 위한 운반체 — `guarded` 가 `response()` 로 바꾼다."""
 
-    def __init__(self, cause):
-        super().__init__(str(cause))
-        self.cause = cause
+    def __init__(self, cause, job):
+        super().__init__(424, "scheduler_registration_failed", str(cause))
+        self.job = job
 
-    def response(self, api):
-        job = getattr(self.cause, "job", None)
-        body = {"error": "scheduler_registration_failed", "detail": str(self.cause)}
-        if isinstance(job, dict):
-            body["job"] = with_state(api, job)
-        return web.json_response(body, status=424)
+    def response(self) -> web.Response:
+        extra = {"job": self.job} if self.job is not None else {}
+        return json_error(self.status, self.code, self.detail, **extra)
 
 
 def parse_create_body(body: dict, profile_home) -> dict:
@@ -296,24 +297,16 @@ def _query_flag(request, key) -> bool:
     return request.query.get(key, "").strip().lower() in ("1", "true", "yes", "on")
 
 
-async def _guarded(api, fn):
-    """워커 스레드에서 fn 을 돌리고 RequestError·등록 실패를 JSON 응답으로 바꾼다."""
-    try:
-        return await run_blocking(fn)
-    except RequestError as exc:
-        return exc.response()
-    except _RegistrationFailed as exc:
-        return exc.response(api)
-
-
 # ---------------------------------------------------------------------------
-# 핸들러 팩토리 — routes.py 가 `handler(api)` 로 만든다
+# 핸들러 팩토리 — routes.py 가 `handler(api)` 로 만든다. 전부 `guarded` 로 감싼다
+# (RequestError·등록 실패 424 → JSON, 그 밖의 예외 → 500 internal_error).
 # ---------------------------------------------------------------------------
 
 
 def list_jobs_handler(api):
     """K2 — GET jobs?include_disabled=true → {jobs:[CronJob]}"""
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
         include_disabled = _query_flag(request, "include_disabled")
@@ -322,9 +315,7 @@ def list_jobs_handler(api):
             with cron_scope(api, profile):
                 return [with_state(api, job) for job in api.list_jobs(include_disabled=include_disabled)]
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"jobs": result})
 
     return handler
@@ -333,6 +324,7 @@ def list_jobs_handler(api):
 def get_job_handler(api):
     """K2 — GET jobs/{id} → {job} (없으면 404)"""
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
 
@@ -344,9 +336,7 @@ def get_job_handler(api):
                     raise RequestError(404, "job_not_found", job_id)
                 return with_state(api, job)
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"job": result})
 
     return handler
@@ -355,6 +345,7 @@ def get_job_handler(api):
 def list_runs_handler(api):
     """K3 — GET jobs/{id}/runs?limit=20 → {runs:[...], limit}"""
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
         limit = cron_results.clamp_runs_limit(request.query.get("limit"))
@@ -368,9 +359,7 @@ def list_runs_handler(api):
                 # job_id 가 이름일 수도 있으니 세션 id 접두사에 쓰이는 정본 id 로 바꾼다.
                 return cron_results.cron_runs_for_job(api, home, str(job.get("id") or job_id), limit)
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"runs": result, "limit": limit})
 
     return handler
@@ -379,12 +368,10 @@ def list_runs_handler(api):
 def create_job_handler(api):
     """K4 — POST jobs → 201 {job}"""
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
-        try:
-            body = await read_json_object(request)
-        except RequestError as exc:
-            return exc.response()
+        body = await read_json_object(request)
 
         def work():
             home = resolve_profile_home(api, profile)
@@ -393,9 +380,7 @@ def create_job_handler(api):
             log_event("cron.job.created", profile=profile, job_id=str(job.get("id")))
             return job
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"job": result}, status=201)
 
     return handler
@@ -404,12 +389,10 @@ def create_job_handler(api):
 def update_job_handler(api):
     """K5 — PUT jobs/{id} {updates:{...}} → {job}"""
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
-        try:
-            body = await read_json_object(request)
-        except RequestError as exc:
-            return exc.response()
+        body = await read_json_object(request)
 
         def work():
             job_id = _job_id_of(request)
@@ -427,9 +410,7 @@ def update_job_handler(api):
                 log_event("cron.job.updated", profile=profile, job_id=job_id, keys=sorted(updates))
                 return with_state(api, job)
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"job": result})
 
     return handler
@@ -439,6 +420,7 @@ def _toggle_handler(api, action):
     """K6 — pause/resume 공통. ValueError(지난 일회성) → 409 job_terminal."""
     hermes_fn = {"pause": api.pause_job, "resume": api.resume_job}[action]
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
 
@@ -455,9 +437,7 @@ def _toggle_handler(api, action):
                 log_event(f"cron.job.{action}", profile=profile, job_id=job_id)
                 return with_state(api, job)
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"job": result})
 
     return handler
@@ -478,6 +458,7 @@ def run_handler(api):
     "한 번만 돌려 보기" 가 영구 재개로 둔갑하면 안 된다.
     """
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
 
@@ -499,9 +480,7 @@ def run_handler(api):
                 log_event("cron.job.run", profile=profile, job_id=job_id)
                 return with_state(api, triggered)
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"accepted": True, "job": result}, status=202)
 
     return handler
@@ -510,6 +489,7 @@ def run_handler(api):
 def delete_job_handler(api):
     """K7 — DELETE jobs/{id} → {ok:true} (없으면 404)"""
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
 
@@ -526,9 +506,7 @@ def delete_job_handler(api):
                 log_event("cron.job.deleted", profile=profile, job_id=job_id)
                 return True
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"ok": True})
 
     return handler
@@ -542,6 +520,7 @@ def delivery_targets_in_scope(api) -> list:
 def delivery_targets_handler(api):
     """K8 — GET delivery-targets → {targets:[...]}"""
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
 
@@ -549,9 +528,7 @@ def delivery_targets_handler(api):
             with cron_scope(api, profile):
                 return delivery_targets_in_scope(api)
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"targets": result})
 
     return handler
@@ -577,6 +554,7 @@ def blueprint_entries_in_scope(api) -> list:
 def blueprints_handler(api):
     """K9 — GET blueprints → {blueprints:[AutomationBlueprint]}"""
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
 
@@ -584,9 +562,7 @@ def blueprints_handler(api):
             with cron_scope(api, profile):
                 return blueprint_entries_in_scope(api)
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"blueprints": result})
 
     return handler
@@ -599,12 +575,10 @@ def instantiate_blueprint_handler(api):
     만든 spec 의 origin 을 `{"source":"deskrpg","blueprint":key}` 로 바꿔 K4 와 같은 생성 경로를 탄다.
     """
 
+    @guarded
     async def handler(request):
         profile = _profile_of(request)
-        try:
-            body = await read_json_object(request)
-        except RequestError as exc:
-            return exc.response()
+        body = await read_json_object(request)
 
         def work():
             key = require_str(body, "blueprint")
@@ -627,9 +601,7 @@ def instantiate_blueprint_handler(api):
             log_event("cron.blueprint.instantiated", profile=profile, job_id=str(job.get("id")), blueprint=key)
             return job
 
-        result = await _guarded(api, work)
-        if isinstance(result, web.Response):
-            return result
+        result = await run_blocking(work)
         return web.json_response({"job": result}, status=201)
 
     return handler

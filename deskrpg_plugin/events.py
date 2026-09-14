@@ -28,7 +28,7 @@ from aiohttp import web
 from . import cron as _cron
 from . import cron_results
 from . import deleted_log
-from .common import RequestError, board_conn, log_event, parse_board_slug, run_blocking
+from .common import RequestError, board_conn, guarded, log_event, parse_board_slug, run_blocking
 
 logger = logging.getLogger("deskrpg_plugin")
 
@@ -343,12 +343,14 @@ def _profile_names(api) -> list:
 
 
 def _job_name(api, job_id, cache):
+    """잡 이름. 잡이 지워졌거나 이름이 없으면 **잡 id** 로 대신한다 — `job_name` 은 null 이 되지 않는다."""
     if job_id not in cache:
         try:
             job = api.get_job(job_id)
         except Exception:
             job = None
-        cache[job_id] = job.get("name") if isinstance(job, dict) else None
+        name = job.get("name") if isinstance(job, dict) else None
+        cache[job_id] = name if isinstance(name, str) and name.strip() else job_id
     return cache[job_id]
 
 
@@ -485,6 +487,12 @@ def _ledger_events(api, profile, home, part, tz) -> tuple:
     return events, candidates
 
 
+def _record_job_name(job: dict) -> str:
+    """잡 레코드 폴백의 `job_name` — 이름이 비어 있으면 id(`_job_name` 과 같은 규칙)."""
+    name = job.get("name")
+    return name if isinstance(name, str) and name.strip() else str(job.get("id"))
+
+
 def _fallback_events(api, profile, home, part, tz) -> tuple:
     """장부가 없는 프로필 — 잡 레코드 폴백. `fire_claim` 이 생기면 started 한 번, `last_run_at` 이 `t` 를 넘으면 finished.
 
@@ -514,7 +522,7 @@ def _fallback_events(api, profile, home, part, tz) -> tuple:
                     events.append(
                         _cron_event(
                             profile, exec_id, "started", cron_results.to_epoch(claim_at, tz), job_id,
-                            {"job_id": job_id, "job_name": job.get("name"), "profile": profile,
+                            {"job_id": job_id, "job_name": _record_job_name(job), "profile": profile,
                              "session_id": session_id, "started_at": claim_at},
                             claimed_at=None, pos_index=index,
                         )
@@ -534,7 +542,7 @@ def _fallback_events(api, profile, home, part, tz) -> tuple:
                 events.append(
                     _cron_event(
                         profile, exec_id, "finished", cron_results.to_epoch(last_run_at, tz), job_id,
-                        {"job_id": job_id, "job_name": job.get("name"), "profile": profile,
+                        {"job_id": job_id, "job_name": _record_job_name(job), "profile": profile,
                          "session_id": session_id, "status": "ok" if job.get("last_status") == "ok" else "error",
                          "started_at": started_at, "ended_at": last_run_at, "result_text": result_text},
                         claimed_at=str(last_run_at), pos_index=index,
@@ -627,6 +635,8 @@ def merge(kanban_events, deleted_events, cron_events, limit) -> tuple:
     emitted = everything[:limit]
     # 한 task_events 행에서 나온 쌍(run.finished + status)은 같은 ts·같은 출처라 항상 이웃이다. 그 사이를
     # 자르면 행이 "다 실리지 않은" 것이 되어 다음 호출에 앞쪽이 또 나온다 — 쌍은 통째로 넘기거나 통째로 싣는다.
+    # 쌍이 응답의 **첫** 원소라 앞을 비울 수 없으면(limit=1) 쌍을 통째로 싣는다 — 이때만 응답이 `limit+1` 개다.
+    # 쌍 뒤에 사건이 더 있어도 마찬가지다(has_more 로 알린다). 이건 의도한 유일한 예외다.
     if len(everything) > limit:
         last, following = emitted[-1], everything[limit]
         if last["_src"] == "k" == following["_src"] and last["_pos"][0] == following["_pos"][0]:
@@ -792,11 +802,9 @@ def collect(api, slug, state, limit) -> dict:
 def events_handler(api):
     """GET /deskrpg/events?board=&cursor=&limit= → `{events, cursor, has_more}` (E1–E7)."""
 
+    @guarded
     async def handler(request):
-        try:
-            slug = parse_board_slug(request)
-        except RequestError as exc:
-            return exc.response()
+        slug = parse_board_slug(request)
         limit = clamp_limit(request.query.get("limit"))
         token = request.query.get("cursor")
 
@@ -812,10 +820,6 @@ def events_handler(api):
             log_event("events.tail", board=slug, count=len(result["events"]), has_more=result["has_more"])
             return result
 
-        try:
-            body = await run_blocking(work)
-        except RequestError as exc:
-            return exc.response()
-        return web.json_response(body)
+        return web.json_response(await run_blocking(work))
 
     return handler

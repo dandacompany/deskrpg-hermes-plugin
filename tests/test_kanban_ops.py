@@ -262,3 +262,21 @@ async def test_profiles_는_메타를_못_읽어도_목록을_준다(aiohttp_cli
     client = await _client(aiohttp_client, fake_api)
     body = await (await client.get("/deskrpg/kanban/profiles")).json()
     assert body["profiles"][0]["description"] == ""
+
+
+# ---------------------------------------------------------------------------
+# 예상 못 한 예외 → 500 internal_error (타입 이름만)
+# ---------------------------------------------------------------------------
+
+
+async def test_Hermes_가_예상_못_한_예외를_던지면_500_internal_error_JSON(aiohttp_client, fake_api, kanban):
+    def boom(*a, **kw):
+        raise RuntimeError("secret workspace path")
+
+    fake_api.dispatch_once = boom
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post(f"/deskrpg/kanban/dispatch?board={BOARD}")
+    assert resp.status == 500
+    body = await resp.json()
+    assert body == {"error": "internal_error", "detail": "RuntimeError"}
+    assert "secret" not in await resp.text()

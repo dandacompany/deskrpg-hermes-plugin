@@ -132,3 +132,16 @@ async def test_board_가_없거나_모양이_틀리면_400(aiohttp_client, fake_
 async def test_인증_실패는_401(aiohttp_client, fake_api, kanban, store):
     client = await events_client(aiohttp_client, fake_api, authorized=False)
     assert (await client.get("/deskrpg/events?board=default")).status == 401
+
+
+async def test_Hermes_가_예상_못_한_예외를_던지면_500_internal_error_JSON(aiohttp_client, fake_api, kanban, store):
+    def boom(*a, **kw):
+        raise RuntimeError("secret board path")
+
+    fake_api.board_exists = boom
+    client = await events_client(aiohttp_client, fake_api)
+    resp = await client.get("/deskrpg/events?board=default")
+    assert resp.status == 500
+    body = await resp.json()
+    assert body == {"error": "internal_error", "detail": "RuntimeError"}
+    assert "secret" not in await resp.text()

@@ -17,8 +17,8 @@ from pathlib import Path
 
 from aiohttp import web
 
-from .common import RequestError, log_event, parse_board_slug, run_blocking
-from .kanban_actions import actor_from_request, open_board, require_task
+from .common import RequestError, guarded, log_event, parse_board_slug, run_blocking
+from .kanban_common import actor_from_request, attachment_payload, open_board, require_task
 
 # 워커 로그 tail 의 기본·상한(바이트). 로그는 2 MiB 에서 회전하므로 1 MiB 면 최근 절반이다.
 DEFAULT_LOG_TAIL_BYTES = 16384
@@ -30,16 +30,6 @@ UPLOAD_CHUNK_BYTES = 1024 * 1024
 def attachment_max_bytes(api) -> int:
     """`/deskrpg/info` 의 `attachment_max_bytes` 와 같은 식 — 게이트웨이 본문 상한과 칸반 상한 중 작은 쪽."""
     return min(int(api.MAX_REQUEST_BYTES), int(api.KANBAN_ATTACHMENT_MAX_BYTES))
-
-
-def attachment_payload(att) -> dict:
-    return {
-        "id": att.id,
-        "filename": att.filename,
-        "size": att.size,
-        "content_type": getattr(att, "content_type", None),
-        "created_at": getattr(att, "created_at", None),
-    }
 
 
 def _attachment_id(request) -> int:
@@ -60,6 +50,7 @@ def _too_large(max_bytes: int) -> web.Response:
 
 
 def list_attachments_handler(api):
+    @guarded
     async def handler(request):
         task_id = request.match_info["id"]
 
@@ -68,11 +59,8 @@ def list_attachments_handler(api):
                 require_task(api, conn, task_id)
                 return [attachment_payload(a) for a in api.list_attachments(conn, task_id)]
 
-        try:
-            slug = parse_board_slug(request)
-            rows = await run_blocking(work, slug)
-        except RequestError as exc:
-            return exc.response()
+        slug = parse_board_slug(request)
+        rows = await run_blocking(work, slug)
         return web.json_response({"attachments": rows})
 
     return handler
@@ -107,6 +95,7 @@ async def _read_file_part(request, max_bytes: int):
 
 
 def upload_attachment_handler(api):
+    @guarded
     async def handler(request):
         task_id = request.match_info["id"]
         max_bytes = attachment_max_bytes(api)
@@ -143,8 +132,8 @@ def upload_attachment_handler(api):
             payload = await run_blocking(store, slug, filename, content_type, data)
         except RequestError as exc:
             if exc.status == 413:
-                return _too_large(max_bytes)
-            return exc.response()
+                return _too_large(max_bytes)  # 413 만 `max_bytes` 를 싣는 다른 모양이다
+            raise
         log_event("kanban.attachment.upload", board=slug, task_id=task_id, attachment_id=payload["id"], data_bytes=len(data))
         return web.json_response({"attachment": payload}, status=201)
 
@@ -164,6 +153,7 @@ def _content_disposition(filename: str) -> str:
 
 
 def download_attachment_handler(api):
+    @guarded
     async def handler(request):
         def work(slug, att_id):
             with open_board(api, slug) as conn:
@@ -181,11 +171,8 @@ def download_attachment_handler(api):
                     raise RequestError(404, "attachment_missing", str(att_id))
                 return att, stored.read_bytes()
 
-        try:
-            slug = parse_board_slug(request)
-            att, data = await run_blocking(work, slug, _attachment_id(request))
-        except RequestError as exc:
-            return exc.response()
+        slug = parse_board_slug(request)
+        att, data = await run_blocking(work, slug, _attachment_id(request))
         return web.Response(
             body=data,
             content_type=getattr(att, "content_type", None) or "application/octet-stream",
@@ -196,18 +183,16 @@ def download_attachment_handler(api):
 
 
 def delete_attachment_handler(api):
+    @guarded
     async def handler(request):
         def work(slug, att_id):
             with open_board(api, slug) as conn:
                 if api.delete_attachment(conn, att_id) is None:
                     raise RequestError(404, "attachment_not_found", str(att_id))
 
-        try:
-            slug = parse_board_slug(request)
-            att_id = _attachment_id(request)
-            await run_blocking(work, slug, att_id)
-        except RequestError as exc:
-            return exc.response()
+        slug = parse_board_slug(request)
+        att_id = _attachment_id(request)
+        await run_blocking(work, slug, att_id)
         log_event("kanban.attachment.delete", board=slug, attachment_id=att_id)
         return web.json_response({"ok": True})
 
@@ -233,6 +218,7 @@ def _parse_tail(request) -> int:
 
 
 def worker_log_handler(api):
+    @guarded
     async def handler(request):
         task_id = request.match_info["id"]
 
@@ -249,12 +235,9 @@ def worker_log_handler(api):
             content = api.read_worker_log(task_id, tail_bytes=tail, board=slug) if truncated else full
             return {"exists": True, "size_bytes": size, "content": content or "", "truncated": truncated}
 
-        try:
-            slug = parse_board_slug(request)
-            tail = _parse_tail(request)
-            payload = await run_blocking(work, slug, tail)
-        except RequestError as exc:
-            return exc.response()
+        slug = parse_board_slug(request)
+        tail = _parse_tail(request)
+        payload = await run_blocking(work, slug, tail)
         return web.json_response(payload)
 
     return handler
@@ -264,6 +247,7 @@ __all__ = [
     "DEFAULT_LOG_TAIL_BYTES",
     "MAX_LOG_TAIL_BYTES",
     "attachment_max_bytes",
+    "attachment_payload",
     "list_attachments_handler",
     "upload_attachment_handler",
     "download_attachment_handler",

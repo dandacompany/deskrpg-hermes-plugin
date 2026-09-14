@@ -51,7 +51,9 @@ async def test_카드_상세_모양은_계약과_같다(aiohttp_client, fake_api
     assert [set(c) for c in body["comments"]] == [cf.KANBAN_COMMENT_KEYS]
     assert body["comments"][0]["author"] == "deskrpg:dante"
     assert all(set(e) == cf.KANBAN_EVENT_KEYS for e in body["events"])
-    assert [set(a) for a in body["attachments"]] == [cf.KANBAN_ATTACHMENT_KEYS]
+    # 첨부는 단일 직렬화기(`kanban_common.attachment_payload`) — 계약 키의 상위집합(content_type·created_at 포함)
+    assert len(body["attachments"]) == 1 and cf.KANBAN_ATTACHMENT_KEYS <= set(body["attachments"][0])
+    assert {"content_type", "created_at"} <= set(body["attachments"][0])
     assert len(body["runs"]) == 1
     assert cf.KANBAN_RUN_REQUIRED <= set(body["runs"][0]) <= cf.KANBAN_RUN_KEYS
 
@@ -537,7 +539,7 @@ async def test_링크_추가_삭제(aiohttp_client, fake_api):
     assert await resp.json() == {"ok": False}
 
 
-async def test_링크_순환은_400_cycle_없는_카드는_404(aiohttp_client, fake_api):
+async def test_링크_순환은_400_link_cycle_없는_카드는_404(aiohttp_client, fake_api):
     db = fake_api.kanban
     conn = _conn(fake_api)
     a = db.create_task(conn, title="a")
@@ -546,10 +548,10 @@ async def test_링크_순환은_400_cycle_없는_카드는_404(aiohttp_client, f
     client = await _client(aiohttp_client, fake_api)
     resp = await client.post(f"/deskrpg/kanban/links{B}", json={"parent_id": b, "child_id": a})
     assert resp.status == 400
-    assert (await resp.json())["error"] == "cycle"
+    assert (await resp.json())["error"] == "link_cycle"
     resp = await client.post(f"/deskrpg/kanban/links{B}", json={"parent_id": a, "child_id": a})
     assert resp.status == 400
-    assert (await resp.json())["error"] == "cycle"
+    assert (await resp.json())["error"] == "link_cycle"
     resp = await client.post(f"/deskrpg/kanban/links{B}", json={"parent_id": a, "child_id": "ghost"})
     assert resp.status == 404
     assert (await resp.json())["error"] == "task_not_found"
