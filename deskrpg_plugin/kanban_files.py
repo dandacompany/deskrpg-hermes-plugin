@@ -145,7 +145,7 @@ def upload_attachment_handler(api):
             if exc.status == 413:
                 return _too_large(max_bytes)
             return exc.response()
-        log_event("kanban.attachment.upload", board=slug, task_id=task_id, attachment_id=payload["id"], data=data)
+        log_event("kanban.attachment.upload", board=slug, task_id=task_id, attachment_id=payload["id"], data_bytes=len(data))
         return web.json_response({"attachment": payload}, status=201)
 
     return handler

@@ -459,7 +459,7 @@ def create_task_handler(api):
                 out = {"task": _task_full(api, conn, task_id)}
             if _dispatcher_missing(api):
                 out["warning"] = "dispatcher_missing"
-            log_event("task.create", board=slug, task_id=task_id, title=fields["title"])
+            log_event("task.create", board=slug, task_id=task_id, title_len=len(fields["title"]))
             return out
 
         return web.json_response(await run_blocking(work), status=201)
@@ -733,7 +733,7 @@ def add_comment_handler(api):
                 comment_id = api.add_comment(conn, task_id, author=author, body=text)
                 for c in api.list_comments(conn, task_id):
                     if c.id == comment_id:
-                        log_event("task.comment", board=slug, task_id=task_id, comment_id=comment_id, body=text)
+                        log_event("task.comment", board=slug, task_id=task_id, comment_id=comment_id, body_len=len(text))
                         return _project(asdict(c), KANBAN_COMMENT_KEYS)
             raise RuntimeError(f"add_comment 가 돌려준 id {comment_id} 가 목록에 없다")
 
