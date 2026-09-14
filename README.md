@@ -245,7 +245,7 @@ SOUL.md 의 revision(내용의 SHA-256 앞 16자)과 일치하지 않으면 덮�
 
 ### PUT config — 값 타입까지 검사한다
 
-`PUT /p/{profile}/deskrpg/config` 는 `{model, provider, toolsets}` 세 키만
+`PUT /p/{profile}/deskrpg/config` 는 `{model, provider, toolsets, reasoning_effort}` 네 키만
 받는다. 이 허용목록 밖의 키는 거절한다(400) — 임의 YAML 키 하나가 프로필을
 못 뜨게 만들 수 있어서다. 키가 허용목록에 있어도 값의 타입이 틀리면 거절한다:
 `model`/`provider` 는 비어 있지 않은 문자열, `toolsets` 는 문자열 리스트여야
