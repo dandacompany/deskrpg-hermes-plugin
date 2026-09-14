@@ -41,8 +41,10 @@ def _conn(kanban):
 
 
 def _task(kanban, **kw):
+    """카드를 만들고 **객체**를 돌려준다. Hermes(와 base 가짜)의 `create_task` 는 id 문자열을 준다."""
     kw.setdefault("title", "카드")
-    return kanban.create_task(_conn(kanban), **kw)
+    conn = _conn(kanban)
+    return kanban.get_task(conn, kanban.create_task(conn, **kw))
 
 
 def _form(data: bytes, *, filename="보고서.txt", content_type="text/plain", field="file"):
@@ -78,7 +80,7 @@ async def test_업로드하면_201_과_attachment(aiohttp_client, fake_api, kanb
     assert KANBAN_ATTACHMENT_REQUIRED <= set(att)
     assert att["filename"] == "보고서.txt" and att["size"] == 5
     # Hermes 단일 쓰기 경로에 보드·상한·업로더가 그대로 전달된다.
-    call = dict(kanban.calls)["store_attachment_bytes"]
+    call = kanban.calls["store_attachment_bytes"][-1]
     assert call["board"] == BOARD and call["uploaded_by"] == "deskrpg:dante" and call["content_type"] == "text/plain"
     assert call["max_bytes"] == min(fake_api.MAX_REQUEST_BYTES, fake_api.KANBAN_ATTACHMENT_MAX_BYTES)
     # blob 은 그 보드의 attachments_root 아래에 있다

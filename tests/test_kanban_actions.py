@@ -42,8 +42,15 @@ def _conn(kanban):
 
 
 def _task(kanban, **kw):
+    """카드를 만들고 **객체**를 돌려준다. Hermes(와 base 가짜)의 `create_task` 는 id 문자열을 준다."""
     kw.setdefault("title", "카드")
-    return kanban.create_task(_conn(kanban), **kw)
+    conn = _conn(kanban)
+    return kanban.get_task(conn, kanban.create_task(conn, **kw))
+
+
+def _called(kanban, name, **kw):
+    """base 가짜의 호출 기록(`calls[name]`)에 kwargs 가 부분 일치하는 항목이 있는가."""
+    return any(all(rec.get(k) == v for k, v in kw.items()) for rec in kanban.calls.get(name, []))
 
 
 async def _post(client, task_id, action, body=None, *, board=BOARD, headers=None):
@@ -117,7 +124,7 @@ async def test_reassign_은_프로필을_바꾼다(aiohttp_client, fake_api, kan
     body = await resp.json()
     assert resp.status == 200, body
     assert body["task"]["assignee"] == "mia"
-    assert ("reassign_task", {"profile": "mia", "reclaim_first": False, "reason": None}) in kanban.calls
+    assert _called(kanban, "reassign_task", profile="mia", reclaim_first=False, reason=None)
 
 
 async def test_reassign_은_없는_프로필이면_400(aiohttp_client, fake_api, kanban):
@@ -173,7 +180,7 @@ async def test_reclaim_은_고정_사유로_되찾는다(aiohttp_client, fake_ap
     body = await resp.json()
     assert resp.status == 200, body
     assert body["task"]["status"] == "ready"
-    assert ("reclaim_task", {"reason": "reclaimed by deskrpg"}) in kanban.calls
+    assert _called(kanban, "reclaim_task", reason="reclaimed by deskrpg")
 
 
 async def test_reclaim_은_실행_중이_아니면_409(aiohttp_client, fake_api, kanban):
@@ -245,7 +252,7 @@ async def test_decompose_는_child_ids_를_outcome_에_싣는다(aiohttp_client,
         seen.update(timeout=timeout, author=author)
         c1 = kanban.create_task(_conn(kanban), title="자식1", parents=[task_id])
         c2 = kanban.create_task(_conn(kanban), title="자식2", parents=[task_id])
-        return _outcome(task_id=task_id, ok=True, reason="decomposed", fanout=True, child_ids=[c1.id, c2.id])
+        return _outcome(task_id=task_id, ok=True, reason="decomposed", fanout=True, child_ids=[c1, c2])
 
     fake_api.decompose_task = decompose_task
     client = await _client(aiohttp_client, fake_api)
@@ -286,7 +293,7 @@ async def test_approve_는_review_카드를_done_으로(aiohttp_client, fake_api
     body = await resp.json()
     assert resp.status == 200, body
     assert body["task"]["status"] == "done" and body["task"]["result"] == "좋다"
-    assert ("complete_task", {"result": "좋다", "summary": "승인"}) in kanban.calls
+    assert _called(kanban, "complete_task", result="좋다", summary="승인")
 
 
 async def test_approve_는_ready_카드도_받는다(aiohttp_client, fake_api, kanban):
@@ -299,7 +306,7 @@ async def test_approve_는_ready_카드도_받는다(aiohttp_client, fake_api, k
 
 
 async def test_approve_가_거절되면_409(aiohttp_client, fake_api, kanban):
-    task = _task(kanban)  # todo — Hermes 가 받지 않는 상태
+    task = _task(kanban, triage=True)  # triage — Hermes 가 받지 않는 상태
     client = await _client(aiohttp_client, fake_api)
     resp = await _post(client, task.id, "approve")
     assert resp.status == 409
@@ -342,8 +349,8 @@ async def test_request_changes_검토자_run_이_돌면_댓글_후_request_chang
     assert [(c.author, c.body) for c in comments] == [("deskrpg:dante", "테스트가 빠졌다")]
     # 댓글이 먼저, 전이는 그 다음이다 — 사건 순서로 본다.
     kinds = [e.kind for e in kanban.list_events(conn, task.id)]
-    assert kinds.index("comment") < kinds.index("changes_requested")
-    assert ("request_changes", {"reason": "테스트가 빠졌다"}) in kanban.calls
+    assert kinds.index("commented") < kinds.index("changes_requested")
+    assert _called(kanban, "request_changes", reason="테스트가 빠졌다")
 
 
 async def test_request_changes_에서_Hermes_가_거절하면_409_에_사유(aiohttp_client, fake_api, kanban):
@@ -368,8 +375,8 @@ async def test_request_changes_활성_run_없이_review_면_reopen(aiohttp_clien
     body = await resp.json()
     assert resp.status == 200, body
     assert body["outcome"] == "reopened"
-    assert body["task"]["status"] == "ready" and body["task"]["assignee"] == "sophie"
-    assert ("reopen_review_task", {}) in kanban.calls
+    assert body["task"]["status"] == "ready"
+    assert _called(kanban, "reopen_review_task")
     assert [c.body for c in kanban.list_comments(conn, task.id)] == ["다시 봐 달라"]
 
 
@@ -382,7 +389,7 @@ async def test_request_changes_구현자_run_이_돌면_409_implementer_running(
     body = await resp.json()
     assert resp.status == 409
     assert body["error"] == "implementer_running"
-    assert "request_changes" not in [name for name, _ in kanban.calls]
+    assert "request_changes" not in kanban.calls
     # 댓글은 이미 남았다 — 순서가 (1) 댓글 (2) 판정이다.
     assert [c.body for c in kanban.list_comments(conn, task.id)] == ["멈춰"]
 
@@ -432,13 +439,13 @@ async def test_unblock_은_막히지_않은_카드면_409(aiohttp_client, fake_a
 
 async def test_terminate_는_활성_run_을_되찾는다(aiohttp_client, fake_api, kanban):
     task = _task(kanban)
-    kanban.start_run(_conn(kanban), task.id, pid=4242)
+    kanban.start_run(_conn(kanban), task.id, worker_pid=4242)
     client = await _client(aiohttp_client, fake_api)
     resp = await _post(client, task.id, "terminate")
     body = await resp.json()
     assert resp.status == 200, body
     assert body["task"]["status"] == "ready"
-    assert ("reclaim_task", {"reason": "terminated by deskrpg"}) in kanban.calls
+    assert _called(kanban, "reclaim_task", reason="terminated by deskrpg")
     assert [pid for pid, _lock in kanban.signals] == [4242]  # 워커에 실제 종료 신호가 갔다
 
 
@@ -449,7 +456,7 @@ async def test_terminate_는_활성_run_이_없으면_409_no_active_run(aiohttp_
     body = await resp.json()
     assert resp.status == 409
     assert body["error"] == "no_active_run"
-    assert "reclaim_task" not in [name for name, _ in kanban.calls]
+    assert "reclaim_task" not in kanban.calls
 
 
 async def test_archive_는_보관한다(aiohttp_client, fake_api, kanban):

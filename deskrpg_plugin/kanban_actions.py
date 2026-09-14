@@ -17,7 +17,6 @@ specify/decompose 는 보조 LLM 을 부른다. 타임아웃은 Hermes 인자(`t
 """
 
 import contextlib
-import dataclasses
 
 from aiohttp import web
 
@@ -31,7 +30,8 @@ from .common import (
     require_str,
     run_blocking,
 )
-from .contract_fields import KANBAN_TASK_ACTIONS, KANBAN_TASK_FULL_KEYS
+from .contract_fields import KANBAN_TASK_ACTIONS
+from .kanban_board import _require_task, _task_full
 
 # 보조 LLM 호출의 타임아웃(초). Hermes 기본(120/180)과 같고, 운영에서 조정할 수 있게 상수로 둔다.
 SPECIFY_TIMEOUT_SECONDS = 120
@@ -67,28 +67,10 @@ def open_board(api, slug: str):
         yield conn
 
 
-def require_task(api, conn, task_id: str):
-    task = api.get_task(conn, task_id)
-    if task is None:
-        raise RequestError(404, "task_not_found", task_id)
-    return task
-
-
-def task_payload(api, conn, task) -> dict:
-    """Hermes `Task` → 계약 `KanbanTaskFull`. 계약 키 밖의 필드는 싣지 않는다.
-
-    보드 보기·카드 상세와 같은 롤업(진행률·경고)은 여기서 계산하지 않는다 — 동작 응답은
-    "전이가 어떻게 됐나" 를 보여 주는 것이고, 클라이언트는 상세를 다시 읽는다.
-    """
-    raw = dataclasses.asdict(task) if dataclasses.is_dataclass(task) else dict(vars(task))
-    out = {key: value for key, value in raw.items() if key in KANBAN_TASK_FULL_KEYS}
-    out["latest_summary"] = api.latest_summary(conn, task.id)
-    out["comment_count"] = len(api.list_comments(conn, task.id))
-    out["link_counts"] = {
-        "parents": len(api.parent_ids(conn, task.id)),
-        "children": len(api.child_ids(conn, task.id)),
-    }
-    return out
+# 카드 조회(404)와 KanbanTaskFull 직렬화(계약 키 투영 + 롤업)는 T2 `kanban_board` 의 것을 그대로 쓴다 —
+# 상세·생성·수정 응답과 동작 응답의 모양이 갈라지면 안 된다.
+require_task = _require_task
+task_payload = _task_full
 
 
 def transition_error(detail) -> RequestError:
@@ -218,8 +200,7 @@ def _run_llm_action(api, slug: str, task_id: str, name: str, actor: str):
     else:
         extra = {"outcome": {"child_ids": list(getattr(outcome, "child_ids", None) or [])}}
     with open_board(api, slug) as conn:
-        task = require_task(api, conn, task_id)
-        return task_payload(api, conn, task), extra
+        return task_payload(api, conn, task_id), extra
 
 
 def action_handler(api, name: str):
@@ -257,8 +238,7 @@ def _run_simple_action(api, slug, task_id, name, body, actor):
             # Hermes 가 전이를 예외로 거절하는 경우(실행 중 재배정 RuntimeError, HallucinatedCardsError 등).
             # 요청 오류(RequestError)는 Exception 이지만 이 둘의 하위가 아니라 그대로 지나간다.
             raise transition_error(exc)
-        task = require_task(api, conn, task_id)
-        return task_payload(api, conn, task), extra
+        return task_payload(api, conn, task_id), extra
 
 
 def slug_or_none(request):
