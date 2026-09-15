@@ -40,21 +40,45 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
     assert "GET /deskrpg/info" in body["routes"]
 
 
-async def test_타임존이_없으면_null(aiohttp_client, fake_api):
-    # Hermes 는 타임존 미설정이면 None(서버 로컬)을 돌려준다.
+async def test_타임존이_없으면_서버_로컬_이름으로_폴백한다(aiohttp_client, fake_api, monkeypatch):
+    # Hermes 는 타임존 미설정이면 None(서버 로컬)을 돌려준다. 그래도 서버가 어느 지역
+    # 시각으로 도는지는 알 수 있으므로 null 대신 그 이름을 낸다.
     fake_api.get_timezone = lambda: None
+    monkeypatch.setenv("TZ", "Europe/Berlin")
     body = await _info(aiohttp_client, fake_api)
-    assert body["timezone"] is None
+    assert body["timezone"] == "Europe/Berlin"
 
 
-async def test_타임존_조회가_던져도_null(aiohttp_client, fake_api):
+async def test_타임존_조회가_던져도_폴백한다(aiohttp_client, fake_api, monkeypatch):
     # 설정 파일이 깨졌다고 info 가 500 이면 DeskRPG 는 자동화를 통째로 끈다.
     def boom():
         raise RuntimeError("config broken")
 
     fake_api.get_timezone = boom
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    body = await _info(aiohttp_client, fake_api)
+    assert body["timezone"] == "Asia/Tokyo"
+
+
+async def test_서버_로컬_이름도_못_알아내면_null(aiohttp_client, fake_api, monkeypatch):
+    fake_api.get_timezone = lambda: None
+    monkeypatch.delenv("TZ", raising=False)
+    monkeypatch.setattr(routes.os, "readlink", _raise_oserror)
     body = await _info(aiohttp_client, fake_api)
     assert body["timezone"] is None
+
+
+async def test_TZ_가_IANA_이름이_아니면_무시한다(aiohttp_client, fake_api, monkeypatch):
+    # `TZ=KST-9` 같은 POSIX 표기는 IANA 이름이 아니다 — 계약은 IANA 이름만 받는다.
+    fake_api.get_timezone = lambda: None
+    monkeypatch.setenv("TZ", "KST-9")
+    monkeypatch.setattr(routes.os, "readlink", lambda path: "/usr/share/zoneinfo/Asia/Seoul")
+    body = await _info(aiohttp_client, fake_api)
+    assert body["timezone"] == "Asia/Seoul"
+
+
+def _raise_oserror(path):
+    raise OSError("no symlink")
 
 
 async def test_첨부_상한은_두_상한_중_작은_쪽이다(aiohttp_client, fake_api):

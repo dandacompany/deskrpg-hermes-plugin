@@ -4,7 +4,9 @@
 require_auth 로 감싸므로, 핸들러를 빠뜨릴 자리가 없다.
 """
 
+import os
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from .auth import Scope, require_auth
 from . import identity as _identity
@@ -208,18 +210,54 @@ def _make_task_action(api):
     return handler
 
 
-def _info_timezone(api):
-    """`hermes_time.get_timezone()` 의 ZoneInfo 를 IANA 이름으로. 없거나 실패하면 null.
+def _system_timezone_name():
+    """Hermes 설정에 타임존이 없을 때 쓸 서버 로컬 IANA 이름. 못 알아내면 None.
 
-    Hermes 는 타임존이 미설정이면 None(서버 로컬)을 돌려준다. 설정 파일이 깨져 예외가
-    나더라도 info 가 죽어선 안 된다 — DeskRPG 는 이 응답으로 자동화 기능을 켜고 끈다.
+    Hermes 는 `timezone` 미설정을 None(= 서버 로컬 시각) 으로 돌려주는데, 그러면 info 의
+    `timezone` 이 null 이 되고 DeskRPG 크론 화면은 "게이트웨이 시간대 미확인" 을 그린다.
+    실제로는 서버가 어떤 지역 시각으로 도는지 알 수 있으므로 그 이름을 대신 보고한다.
+    추정이지 설정이 아니므로, IANA 이름으로 확인되는 것만 낸다 — `KST` 같은 약어는 버린다.
+
+    순서: TZ 환경변수 → /etc/localtime 심볼릭 링크. 둘 다 실패하면 None(옛 동작).
+    """
+    candidates = []
+    env = os.environ.get("TZ")
+    if env:
+        candidates.append(env.lstrip(":"))
+
+    try:
+        link = os.readlink("/etc/localtime")
+    except OSError:
+        link = ""
+    if link:
+        parts = link.replace("\\", "/").split("/zoneinfo/")
+        if len(parts) > 1:
+            candidates.append(parts[-1])
+
+    for name in candidates:
+        try:
+            ZoneInfo(name)
+        except Exception:
+            continue
+        return name
+    return None
+
+
+def _info_timezone(api):
+    """`hermes_time.get_timezone()` 의 ZoneInfo 를 IANA 이름으로. 없으면 서버 로컬 이름.
+
+    Hermes 는 타임존이 미설정이면 None(서버 로컬)을 돌려준다 — 그 경우 서버의 실제 로컬
+    타임존 이름으로 폴백한다. 설정 파일이 깨져 예외가 나더라도 info 가 죽어선 안 된다 —
+    DeskRPG 는 이 응답으로 자동화 기능을 켜고 끈다.
     """
     try:
         tz = api.get_timezone()
     except Exception:
-        return None
+        tz = None
     key = getattr(tz, "key", None)
-    return key if isinstance(key, str) and key else None
+    if isinstance(key, str) and key:
+        return key
+    return _system_timezone_name()
 
 
 def _info_dispatcher_present(api) -> bool:
