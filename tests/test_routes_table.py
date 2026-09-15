@@ -135,3 +135,29 @@ def test_plugin_yaml_이_requires_hermes_를_최상위에_선언하고_버전은
     assert manifest["version"] == "0.6.0"
     assert manifest["requires_hermes"] == ">=0.21.1"
     assert "requires" not in manifest
+
+
+def test_프로필_라우트가_포괄_라우트_앞으로_올라간다(fake_api):
+    """Hermes 의 `/p/{profile}/{tail:.*}` 가 먼저 등록돼 있어도 우리 라우트가 이긴다.
+
+    스테이징 실측: 이 순서를 안 고치면 `/p/sophie/deskrpg/cron/jobs` 가
+    포괄 라우트에 걸려 404 "Unknown or unconfigured profile" 이 된다.
+    """
+    from aiohttp import web
+
+    from deskrpg_plugin.routes import attach
+    from tests.conftest import FakeAdapter
+
+    app = web.Application()
+
+    async def _catchall(request):  # pragma: no cover - 매칭되면 테스트가 실패한다
+        return web.json_response({"error": "Unknown or unconfigured profile"}, status=404)
+
+    app.router.add_route("*", "/p/{profile}/{tail:.*}", _catchall)
+    attach(app, FakeAdapter(authorized=True), fake_api)
+
+    canonicals = [r.canonical for r in app.router._resources]
+    catchall_index = next(i for i, c in enumerate(canonicals) if c.startswith("/p/") and c.endswith("/{tail}"))
+    profile_indexes = [i for i, c in enumerate(canonicals) if c.startswith("/p/{profile}/deskrpg/")]
+    assert profile_indexes, "프로필 스코프 라우트가 하나도 등록되지 않았다"
+    assert max(profile_indexes) < catchall_index

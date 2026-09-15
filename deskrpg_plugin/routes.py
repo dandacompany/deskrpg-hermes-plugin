@@ -273,8 +273,61 @@ def attach(app, adapter, api) -> None:
     app.router.add_* 를 여기 말고 어디서도 부르지 않는다 — 그래야 감싸지 않은
     핸들러가 생길 수 없다.
     """
+    before = len(getattr(app.router, "_resources", []))
     for method, path, handler_name, scope in ROUTES:
         handler = require_auth(adapter, scope, handler_for(handler_name, api))
         app.router.add_route(method, path, handler)
         # 프로필 프리픽스 미러는 Hermes 가 자기 라우트에만 만들어 주므로,
         # /p/{profile}/ 경로는 우리가 테이블에 그대로 적어 등록한다.
+    _raise_above_profile_catchall(app, before)
+
+
+# Hermes 는 `/p/{profile}/{tail:.*}` 포괄 라우트를 **자기 라우트 전부를 등록한 뒤**
+# 마지막에 건다(gateway/platforms/api_server.py — "Registered LAST so every native
+# mirror above wins"). 플러그인 배선은 그보다 더 뒤에 일어나므로, 우리가 그냥
+# add_route 하면 `/p/{profile}/deskrpg/...` 요청은 전부 그 포괄 라우트에 먼저
+# 걸려 404("Unknown or unconfigured profile") 가 된다 — 스테이징에서 실측했다.
+# aiohttp 는 등록 순서대로 매칭하므로, 우리 리소스를 포괄 라우트 앞으로 옮긴다.
+_PROFILE_CATCHALL_SUFFIX = "/{tail}"
+
+
+def _raise_above_profile_catchall(app, first_index: int) -> None:
+    """방금 등록한 리소스를 `/p/{profile}/{tail:.*}` 앞으로 끌어올린다.
+
+    aiohttp 3.14 의 `UrlDispatcher.resolve` 는 `_resources` 목록이 아니라
+    **`_resource_index` 의 버킷**을 훑는다(경로를 뒤에서부터 잘라 가며 후보를 찾고,
+    같은 버킷 안에서는 등록 순서를 지킨다). `/p/{profile}/...` 는 전부 `/p` 버킷에
+    들어가므로 목록만 바꾸면 아무 효과가 없다 — 버킷도 같이 고쳐야 한다(실측).
+
+    둘 다 공개 API 가 아니다. 모양이 다르면 조용히 아무것도 하지 않는다 —
+    순서를 못 바꿔 404 가 나는 편이, 라우터를 깨뜨려 게이트웨이가 못 뜨는 것보다 낫다.
+    """
+    resources = getattr(app.router, "_resources", None)
+    if not isinstance(resources, list) or first_index >= len(resources):
+        return
+    catchall = None
+    for resource in resources[:first_index]:
+        canonical = getattr(resource, "canonical", "")
+        if canonical.startswith("/p/") and canonical.endswith(_PROFILE_CATCHALL_SUFFIX):
+            catchall = resource
+            break
+    if catchall is None:
+        return
+    ours = resources[first_index:]
+
+    def _reorder(bucket):
+        mine = [r for r in bucket if r in ours]
+        if not mine or catchall not in bucket:
+            return bucket
+        rest = [r for r in bucket if r not in ours]
+        return rest[: rest.index(catchall)] + mine + rest[rest.index(catchall) :]
+
+    del resources[first_index:]
+    at = resources.index(catchall)
+    resources[at:at] = ours
+
+    index = getattr(app.router, "_resource_index", None)
+    if isinstance(index, dict):
+        for key, bucket in list(index.items()):
+            if isinstance(bucket, list):
+                index[key] = _reorder(bucket)
