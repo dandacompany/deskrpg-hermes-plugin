@@ -197,7 +197,7 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 
 **이 라우트는 Hermes 의 `delete_profile` 을 부르지 않는다 — 그 함수는 멀티플렉스
 게이트웨이를 죽인다.** `_cleanup_gateway_service()` 가 지울 프로필의 서비스를
-정리하려고 `os.environ["HERMES_HOME"]` 을 바꾼 뒤 `get_service_name()` 을 부르는데,
+정리하려고 `HERMES_HOME` 환경변수를 바꾼 뒤 `get_service_name()` 을 부르는데,
 그 안의 `get_hermes_home()` 은 **컨텍스트 로컬 override → 환경변수 → 기본값** 순으로
 해소한다(`hermes_constants.py:114`). 게이트웨이 안에서는 override 가 살아 있어
 환경변수가 무시되고, 서비스 이름이 `hermes-gateway` — 지금 돌고 있는 게이트웨이
