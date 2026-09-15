@@ -28,7 +28,7 @@ def revision_of(body: str) -> str:
 
 
 def _normalize(text: str) -> str:
-    return text.replace("\r\n", "\n").replace("\r", "\n").lstrip("﻿").strip()
+    return text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff").strip()
 
 
 def is_default_template(body: str, api) -> bool:

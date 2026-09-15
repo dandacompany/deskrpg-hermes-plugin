@@ -5,6 +5,7 @@ on:
   pull_request:
 
 jobs:
+  # 가짜(_hermes_api 를 SimpleNamespace 로 바꾼) 단위 테스트 — Hermes 없이 돈다.
   test:
     runs-on: ubuntu-latest
     steps:
@@ -13,4 +14,25 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
-      - run: python -m pytest
+      - run: python -m pytest -q
+
+  # 실제 Hermes 위의 통합 테스트(spec §9 T2·T3). 스테이징 게이트웨이와 같은 커밋(0.21.2 == 3f86ed75)에
+  # 고정한다 — 태그가 아니라 커밋이라 업스트림이 태그를 옮겨도 이 잡의 대상은 바뀌지 않는다.
+  # `HERMES_INTEGRATION_REQUIRED=1`: 설치가 조용히 실패해 전부 skip 되면 잡이 실패한다(초록 = 실제로 돌았다).
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      HERMES_INTEGRATION_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - name: Install Hermes (staging commit)
+        run: pip install "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@3f86ed75dad1933036c52018e991dbd839837126"
+      - name: Verify Hermes import
+        run: python -c "import hermes_cli, cron, hermes_state; print('hermes ok')"
+      - run: python -m pytest -q -m integration tests/integration
+      # 가짜 스위트도 실제 Hermes 가 설치된 환경에서 한 번 더 — import 경로 충돌(예: aiohttp 버전)을 잡는다.
+      - run: python -m pytest -q

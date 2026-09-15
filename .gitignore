@@ -4,3 +4,7 @@ __pycache__/
 .venv/
 .superpowers/
 docs/
+
+# dryforge 3-doc / worktrees (local only)
+/.dryforge
+/.venv-hermes
