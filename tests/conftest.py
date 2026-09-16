@@ -92,6 +92,8 @@ def fake_api(tmp_path):
     swarm_calls = []
 
     def create_swarm(conn, *, goal, workers, verifier_assignee, synthesizer_assignee, **kw):
+        from tests.fakes_kanban import FakeTask
+
         workers = list(workers)
         swarm_calls.append(
             {
@@ -102,10 +104,30 @@ def fake_api(tmp_path):
                 **kw,
             }
         )
+        # 실제 create_swarm 은 루트·워커·검증자·합성자 카드를 진짜로 만든다. 여기서 이름만
+        # 흉내 내고 카드를 안 남기면 이후 `latest_blackboard`/`require_task` 조회가
+        # (진짜라면 있어야 할) 카드를 못 찾는다 — id 는 고정하되 board 상태에 직접 심는다.
+        state = conn.db._state(conn)
+        created_at = conn.db._now()
+        created_by = kw.get("created_by")
+
+        def _plant(task_id: str, title: str, assignee):
+            state.tasks[task_id] = FakeTask(
+                id=task_id, title=title, body=title, assignee=assignee, status="running",
+                priority=0, created_by=created_by, created_at=created_at,
+            )
+
+        worker_ids = [f"t_w{i}" for i in range(len(workers))]
+        _plant("t_root", goal, None)
+        for wid, worker in zip(worker_ids, workers):
+            _plant(wid, worker.title, worker.profile)
+        _plant("t_ver", "verify", verifier_assignee)
+        _plant("t_syn", "synthesize", synthesizer_assignee)
+
         return types.SimpleNamespace(
             as_dict=lambda: {
                 "root_id": "t_root",
-                "worker_ids": [f"t_w{i}" for i in range(len(workers))],
+                "worker_ids": worker_ids,
                 "verifier_id": "t_ver",
                 "synthesizer_id": "t_syn",
             }

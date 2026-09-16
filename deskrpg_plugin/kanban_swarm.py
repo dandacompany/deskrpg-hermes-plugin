@@ -18,7 +18,7 @@ from .common import (
     require_str_list,
     run_blocking,
 )
-from .kanban_common import actor_from_request, open_board
+from .kanban_common import actor_from_request, open_board, require_task
 
 
 def _worker_specs(api, raw_workers):
@@ -95,12 +95,6 @@ def create_swarm_handler(api):
 
 
 def blackboard_handler(api):
-    """카드(root_id) 존재는 여기서 확인하지 않는다 — `api.latest_blackboard` 자체가
-
-    Hermes 의 검증·조회 규약을 따른다. 여기서 `require_task` 로 먼저 걸러 버리면
-    Hermes 쪽 규칙(예: 아카이브된 루트도 블랙보드는 읽힌다)이 조용히 더 좁아진다.
-    """
-
     @guarded
     async def handler(request):
         slug = parse_board_slug(request)
@@ -108,6 +102,9 @@ def blackboard_handler(api):
 
         def work():
             with open_board(api, slug) as conn:
+                # 모르는 id 를 빈 블랙보드로 보여주면 오타를 낸 사용자가 "그런 카드 없다" 대신
+                # "블랙보드가 비었다" 로 오해한다 — fake-plugin-server.ts 계약과 같은 404 로 끊는다.
+                require_task(api, conn, task_id)
                 return api.latest_blackboard(conn, task_id)
 
         return web.json_response({"blackboard": await run_blocking(work)})

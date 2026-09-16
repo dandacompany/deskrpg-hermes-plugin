@@ -83,11 +83,20 @@ async def test_없는_프로필이면_400(aiohttp_client, fake_api, swarm_body):
     assert (await res.json())["error"] == "profile_not_found"
 
 
-async def test_블랙보드를_읽는다(aiohttp_client, fake_api):
+async def test_블랙보드를_읽는다(aiohttp_client, fake_api, swarm_body):
     client = await aiohttp_client(_app(fake_api))
-    res = await client.get("/deskrpg/kanban/tasks/t_root/blackboard?board=default")
+    created = await client.post("/deskrpg/kanban/swarm?board=default", json=swarm_body)
+    root_id = (await created.json())["root_id"]
+    res = await client.get(f"/deskrpg/kanban/tasks/{root_id}/blackboard?board=default")
     assert res.status == 200
     assert (await res.json())["blackboard"]["topology"] == {"goal": "g"}
+
+
+async def test_없는_카드의_블랙보드는_404(aiohttp_client, fake_api):
+    client = await aiohttp_client(_app(fake_api))
+    res = await client.get("/deskrpg/kanban/tasks/ghost-task/blackboard?board=default")
+    assert res.status == 404
+    assert (await res.json())["error"] == "task_not_found"
 
 
 def test_심볼이_없으면_라우트가_없다(fake_api):
