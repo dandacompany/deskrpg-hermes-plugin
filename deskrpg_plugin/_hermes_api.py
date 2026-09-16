@@ -6,6 +6,9 @@
 전부 아니면 전무다. 심볼이 하나라도 없으면 로드를 포기한다 — 목록은 되는데
 삭제만 조용히 실패하는 반쯤 동작하는 상태가 최악이다.
 
+`OPTIONAL_SPEC` 은 예외다 — 없으면 `None` 으로 남기고 로드는 계속한다. 그 심볼을 쓰는
+라우트가 **통째로** 등록되지 않으므로 반쯤 동작하는 상태가 생기지 않는다.
+
 ## 접근 규약 (0.6.0 — 다른 모듈은 이 규약을 따른다)
 
 `load()` 가 돌려주는 네임스페이스는 **평면(flat)** 이다. 원래 모듈이 무엇이든 심볼 이름
@@ -147,13 +150,24 @@ SPEC = (
     ("gateway.platforms.api_server", ("MAX_REQUEST_BYTES",)),
 )
 
+# 없어도 플러그인은 뜬다 — 그 기능만 꺼진다.
+#
+# `SPEC` 은 전부 아니면 전무다. 그 규칙의 의도는 "목록은 되는데 삭제만 조용히 실패하는
+# 반쯤 동작하는 상태" 를 막는 것이다. 스웜은 다르다 — 없으면 라우트가 **통째로** 등록되지
+# 않으므로 반쯤 되는 상태가 생기지 않는다. 반대로 이걸 `SPEC` 에 넣으면 `kanban_swarm`
+# 이 없는 구버전 Hermes 에서 칸반·크론까지 전부 죽는다.
+OPTIONAL_SPEC = (
+    ("hermes_cli.kanban_swarm", ("create_swarm", "latest_blackboard", "SwarmWorkerSpec")),
+)
+
 REQUIRED = tuple(name for _module, names in SPEC for name in names)
+OPTIONAL = tuple(name for _module, names in OPTIONAL_SPEC for name in names)
 
 
 def _assert_no_duplicate_names():
     # 평면 네임스페이스라 이름이 겹치면 한쪽이 조용히 다른 쪽을 덮는다 — import 시점에 막는다.
     seen = set()
-    for _module, names in SPEC:
+    for _module, names in (*SPEC, *OPTIONAL_SPEC):
         for name in names:
             if name in seen:
                 raise AssertionError(f"_hermes_api.SPEC 에 같은 이름이 두 번 있다: {name}")
@@ -183,5 +197,14 @@ def load() -> types.SimpleNamespace:
 
     if missing:
         raise MissingHermesApi("없는 심볼: " + ", ".join(missing))
+
+    for module_path, names in OPTIONAL_SPEC:
+        try:
+            module = importlib.import_module(module_path)
+        except Exception:
+            # 모듈 자체가 없는 구버전 Hermes. 이 기능만 끄고 계속한다.
+            module = None
+        for name in names:
+            resolved[name] = getattr(module, name, None) if module is not None else None
 
     return types.SimpleNamespace(**resolved)
