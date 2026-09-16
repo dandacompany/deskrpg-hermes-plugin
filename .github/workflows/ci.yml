@@ -34,9 +34,11 @@ jobs:
       # `sdist` 만 막고 `build_editable` 은 건드리지 않으므로, 소스를 받아 editable 로 깐다.
       # blob 필터 + 단일 커밋 fetch 라 전체 히스토리를 받지 않는다.
       - name: Install Hermes (staging commit, editable)
-        env:
-          HERMES_REF: 3f86ed75dad1933036c52018e991dbd839837126
         run: |
+          # 핀 커밋의 단일 출처는 `.hermes-ref` 다 — scripts/ci-local.sh 도 같은 파일을
+          # 읽는다. 여기 SHA 를 박아 두면 로컬 검사와 CI 가 조용히 갈라진다.
+          HERMES_REF="$(tr -d '[:space:]' < .hermes-ref)"
+          echo "Hermes ref: $HERMES_REF"
           git clone --filter=blob:none --no-checkout \
             https://github.com/NousResearch/hermes-agent.git hermes-src
           git -C hermes-src fetch --depth 1 origin "$HERMES_REF"

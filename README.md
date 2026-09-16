@@ -13,6 +13,26 @@ DeskRPG 전용 라우트를 Hermes API Server 에 등록하는 Hermes 플러그�
   로드를 포기한다** — 프로필만 되고 칸반만 500 을 내는 반쯤 뜬 상태는 만들지 않는다(`deskrpg_plugin/_hermes_api.py`).
 - 런타임 의존은 Hermes 가 이미 가진 `aiohttp` 와 `PyYAML` 뿐이다. 새 의존을 두지 않는다.
 
+## 개발 — 푸시 전에 돌린다
+
+```bash
+scripts/ci-local.sh          # 단위 스위트만 (몇 초)
+scripts/ci-local.sh --full   # CI 와 동일 (Hermes 를 받아 editable 설치, 약 1분)
+```
+
+`--full` 은 CI 의 두 잡을 그대로 재현한다: 핀된 Hermes 를 받아 editable 로 깔고,
+통합 스위트를 돌리고, **실제 Hermes 가 설치된 환경에서 단위 스위트를 한 번 더** 돌린다.
+마지막 단계가 중요하다 — 가짜(`fake_api`)만으로는 통과하는데 진짜 Hermes 앞에서는
+깨지는 테스트가 실제로 있었다(`sys.modules` 에 남은 실제 모듈이 "모듈 없음" 흉내를
+무력화했다).
+
+핀된 Hermes 커밋의 단일 출처는 **`.hermes-ref`** 다. 워크플로와 이 스크립트가 같은
+파일을 읽으므로 로컬 검사와 CI 가 갈라질 수 없다. 올릴 때는 그 파일만 고친다.
+
+> 2026-09-15 0.6.0 부터 master CI 가 6연속 빨강이었다. 전부 master 직접 푸시였고,
+> 로컬에서 CI 와 같은 것을 돌릴 방법이 없어 푸시 전에 알 수가 없었다. 이 스크립트가
+> 그 구멍이다.
+
 ## 설치 · 업데이트 · 확인
 
 ```bash
