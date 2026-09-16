@@ -44,6 +44,9 @@ EXPECTED_ROUTES = {
     ("POST", "/deskrpg/kanban/links", _OWNER),
     ("DELETE", "/deskrpg/kanban/links", _OWNER),
     ("POST", "/deskrpg/kanban/dispatch", _OWNER),
+    # §5.7 스웜 — 심볼이 없는 Hermes 빌드에서는 `routes.routes_for()` 가 걸러낸다(등록 안 함).
+    ("POST", "/deskrpg/kanban/swarm", _OWNER),
+    ("GET", "/deskrpg/kanban/tasks/{id}/blackboard", _OWNER),
     ("GET", "/deskrpg/kanban/tasks/{id}/log", _OWNER),
     # §5.6 운영 설정·프로필
     ("GET", "/deskrpg/kanban/orchestration", _OWNER),
@@ -67,18 +70,18 @@ EXPECTED_ROUTES = {
 }
 
 
-def test_라우트_테이블이_스펙의_마흔세_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 43
-    assert len(routes.ROUTES) == 43, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+def test_라우트_테이블이_스펙의_마흔다섯_개와_스코프까지_정확히_같다():
+    assert len(EXPECTED_ROUTES) == 45
+    assert len(routes.ROUTES) == 45, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
-def test_소유자_라우트는_26_개_프로필_라우트는_17_개다():
+def test_소유자_라우트는_28_개_프로필_라우트는_17_개다():
     by_scope = {}
     for _m, _p, _h, scope in routes.ROUTES:
         by_scope[scope] = by_scope.get(scope, 0) + 1
-    # 소유자: 기존 4 + 칸반 21 + 사건 1 = 26 · 프로필: 기존 5 + 크론 12 = 17. 계산을 테스트 안에 남긴다.
-    assert by_scope == {routes.Scope.DEFAULT: 4 + 21 + 1, routes.Scope.PROFILE: 5 + 12}
+    # 소유자: 기존 4 + 칸반 21 + 스웜 2 + 사건 1 = 28 · 프로필: 기존 5 + 크론 12 = 17. 계산을 테스트 안에 남긴다.
+    assert by_scope == {routes.Scope.DEFAULT: 4 + 21 + 2 + 1, routes.Scope.PROFILE: 5 + 12}
 
 
 def test_고정_세그먼트_카드_라우트가_action_와일드카드보다_앞에_있다():
@@ -121,7 +124,7 @@ def test_보고하는_버전이_plugin_yaml_과_일치한다():
     assert PLUGIN_VERSION != "unknown"
 
 
-def test_plugin_yaml_이_requires_hermes_를_최상위에_선언하고_버전은_0_6_0_이다():
+def test_plugin_yaml_이_requires_hermes_를_최상위에_선언하고_버전은_0_7_0_이다():
     """`requires: {hermes: …}` 처럼 중첩하면 Hermes 는 모르는 키로 무시한다 — 실제 필드는
     최상위 `requires_hermes` 다(hermes_cli/plugin_validate.py). 무시되면 0.20.x 에 설치돼도
     경고 없이 로드된 뒤 칸반 심볼이 없어 죽는다.
@@ -132,7 +135,7 @@ def test_plugin_yaml_이_requires_hermes_를_최상위에_선언하고_버전은
 
     raw = (pathlib.Path(__file__).resolve().parent.parent / "plugin.yaml").read_text(encoding="utf-8")
     manifest = yaml.safe_load(raw)
-    assert manifest["version"] == "0.6.0"
+    assert manifest["version"] == "0.7.0"
     assert manifest["requires_hermes"] == ">=0.21.1"
     assert "requires" not in manifest
 

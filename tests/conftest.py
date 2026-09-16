@@ -78,6 +78,42 @@ def fake_api(tmp_path):
             wrapper.unlink()
         return d
 
+    class FakeSwarmWorkerSpec:
+        """실제 `SwarmWorkerSpec` 은 frozen dataclass 다. 테스트는 넘어온 값만 본다."""
+
+        def __init__(self, *, profile, title, body, skills=(), priority=0, max_runtime_seconds=None):
+            self.profile = profile
+            self.title = title
+            self.body = body
+            self.skills = list(skills)
+            self.priority = priority
+            self.max_runtime_seconds = max_runtime_seconds
+
+    swarm_calls = []
+
+    def create_swarm(conn, *, goal, workers, verifier_assignee, synthesizer_assignee, **kw):
+        workers = list(workers)
+        swarm_calls.append(
+            {
+                "goal": goal,
+                "workers": workers,
+                "verifier_assignee": verifier_assignee,
+                "synthesizer_assignee": synthesizer_assignee,
+                **kw,
+            }
+        )
+        return types.SimpleNamespace(
+            as_dict=lambda: {
+                "root_id": "t_root",
+                "worker_ids": [f"t_w{i}" for i in range(len(workers))],
+                "verifier_id": "t_ver",
+                "synthesizer_id": "t_syn",
+            }
+        )
+
+    def latest_blackboard(conn, root_id):
+        return {"topology": {"goal": "g"}, "_authors": {"topology": "swarm-orchestrator"}}
+
     api = types.SimpleNamespace(
         get_profile_dir=get_profile_dir,
         get_wrapper_path=get_wrapper_path,
@@ -93,6 +129,11 @@ def fake_api(tmp_path):
         # 0.6.0 — hermes_cli.profiles 추가분
         get_active_profile_name=lambda: "default",
         normalize_profile_name=lambda name: (name or "").strip().lower(),
+        # 0.7.0 — hermes_cli.kanban_swarm (없으면 None, task-1 의 OPTIONAL_SPEC 규칙과 같다)
+        create_swarm=create_swarm,
+        latest_blackboard=latest_blackboard,
+        SwarmWorkerSpec=FakeSwarmWorkerSpec,
+        swarm_calls=swarm_calls,
     )
     _add_automation_fakes(api, tmp_path)
     return api

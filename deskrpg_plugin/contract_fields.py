@@ -16,7 +16,18 @@ PLUGIN_INFO_REQUIRED = frozenset({"plugin", "version", "capabilities", "timezone
 # `routes` 는 0.1.0 부터 내던 필드라 유지한다. 계약 타입에는 없지만 해가 없다.
 PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | frozenset({"routes"})
 PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attachment_max_bytes"})
+# 항상 있는 것. 스웜처럼 Hermes 빌드에 따라 갈리는 것은 `capabilities()` 가 붙인다.
 CAPABILITIES = ("kanban", "cron", "events")
+
+
+def capabilities(api) -> tuple[str, ...]:
+    """이 Hermes 빌드에서 **실제로 되는** 것만 돌려준다.
+
+    버전만 보고 판단하면 "새 플러그인인데 404" 라는 진단 불가능한 상태가 된다.
+    capability 문자열이 가용성을 말하게 한다.
+    """
+    extra = ("swarm",) if getattr(api, "create_swarm", None) is not None else ()
+    return CAPABILITIES + extra
 
 # ---------------------------------------------------------------------------
 # A.1 칸반 — 상태·열

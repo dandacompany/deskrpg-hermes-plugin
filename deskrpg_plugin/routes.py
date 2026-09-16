@@ -17,6 +17,7 @@ from . import kanban_board as _kanban_board
 from . import kanban_actions as _kanban_actions
 from . import kanban_files as _kanban_files
 from . import kanban_ops as _kanban_ops
+from . import kanban_swarm as _kanban_swarm
 from . import cron as _cron
 from . import events as _events
 
@@ -80,6 +81,8 @@ ROUTES = [
     ("POST", "/deskrpg/kanban/links", "kanban_add_link", Scope.DEFAULT),
     ("DELETE", "/deskrpg/kanban/links", "kanban_remove_link", Scope.DEFAULT),
     ("POST", "/deskrpg/kanban/dispatch", "kanban_dispatch", Scope.DEFAULT),
+    ("POST", "/deskrpg/kanban/swarm", "kanban_create_swarm", Scope.DEFAULT),
+    ("GET", "/deskrpg/kanban/tasks/{id}/blackboard", "kanban_blackboard", Scope.DEFAULT),
     ("GET", "/deskrpg/kanban/orchestration", "kanban_get_orchestration", Scope.DEFAULT),
     ("PUT", "/deskrpg/kanban/orchestration", "kanban_put_orchestration", Scope.DEFAULT),
     ("GET", "/deskrpg/kanban/profiles", "kanban_profiles", Scope.DEFAULT),
@@ -157,6 +160,8 @@ _HANDLERS = {
     "kanban_add_link": lambda api: _kanban_board.link_handler(api, "add"),
     "kanban_remove_link": lambda api: _kanban_board.link_handler(api, "remove"),
     "kanban_dispatch": lambda api: _kanban_ops.dispatch_handler(api),
+    "kanban_create_swarm": lambda api: _kanban_swarm.create_swarm_handler(api),
+    "kanban_blackboard": lambda api: _kanban_swarm.blackboard_handler(api),
     "kanban_get_orchestration": lambda api: _kanban_ops.get_orchestration_handler(api),
     "kanban_put_orchestration": lambda api: _kanban_ops.put_orchestration_handler(api),
     "kanban_profiles": lambda api: _kanban_ops.profiles_handler(api),
@@ -276,15 +281,15 @@ def _info_dispatcher_present(api) -> bool:
 def _make_info(api):
     from aiohttp import web
 
-    from .contract_fields import CAPABILITIES
+    from .contract_fields import capabilities
 
     async def handler(request):
         return web.json_response(
             {
                 "plugin": "deskrpg",
                 "version": PLUGIN_VERSION,
-                "routes": [f"{m} {p}" for m, p, _h, _s in ROUTES],
-                "capabilities": list(CAPABILITIES),
+                "routes": [f"{m} {p}" for m, p, _h, _s in routes_for(api)],
+                "capabilities": list(capabilities(api)),
                 "timezone": _info_timezone(api),
                 "kanban": {
                     "dispatcher_present": _info_dispatcher_present(api),
@@ -305,6 +310,24 @@ def handler_for(name, api):
     return _HANDLERS[name](api)
 
 
+# 이 Hermes 빌드에 심볼이 없으면 등록하지 않는 라우트. 등록해 놓고 500 을 내지 않는다 —
+# 호출부가 "설치는 됐는데 고장" 과 "기능이 없음" 을 구분할 수 없게 된다.
+_OPTIONAL_ROUTES = {
+    "kanban_create_swarm": "create_swarm",
+    "kanban_blackboard": "latest_blackboard",
+}
+
+
+def routes_for(api):
+    """이 빌드에서 실제로 뜰 라우트만."""
+    return [
+        row
+        for row in ROUTES
+        if _OPTIONAL_ROUTES.get(row[2]) is None
+        or getattr(api, _OPTIONAL_ROUTES[row[2]], None) is not None
+    ]
+
+
 def attach(app, adapter, api) -> None:
     """테이블을 돌며 전부 인증으로 감싸 등록한다.
 
@@ -312,7 +335,7 @@ def attach(app, adapter, api) -> None:
     핸들러가 생길 수 없다.
     """
     before = len(getattr(app.router, "_resources", []))
-    for method, path, handler_name, scope in ROUTES:
+    for method, path, handler_name, scope in routes_for(api):
         handler = require_auth(adapter, scope, handler_for(handler_name, api))
         app.router.add_route(method, path, handler)
         # 프로필 프리픽스 미러는 Hermes 가 자기 라우트에만 만들어 주므로,
