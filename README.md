@@ -26,6 +26,16 @@ scripts/ci-local.sh --full   # CI 와 동일 (Hermes 를 받아 editable 설치,
 깨지는 테스트가 실제로 있었다(`sys.modules` 에 남은 실제 모듈이 "모듈 없음" 흉내를
 무력화했다).
 
+클론마다 한 번, 푸시 시점에 이 검사를 강제하도록 훅을 켠다:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+`.githooks/pre-push` 가 `scripts/ci-local.sh --full` 을 돌리고, 실패하면 푸시를 막는다.
+의도적으로 건너뛸 때만 `git push --no-verify`. PR 게이트를 두지 않기로 했으므로
+이것이 마지막 방어선이다.
+
 핀된 Hermes 커밋의 단일 출처는 **`.hermes-ref`** 다. 워크플로와 이 스크립트가 같은
 파일을 읽으므로 로컬 검사와 CI 가 갈라질 수 없다. 올릴 때는 그 파일만 고친다.
 
