@@ -29,10 +29,37 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements-dev.txt
-      - name: Install Hermes (staging commit)
-        run: pip install "hermes-agent @ git+https://github.com/NousResearch/hermes-agent.git@3f86ed75dad1933036c52018e991dbd839837126"
+      # 업스트림이 wheel·sdist 빌드를 막았다(hermes-agent `setup.py` 의 빌드 가드) —
+      # `pip install "hermes-agent @ git+..."` 는 이제 항상 실패한다. 가드는 `bdist_wheel`·
+      # `sdist` 만 막고 `build_editable` 은 건드리지 않으므로, 소스를 받아 editable 로 깐다.
+      # blob 필터 + 단일 커밋 fetch 라 전체 히스토리를 받지 않는다.
+      - name: Install Hermes (staging commit, editable)
+        env:
+          HERMES_REF: 3f86ed75dad1933036c52018e991dbd839837126
+        run: |
+          git clone --filter=blob:none --no-checkout \
+            https://github.com/NousResearch/hermes-agent.git hermes-src
+          git -C hermes-src fetch --depth 1 origin "$HERMES_REF"
+          git -C hermes-src checkout "$HERMES_REF"
+          pip install -e hermes-src
       - name: Verify Hermes import
         run: python -c "import hermes_cli, cron, hermes_state; print('hermes ok')"
+      # hermes-agent 에도 `tests/` 정규 패키지가 있다. editable 설치가 루트를 통째로
+      # sys.path 에 얹는 모드로 떨어지면 우리 `tests.conftest` 가 그쪽으로 붙어, 통합
+      # 테스트가 엉뚱한 픽스처로 조용히 돌거나 수집 단계에서 깨진다(로컬 conda 에서
+      # 실제로 겪은 증상이다). setuptools 의 strict finder 는 선언된 패키지만 노출하므로
+      # 정상이면 여기서 우리 것이 잡힌다 — 아니면 즉시 실패시킨다.
+      - name: Guard — 우리 tests 패키지가 가려지지 않았는가
+        run: |
+          python - <<'GUARD'
+          import pathlib, tests
+          here = pathlib.Path.cwd().resolve()
+          paths = [pathlib.Path(p).resolve() for p in list(getattr(tests, "__path__", []))]
+          assert paths, f"tests 패키지를 찾지 못했다: {tests!r}"
+          for path in paths:
+              assert path == here / "tests", f"tests 가 가려졌다 → {path}"
+          print("tests ok:", paths)
+          GUARD
       - run: python -m pytest -q -m integration tests/integration
       # 가짜 스위트도 실제 Hermes 가 설치된 환경에서 한 번 더 — import 경로 충돌(예: aiohttp 버전)을 잡는다.
       - run: python -m pytest -q
