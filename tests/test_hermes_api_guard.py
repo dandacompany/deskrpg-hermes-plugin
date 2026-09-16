@@ -9,12 +9,19 @@ def _install(monkeypatch, missing=(), skip_modules=()):
     """`SPEC` + `OPTIONAL_SPEC` 의 모든 모듈을 가짜로 깐다.
 
     `missing` 에 든 이름만 그 모듈에서 빠뜨린다. `skip_modules` 에 든 모듈 경로는
-    sys.modules 에 아예 넣지 않는다 — 모듈 자체가 없는 구버전 Hermes 를 흉내 낸다.
+    `sys.modules` 에 `None` 을 박아 **import 자체가 ImportError 로 죽게** 만든다 —
+    모듈이 없는 구버전 Hermes 를 흉내 내는 것이다.
+
+    가짜를 넣지 않고 넘어가기만 하면 안 된다. 실제 Hermes 가 설치된 환경(CI 의
+    integration 잡)에서는 `import_module` 이 진짜 모듈을 찾아버리고, 앞선 테스트가
+    이미 import 해 뒀다면 캐시에서 그대로 나온다. 그러면 "모듈이 없을 때" 를
+    검증한다는 이 테스트가 조용히 반대를 통과시킨다 — 실제로 CI 에서 그렇게 깨졌다.
     """
     for pkg in ("hermes_cli", "cron", "gateway", "gateway.platforms"):
         monkeypatch.setitem(sys.modules, pkg, types.ModuleType(pkg))
     for module_path, names in (*_hermes_api.SPEC, *_hermes_api.OPTIONAL_SPEC):
         if module_path in skip_modules:
+            monkeypatch.setitem(sys.modules, module_path, None)
             continue
         mod = types.ModuleType(module_path)
         for name in names:
