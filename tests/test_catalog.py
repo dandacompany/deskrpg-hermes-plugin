@@ -92,7 +92,17 @@ def test_models_dev_가_비면_큐레이션만이라도_준다(monkeypatch):
     assert catalog._models_for("p") == ["curated-1", "curated-2"]
 
 
-def test_인증되지_않은_프로바이더의_모델은_받아오지_않는다(monkeypatch):
+def _request(profile):
+    return types.SimpleNamespace(match_info={"profile": profile})
+
+
+def _run(handler, request):
+    import asyncio
+
+    return asyncio.run(handler(request))
+
+
+def test_인증되지_않은_프로바이더의_모델은_받아오지_않는다(monkeypatch, fake_api):
     # 79개 전부 채우면 응답이 거대해지고 models.dev 왕복이 그만큼 늘어난다.
     calls = []
     _fake_hermes(
@@ -101,13 +111,60 @@ def test_인증되지_않은_프로바이더의_모델은_받아오지_않는다
         auth={"on": {"logged_in": True}},
     )
     monkeypatch.setattr(catalog, "_models_for", lambda pid: calls.append(pid) or ["m"])
-    import asyncio
+    fake_api.get_profile_dir("noah").mkdir(parents=True)
 
-    handler = catalog.get_handler(None)
-    req = types.SimpleNamespace()
-    resp = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(handler(req))
+    resp = _run(catalog.get_handler(fake_api), _request("noah"))
     assert calls == ["on"]
     assert resp.status == 200
+
+
+def test_인증_상태는_요청한_프로필의_홈에서_읽는다(monkeypatch, fake_api):
+    # 게이트웨이 프로세스 하나가 모든 /p/{profile} 요청을 받는다. 홈을 갈아 끼우지 않으면
+    # default 의 로그인이 noah 의 것처럼 보이고, 실제 대화는 "No Codex credentials" 로 실패한다
+    # (2026-09-17 Hostinger VPS 실측, 0.21.3 이미지 재현).
+    import json
+
+    homes = [None]
+    seen = []
+
+    def set_override(path):
+        homes.append(path)
+        return len(homes) - 1
+
+    def reset_override(token):
+        del homes[token:]
+
+    def get_auth_status(pid):
+        seen.append(homes[-1])
+        # default(오버라이드 없음)에만 로그인이 있다.
+        return {"logged_in": homes[-1] is None}
+
+    monkeypatch.setattr(fake_api, "set_hermes_home_override", set_override, raising=False)
+    monkeypatch.setattr(fake_api, "reset_hermes_home_override", reset_override, raising=False)
+    monkeypatch.setitem(
+        sys.modules,
+        "hermes_cli.auth",
+        types.SimpleNamespace(PROVIDER_REGISTRY={"openai-codex": _cfg("openai-codex")}, get_auth_status=get_auth_status),
+    )
+    monkeypatch.setattr(catalog, "_models_for", lambda pid: ["gpt-5.5"])
+    noah = fake_api.get_profile_dir("noah")
+    noah.mkdir(parents=True)
+
+    resp = _run(catalog.get_handler(fake_api), _request("noah"))
+    body = json.loads(resp.body)
+    assert body["providers"] == [{"id": "openai-codex", "name": "Openai-Codex", "authenticated": False}]
+    assert body["models"] == {}
+    assert seen == [str(noah)]
+    assert homes == [None]  # 블록을 나가면 원상복구된다
+
+
+def test_없는_프로필의_카탈로그는_404(monkeypatch, fake_api):
+    import json
+
+    _fake_hermes(monkeypatch, registry={"p": _cfg("p")}, auth={"p": {"logged_in": True}})
+    resp = _run(catalog.get_handler(fake_api), _request("ghost"))
+    assert resp.status == 404
+    assert json.loads(resp.body)["error"] == "profile_not_found"
 
 
 def test_추론_강도_목록에_출처가_있다():

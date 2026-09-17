@@ -4,16 +4,18 @@
 상태를 그대로 읽어 옮긴다. 그래야 Hermes 가 모델을 추가하거나 models.dev 가 갱신될 때
 (20분 TTL) DeskRPG 가 자동으로 따라간다 — 우리가 목록을 복제해 두면 반드시 낡는다.
 
-**프로필 스코프로 둔다 — 지금 갈리지 않더라도.** `_auth_file_path()` 는 `HERMES_HOME` 을
+**프로필 스코프로 둔다.** `_auth_file_path()` 는 `HERMES_HOME` 을
 따라 `~/.hermes/profiles/<name>/auth.json` 을 가리키므로 프로필별 인증이 **가능한** 구조다.
 다만 실측(2026-09-07, 이 서버)에서는 sophie·mia·oliver 가 **같은 4개**(bedrock, copilot,
 openai-codex, opencode-free)를 준다 — 프로필 `auth.json` 의 `providers` 가 전부 비어 있고
 `auth.py:467` 의 루트 폴백("read-only fallback")과 credential_pool·환경변수가 채우기
 때문이다. 즉 **현재는 사실상 전역이다.**
 
-그래도 전역 라우트로 두지 않는다: 프로필이 자기 자격증명을 갖는 순간 갈리는데, 그때
-라우트를 옮기면 이미 그 값을 쓰던 화면이 깨진다. 스코프를 넓히는 것은 쉽고 좁히는 것은
-어렵다.
+**그 관찰은 틀렸다(2026-09-17 정정).** 게이트웨이 프로세스 하나가 모든 `/p/{profile}` 요청을
+받는데 이 핸들러가 홈을 갈아 끼우지 않아, 세 프로필 모두 **default 의 인증 상태**를 본 것이다.
+Hostinger VPS(0.21.3 컨테이너)에서 default 로만 Codex 로그인한 뒤 noah 를 채용하자, 화면은
+openai-codex 를 "인증됨" 으로 보여줬지만 실제 대화는 "No Codex credentials stored" 로 실패했다.
+Hermes 는 NPC(프로필)마다 로그인한다 — 그래서 크론과 같은 방식으로 요청 프로필의 홈에서 읽는다.
 
 **인증 여부를 숨기지 않고 함께 보낸다.** 인증되지 않은 프로바이더를 목록에서 지우면
 사용자는 "왜 내가 쓰는 모델이 없지" 를 알 수 없다. Hermes 의 CLI 피커도 못 쓰는 것을
@@ -25,6 +27,9 @@ from __future__ import annotations
 import logging
 
 from aiohttp import web
+
+from .common import guarded, run_blocking
+from .cron import resolve_profile_home
 
 logger = logging.getLogger(__name__)
 
@@ -89,25 +94,31 @@ def _models_for(provider_id: str) -> list[str]:
     return curated
 
 
-def get_handler(api):
-    """`GET /p/{profile}/deskrpg/catalog`"""
+def _catalog_for_home(api, home) -> dict:
+    """요청 프로필의 홈으로 HERMES_HOME 을 갈아 끼운 채 목록을 만든다.
 
-    async def handler(request):
+    오버라이드는 컨텍스트 변수라 이 워커 스레드에만 걸리고, 블록을 나가면 원상복구한다.
+    """
+    token = api.set_hermes_home_override(str(home))
+    try:
         providers = _provider_rows(api)
-
         models: dict[str, list[str]] = {}
         for row in providers:
             # 인증된 프로바이더만 모델을 채운다. 79개 전부를 채우면 응답이 거대해지고
             # models.dev 왕복이 그만큼 늘어난다 — 화면이 실제로 고를 수 있는 것만 준다.
             if row["authenticated"]:
                 models[row["id"]] = _models_for(row["id"])
+    finally:
+        api.reset_hermes_home_override(token)
+    return {"providers": providers, "models": models, "reasoningEfforts": REASONING_EFFORTS}
 
-        return web.json_response(
-            {
-                "providers": providers,
-                "models": models,
-                "reasoningEfforts": REASONING_EFFORTS,
-            }
-        )
+
+def get_handler(api):
+    """`GET /p/{profile}/deskrpg/catalog`"""
+
+    @guarded
+    async def handler(request):
+        home = resolve_profile_home(api, request.match_info["profile"])
+        return web.json_response(await run_blocking(_catalog_for_home, api, home))
 
     return handler

@@ -319,7 +319,11 @@ Hermes 의 `create_profile` 은 `.env` 를 **빈 파일로** 씨딩한다. 그�
 
 - 프로바이더 — `hermes_cli.auth.PROVIDER_REGISTRY` (실측 79개)
 - 인증 여부 — `get_auth_status(pid)` 의 `configured` **또는** `logged_in`
-  (API 키형은 앞을, OAuth 형은 뒤를 채운다 — 한쪽만 보면 절반을 놓친다)
+  (API 키형은 앞을, OAuth 형은 뒤를 채운다 — 한쪽만 보면 절반을 놓친다).
+  **요청한 프로필의 홈에서** 판정한다(0.7.2). Hermes 는 NPC(프로필)마다 로그인하므로
+  (업스트림 #111724 부터 프로필은 default 의 `auth.json` 을 물려받지 않는다), default 로
+  로그인했다고 noah 가 쓸 수 있는 것이 아니다. 프로필 로그인은 Hermes 대시보드에서
+  상단 프로필을 그 이름으로 바꾼 뒤 Keys 화면에서 한다(`/env?profile=<이름>`).
 - 모델 — `model_setup_flows_common._models_dev_merged(pid, curated)`
   = models.dev 의 agentic 모델 + `model_catalog.get_catalog()` 의 큐레이션
 - 추론 강도 — `hermes_cli/models.py:73` 과 `config_defaults.py:1244` 를 합친 값.
