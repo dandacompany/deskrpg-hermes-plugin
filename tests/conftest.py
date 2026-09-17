@@ -156,6 +156,8 @@ def fake_api(tmp_path):
         latest_blackboard=latest_blackboard,
         SwarmWorkerSpec=FakeSwarmWorkerSpec,
         swarm_calls=swarm_calls,
+        # 0.7.1 — hermes_cli.dashboard_auth.prefix (OPTIONAL_SPEC). 기본은 공개 주소 없음.
+        resolve_public_url=lambda: "",
     )
     _add_automation_fakes(api, tmp_path)
     return api

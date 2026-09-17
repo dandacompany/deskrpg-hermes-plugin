@@ -278,6 +278,33 @@ def _info_dispatcher_present(api) -> bool:
         return True
 
 
+_FALSY = {"", "0", "false", "no", "off"}
+
+
+def _info_dashboard_url(api):
+    """Hermes 대시보드 공개 주소, 또는 None.
+
+    주소는 Hermes 자신의 `resolve_public_url()`(`HERMES_DASHBOARD_PUBLIC_URL` → `dashboard.public_url`)
+    로 구한다 — 규칙을 베끼면 Hermes 가 바꿀 때 어긋난다.
+
+    컨테이너 이미지는 `HERMES_DASHBOARD` 로 대시보드 서비스를 켜고 끈다. 이 값이 **정의돼 있고 거짓**이면
+    주소가 설정돼 있어도 대시보드는 떠 있지 않으므로 None 이다(DeskRPG compose 는 비밀번호가 없으면
+    빈 값으로 둔다). 정의되지 않은 호스트 설치는 운영자가 공개 주소를 적어 둔 것을 의도로 본다.
+    info 는 자동화 게이트가 읽으므로 여기서 무엇이 던져도 500 을 내지 않는다.
+    """
+    flag = os.environ.get("HERMES_DASHBOARD")
+    if flag is not None and flag.strip().lower() in _FALSY:
+        return None
+    resolve = getattr(api, "resolve_public_url", None)
+    if resolve is None:
+        return None
+    try:
+        url = resolve()
+    except Exception:
+        return None
+    return url if isinstance(url, str) and url.startswith(("https://", "http://")) else None
+
+
 def _make_info(api):
     from aiohttp import web
 
@@ -291,6 +318,7 @@ def _make_info(api):
                 "routes": [f"{m} {p}" for m, p, _h, _s in routes_for(api)],
                 "capabilities": list(capabilities(api)),
                 "timezone": _info_timezone(api),
+                "dashboard_url": _info_dashboard_url(api),
                 "kanban": {
                     "dispatcher_present": _info_dispatcher_present(api),
                     "attachments": True,

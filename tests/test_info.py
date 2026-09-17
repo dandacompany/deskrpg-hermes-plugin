@@ -115,3 +115,56 @@ async def test_디스패처_확인에_hermes_home_을_넘긴다(aiohttp_client, 
     fake_api._check_dispatcher_presence = lambda hermes_home=None: (seen.append(hermes_home), (True, ""))[1]
     await _info(aiohttp_client, fake_api)
     assert seen == [fake_api.get_hermes_home()]
+
+
+# ---------------------------------------------------------------------------
+# 0.7.1 — dashboard_url: DeskRPG 가 게이트웨이 화면에서 대시보드로 바로 보내는 링크
+# ---------------------------------------------------------------------------
+
+
+async def test_대시보드_공개_주소가_있으면_dashboard_url_로_낸다(aiohttp_client, fake_api, monkeypatch):
+    monkeypatch.delenv("HERMES_DASHBOARD", raising=False)
+    fake_api.resolve_public_url = lambda: "https://deskrpg-hermes.srv1.hstgr.cloud"
+    body = await _info(aiohttp_client, fake_api)
+    assert body["dashboard_url"] == "https://deskrpg-hermes.srv1.hstgr.cloud"
+
+
+async def test_컨테이너가_대시보드를_끄면_주소가_있어도_null(aiohttp_client, fake_api, monkeypatch):
+    # compose 는 비밀번호가 없으면 HERMES_DASHBOARD 를 빈 값으로 둔다 — 공개 주소 환경변수는 남아 있어도
+    # 대시보드는 뜨지 않는다. 죽은 링크를 보내지 않는다.
+    monkeypatch.setenv("HERMES_DASHBOARD", "")
+    fake_api.resolve_public_url = lambda: "https://deskrpg-hermes.srv1.hstgr.cloud"
+    body = await _info(aiohttp_client, fake_api)
+    assert body["dashboard_url"] is None
+
+
+async def test_컨테이너가_대시보드를_켜면_주소를_낸다(aiohttp_client, fake_api, monkeypatch):
+    monkeypatch.setenv("HERMES_DASHBOARD", "true")
+    fake_api.resolve_public_url = lambda: "https://h.example"
+    body = await _info(aiohttp_client, fake_api)
+    assert body["dashboard_url"] == "https://h.example"
+
+
+async def test_공개_주소가_없으면_null(aiohttp_client, fake_api, monkeypatch):
+    monkeypatch.delenv("HERMES_DASHBOARD", raising=False)
+    fake_api.resolve_public_url = lambda: ""
+    body = await _info(aiohttp_client, fake_api)
+    assert body["dashboard_url"] is None
+
+
+async def test_구버전_Hermes_라_주소_해석기가_없으면_null(aiohttp_client, fake_api, monkeypatch):
+    monkeypatch.delenv("HERMES_DASHBOARD", raising=False)
+    fake_api.resolve_public_url = None
+    body = await _info(aiohttp_client, fake_api)
+    assert body["dashboard_url"] is None
+
+
+async def test_주소_해석이_던져도_info_는_200_이고_null(aiohttp_client, fake_api, monkeypatch):
+    monkeypatch.delenv("HERMES_DASHBOARD", raising=False)
+
+    def boom():
+        raise RuntimeError("config broken")
+
+    fake_api.resolve_public_url = boom
+    body = await _info(aiohttp_client, fake_api)
+    assert body["dashboard_url"] is None

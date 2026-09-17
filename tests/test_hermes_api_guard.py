@@ -99,7 +99,7 @@ def test_선택_심볼이_빠져도_로드된다(monkeypatch):
 
 
 def test_선택_모듈이_통째로_없어도_로드된다(monkeypatch):
-    _install(monkeypatch, skip_modules=("hermes_cli.kanban_swarm",))
+    _install(monkeypatch, skip_modules=tuple(module for module, _names in _hermes_api.OPTIONAL_SPEC))
     api = _hermes_api.load()
     for name in _hermes_api.OPTIONAL:
         assert getattr(api, name) is None

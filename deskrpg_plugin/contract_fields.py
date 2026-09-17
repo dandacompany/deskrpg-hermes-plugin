@@ -12,7 +12,7 @@ TS 타입을 파이썬 쪽에 그대로 베낀 것이다 — 핸들러가 응답
 # 공통 — /deskrpg/info
 # ---------------------------------------------------------------------------
 
-PLUGIN_INFO_REQUIRED = frozenset({"plugin", "version", "capabilities", "timezone", "kanban"})
+PLUGIN_INFO_REQUIRED = frozenset({"plugin", "version", "capabilities", "timezone", "kanban", "dashboard_url"})
 # `routes` 는 0.1.0 부터 내던 필드라 유지한다. 계약 타입에는 없지만 해가 없다.
 PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | frozenset({"routes"})
 PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attachment_max_bytes"})

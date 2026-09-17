@@ -112,7 +112,7 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 
 | Method | Path | Scope | 설명 |
 |---|---|---|---|
-| GET | `/deskrpg/info` | default | 버전·라우트 목록·`capabilities`·`timezone`·`kanban{dispatcher_present, attachments, attachment_max_bytes}` (**default 키 전용**) |
+| GET | `/deskrpg/info` | default | 버전·라우트 목록·`capabilities`·`timezone`·`kanban{dispatcher_present, attachments, attachment_max_bytes}`·`dashboard_url`(0.7.1, 대시보드 공개 주소 또는 `null`) (**default 키 전용**) |
 | GET | `/deskrpg/profiles` | default | 프로필 목록 (`hasCustomPersona` 포함) |
 | POST | `/deskrpg/profiles` | default | 프로필 생성 (**응답이 새 키를 한 번만 싣는다**) |
 | DELETE | `/deskrpg/profiles/{name}` | default | 프로필 삭제 (`?confirm={name}` 필수) |

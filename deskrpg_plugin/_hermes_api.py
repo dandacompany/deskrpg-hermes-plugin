@@ -158,6 +158,8 @@ SPEC = (
 # 이 없는 구버전 Hermes 에서 칸반·크론까지 전부 죽는다.
 OPTIONAL_SPEC = (
     ("hermes_cli.kanban_swarm", ("create_swarm", "latest_blackboard", "SwarmWorkerSpec")),
+    # 0.7.1 — 대시보드 공개 주소. 없는 빌드는 `/deskrpg/info` 의 dashboard_url 만 null 이 된다.
+    ("hermes_cli.dashboard_auth.prefix", ("resolve_public_url",)),
 )
 
 REQUIRED = tuple(name for _module, names in SPEC for name in names)
