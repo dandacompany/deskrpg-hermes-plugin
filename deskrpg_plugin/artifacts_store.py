@@ -357,9 +357,11 @@ def soft_delete(api, conn, artifact_id: str, *, deleted_by: str, now: int) -> li
     failed = []
     with conn:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute("UPDATE artifacts SET deleted_at=?, deleted_by=? WHERE id=? AND deleted_at IS NULL",
-                     (now, deleted_by, artifact_id))
-        _append_event(conn, now, "artifact.deleted", {"artifact_id": artifact_id, "deleted_by": deleted_by})
+        cur = conn.execute("UPDATE artifacts SET deleted_at=?, deleted_by=? WHERE id=? AND deleted_at IS NULL",
+                           (now, deleted_by, artifact_id))
+        # 이미 지워진 것(동시 삭제 경합의 뒷쪽)은 행을 바꾸지 않는다 — 그때는 사건을 두 번 남기지 않는다.
+        if cur.rowcount == 1:
+            _append_event(conn, now, "artifact.deleted", {"artifact_id": artifact_id, "deleted_by": deleted_by})
     for row in list_versions(conn, artifact_id):
         path = blob_path_for(api, row)
         if path is None:

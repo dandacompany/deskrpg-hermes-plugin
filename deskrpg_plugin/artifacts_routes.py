@@ -7,6 +7,7 @@ Range 는 단일 범위만 받는다 — 미디어 탐색에 충분하고, 다�
 `run_blocking` 으로 워커 스레드에 보낸다. 스트리밍 자체는 유지한다(파일 전체를 메모리에 올리지 않는다).
 """
 
+import asyncio
 import base64
 import contextlib
 import json
@@ -43,8 +44,18 @@ def _too_large(limit: int) -> web.Response:
 
 
 def _user(request) -> str:
-    raw = (request.headers.get(USER_HEADER) or "").strip()[:128]
+    """`X-DeskRPG-User` → `human:<이름>`. 인쇄 불가 문자(제어문자·외톨이 서로게이트 포함)를 지우고 128자로 자른다.
+
+    이 값은 `created_by`/`deleted_by` 로 sqlite 에 들어가고 JSON 으로 다시 나간다 — 외톨이 서로게이트가
+    남으면 UTF-8 인코딩에서 터진다.
+    """
+    raw = "".join(ch for ch in (request.headers.get(USER_HEADER) or "") if ch.isprintable())
+    raw = raw.encode("utf-8", "replace").decode("utf-8").strip()[:128]
     return f"human:{raw or 'unknown'}"
+
+
+def _is_ascii_digits(value) -> bool:
+    return isinstance(value, str) and value.isascii() and value.isdigit()
 
 
 def _summary(api, row, versions) -> dict:
@@ -81,8 +92,10 @@ def _cursor_decode(token):
     try:
         padded = token + "=" * (-len(token) % 4)
         value = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+        if not (isinstance(value, list) and len(value) == 2):
+            raise ValueError("cursor shape")
         return (int(value[0]), str(value[1]))
-    except (ValueError, TypeError, IndexError):
+    except (ValueError, TypeError, IndexError, KeyError):
         raise RequestError(400, "unknown_cursor")
 
 
@@ -90,7 +103,8 @@ def list_handler(api):
     @guarded
     async def handler(request):
         q = request.query
-        limit = max(1, min(int(q.get("limit") or LIMIT_DEFAULT), LIMIT_MAX)) if (q.get("limit") or "1").isdigit() else LIMIT_DEFAULT
+        raw_limit = q.get("limit")
+        limit = max(1, min(int(raw_limit), LIMIT_MAX)) if _is_ascii_digits(raw_limit) else LIMIT_DEFAULT
         kind, source = q.get("kind") or None, q.get("source") or None
         if kind and kind not in policy.KINDS:
             raise RequestError(400, "artifact_bad_kind", kind)
@@ -163,11 +177,27 @@ def _open_and_seek(path, start: int):
     return fh
 
 
+async def _open_blob(path, start: int):
+    """`_open_and_seek` 을 워커 스레드에서. 기다리는 쪽이 취소돼도 이미 열린(또는 곧 열릴) 핸들을 닫는다.
+
+    `to_thread` 는 취소돼도 스레드가 끝까지 돌므로, 그대로 두면 열린 핸들이 주인 없이 남는다.
+    """
+    task = asyncio.ensure_future(run_blocking(_open_and_seek, path, start))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        def _close_orphan(done):
+            if not done.cancelled() and done.exception() is None:
+                asyncio.ensure_future(run_blocking(done.result().close))
+        task.add_done_callback(_close_orphan)
+        raise
+
+
 def content_handler(api):
     @guarded
     async def handler(request):
         artifact_id, v = request.match_info["artifact_id"], request.match_info["v"]
-        if not v.isdigit():
+        if not _is_ascii_digits(v):
             raise RequestError(400, "invalid_field", "v")
 
         def work():
@@ -203,23 +233,35 @@ def content_handler(api):
             start, end = _parse_range(rng, size)
             status = 206
             headers["Content-Range"] = f"bytes {start}-{end}/{size}"
-        resp = web.StreamResponse(status=status, headers=headers)
-        resp.content_type = row["mime"] or "application/octet-stream"
-        resp.content_length = end - start + 1
-        await resp.prepare(request)
-        fh = await run_blocking(_open_and_seek, path, start)
+        # 응답을 시작하기 **전에** 연다 — stat 과 open 사이에 blob 이 사라졌으면 아직 410 JSON 을 보낼 수 있다.
+        # prepare() 뒤에는 상태 줄이 이미 나갔으므로 @guarded 가 두 번째 응답을 만들면 안 된다.
         try:
-            remaining = end - start + 1
-            while remaining > 0:
-                chunk = await run_blocking(fh.read, min(UPLOAD_CHUNK, remaining))
-                if not chunk:
-                    break
-                await resp.write(chunk)
-                remaining -= len(chunk)
+            fh = await _open_blob(path, start)
+        except FileNotFoundError:
+            raise RequestError(410, "artifact_blob_missing", artifact_id)
+        try:
+            resp = web.StreamResponse(status=status, headers=headers)
+            resp.content_type = row["mime"] or "application/octet-stream"
+            resp.content_length = end - start + 1
+            await resp.prepare(request)
+            try:
+                remaining = end - start + 1
+                while remaining > 0:
+                    chunk = await run_blocking(fh.read, min(UPLOAD_CHUNK, remaining))
+                    if not chunk:
+                        break
+                    await resp.write(chunk)
+                    remaining -= len(chunk)
+                await resp.write_eof()
+            except ConnectionError as exc:
+                # 클라이언트가 끊었다(ConnectionResetError·BrokenPipeError, aiohttp 의 ClientConnectionResetError 도 그 하위).
+                # 헤더는 이미 나갔으니 조용히 끝낸다.
+                log_event("artifact.content_aborted", artifact_id=artifact_id, error=type(exc).__name__)
+                resp.force_close()  # 반쯤 쓴 연결을 재사용하지 않는다
+            return resp
         finally:
-            await run_blocking(fh.close)
-        await resp.write_eof()
-        return resp
+            # 취소(CancelledError)로 빠져나가도 닫히도록 shield — 바깥 await 가 취소돼도 닫기 작업은 끝까지 돈다.
+            await asyncio.shield(run_blocking(fh.close))
 
     return handler
 

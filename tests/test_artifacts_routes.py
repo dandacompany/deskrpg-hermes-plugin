@@ -1,4 +1,5 @@
 """`/deskrpg/artifacts/*` — 목록·상세·바이트(Range)·사람 편집 버전·rework 501·삭제."""
+import asyncio
 import contextlib
 import types
 
@@ -208,3 +209,120 @@ async def test_사람_편집은_요청_본문_상한으로_묶여_413_의_max_by
     assert resp.status == 413
     body = await resp.json()
     assert body["error"] == "artifact_too_large" and body["max_bytes"] == 10
+
+
+# ---------------------------------------------------------------------------
+# 최종 수정 — 커서·숫자 파싱·사용자 헤더·바이트 스트림 경계·중복 삭제
+# ---------------------------------------------------------------------------
+
+
+def _b64(obj) -> str:
+    import base64
+    import json
+    return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+
+@pytest.mark.parametrize("value", [{"a": 1}, {"0": 1, "1": "x"}, [1, "x", 3], [1], 5, "ab"])
+async def test_목록_커서가_두_원소_리스트가_아니면_400_unknown_cursor(client, api, value):
+    resp = await client.get(f"/deskrpg/artifacts?cursor={_b64(value)}")
+    assert resp.status == 400
+    assert (await resp.json())["error"] == "unknown_cursor"
+
+
+async def test_목록_limit_이_ASCII_숫자가_아니면_기본값이다(client, api):
+    _seed(api)
+    resp = await client.get("/deskrpg/artifacts", params={"limit": "²"})
+    assert resp.status == 200
+    assert len((await resp.json())["artifacts"]) == 1
+
+
+async def test_바이트_v_가_ASCII_숫자가_아니면_400_invalid_field(client, api):
+    r = _seed(api)
+    resp = await client.get(f"/deskrpg/artifacts/{r.artifact_id}/versions/%C2%B2/content")
+    assert resp.status == 400
+    assert (await resp.json())["error"] == "invalid_field"
+
+
+class _Req:
+    def __init__(self, value):
+        self.headers = {} if value is None else {ar.USER_HEADER: value}
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("dante\ud800", "human:dante"),
+    ("\x00da\nnte\x7f", "human:dante"),
+    ("  ", "human:unknown"),
+    ("𐏿", "human:unknown"),
+    (None, "human:unknown"),
+    ("가" * 200, "human:" + "가" * 128),
+])
+def test_사용자_헤더는_제어문자와_외톨이_서로게이트를_지우고_128자로_자른다(raw, expected):
+    out = ar._user(_Req(raw))
+    assert out == expected
+    out.encode("utf-8")  # 외톨이 서로게이트가 남으면 여기서 UnicodeEncodeError
+
+
+async def test_확인과_열기_사이에_blob_이_사라지면_응답을_시작하기_전에_410(client, api, monkeypatch):
+    r = _seed(api)
+
+    def gone(path, start):
+        raise FileNotFoundError(str(path))
+
+    monkeypatch.setattr(ar, "_open_and_seek", gone)
+    resp = await client.get(f"/deskrpg/artifacts/{r.artifact_id}/versions/1/content")
+    assert resp.status == 410
+    assert (await resp.json())["error"] == "artifact_blob_missing"
+
+
+async def test_쓰는_중_연결이_끊기면_두_번째_응답을_보내지_않고_파일을_닫는다(client, api, monkeypatch, caplog):
+    r = _seed(api)
+    opened = []
+    real_open = ar._open_and_seek
+
+    def tracking(path, start):
+        fh = real_open(path, start)
+        opened.append(fh)
+        return fh
+
+    async def broken_write(self, data):
+        raise ConnectionResetError("peer gone")
+
+    monkeypatch.setattr(ar, "_open_and_seek", tracking)
+    monkeypatch.setattr(web.StreamResponse, "write", broken_write)
+    caplog.set_level("INFO", logger="deskrpg_plugin")
+    resp = await client.get(f"/deskrpg/artifacts/{r.artifact_id}/versions/1/content")
+    assert resp.status == 200  # 헤더는 이미 나갔다 — 본문은 기다리지 않는다(가짜 끊김이라 전송로는 살아 있다)
+    resp.close()
+    for _ in range(100):  # 핸들러가 finally 까지 도는 것을 기다린다
+        if opened and opened[0].closed:
+            break
+        await asyncio.sleep(0.01)
+    assert opened and opened[0].closed
+    assert "핸들러 예외" not in caplog.text
+    assert "artifact.content_aborted" in caplog.text
+
+
+async def test_열기를_기다리다_취소되면_늦게_열린_핸들도_닫힌다(tmp_path, monkeypatch):
+    import threading
+    target = tmp_path / "blob.bin"; target.write_bytes(b"0123456789")
+    gate, opened = threading.Event(), []
+    real_open = ar._open_and_seek
+
+    def slow(path, start):
+        gate.wait(5)
+        fh = real_open(path, start)
+        opened.append(fh)
+        return fh
+
+    monkeypatch.setattr(ar, "_open_and_seek", slow)
+    waiter = asyncio.ensure_future(ar._open_blob(target, 0))
+    await asyncio.sleep(0.01)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    gate.set()
+    for _ in range(200):
+        if opened and opened[0].closed:
+            break
+        await asyncio.sleep(0.01)
+    assert opened and opened[0].closed

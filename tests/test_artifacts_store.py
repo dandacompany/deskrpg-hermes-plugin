@@ -290,3 +290,13 @@ def test_blob_path_for_는_루트_밖을_가리키는_행에_None_이다(api, tm
         conn.execute("UPDATE artifact_versions SET stored_path=? WHERE artifact_id=?",
                      (str(tmp_path / "etc" / "passwd"), r.artifact_id))
         assert store.blob_path_for(api, store.list_versions(conn, r.artifact_id)[0]) is None
+
+
+def test_soft_delete_를_두_번_해도_deleted_사건은_한_번만_남는다(api):
+    with contextlib.closing(store.open_registry(api)) as conn:
+        r = _store(api, conn, data=b"v1")
+        store.soft_delete(api, conn, r.artifact_id, deleted_by="human:u1", now=10)
+        store.soft_delete(api, conn, r.artifact_id, deleted_by="human:u2", now=11)
+        kinds = [row["kind"] for row in conn.execute("SELECT kind FROM artifact_events ORDER BY id")]
+        assert kinds.count("artifact.deleted") == 1
+        assert store.get_artifact(conn, r.artifact_id)["deleted_by"] == "human:u1"
