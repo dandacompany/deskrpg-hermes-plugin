@@ -178,6 +178,15 @@ def test_목록은_프로필과_보드를_OR_로_거르고_최신순이다(api):
         assert [r["title"] for r in store.list_artifacts(conn, kind="document", q="c")] == ["C"]
 
 
+def test_목록_kind_은_리스트를_받으면_IN_으로_거른다(api):
+    with contextlib.closing(store.open_registry(api)) as conn:
+        _store(api, conn, data=b"1", title="A", kind="document", session_id="s1")
+        _store(api, conn, data=b"2", title="B", kind="image", session_id="s2")
+        _store(api, conn, data=b"3", title="C", kind="link", session_id="s3")
+        got = {r["title"] for r in store.list_artifacts(conn, kind=["document", "image"])}
+        assert got == {"A", "B"}
+
+
 def test_동시_저장은_서로_다른_데이터면_한_아티팩트에_버전_1_2_를_만든다(api):
     """훅+도구 동시 저장(스펙 ⑤): 두 스레드가 각자의 커넥션으로 같은 정체성에 동시에 쓰면
     트랜잭션 직렬화로 버전이 하나씩 순서대로 배정돼야 한다 — 두 개의 새 아티팩트가 생기면 안 된다.
