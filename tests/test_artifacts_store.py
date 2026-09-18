@@ -2,6 +2,7 @@
 import contextlib
 import hashlib
 import sqlite3
+import threading
 import types
 
 import pytest
@@ -175,6 +176,84 @@ def test_목록은_프로필과_보드를_OR_로_거르고_최신순이다(api):
         got = [r["title"] for r in store.list_artifacts(conn, profiles=["a"], board="dev")]
         assert got == ["B", "A"]
         assert [r["title"] for r in store.list_artifacts(conn, kind="document", q="c")] == ["C"]
+
+
+def test_동시_저장은_서로_다른_데이터면_한_아티팩트에_버전_1_2_를_만든다(api):
+    """훅+도구 동시 저장(스펙 ⑤): 두 스레드가 각자의 커넥션으로 같은 정체성에 동시에 쓰면
+    트랜잭션 직렬화로 버전이 하나씩 순서대로 배정돼야 한다 — 두 개의 새 아티팩트가 생기면 안 된다."""
+    with contextlib.closing(store.open_registry(api)) as warmup:  # 스키마를 미리 만들어 둔다 —
+        del warmup  # 두 스레드가 첫 CREATE TABLE 을 동시에 밟는 건 이 테스트의 관심사가 아니다.
+    for i in range(20):
+        session_id = f"race-{i}"
+        errors: list[Exception] = []
+        results: list[store.StoreResult] = []
+        barrier = threading.Barrier(2)
+
+        def work(payload):
+            try:
+                with contextlib.closing(store.open_registry(api)) as conn:
+                    barrier.wait(timeout=5)
+                    r = store.store_artifact_version(
+                        api, conn, meta=_meta(session_id=session_id), data=payload, max_bytes=10_000,
+                    )
+                    results.append(r)
+            except Exception as exc:  # noqa: BLE001 - surfaced via assertion below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=work, args=(payload,)) for payload in (b"a", b"b")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        assert not errors, f"iteration {i}: {errors}"
+        assert len(results) == 2
+
+        with contextlib.closing(store.open_registry(api)) as conn:
+            rows = conn.execute(
+                "SELECT id FROM artifacts WHERE session_id=? AND deleted_at IS NULL", (session_id,)
+            ).fetchall()
+            assert len(rows) == 1, f"iteration {i}: expected 1 artifact, got {len(rows)}"
+            versions = {v["version"] for v in store.list_versions(conn, rows[0]["id"])}
+            assert versions == {1, 2}, f"iteration {i}: versions={versions}"
+
+
+def test_동시_저장은_같은_데이터면_버전_하나만_남고_한_쪽만_deduped_다(api):
+    with contextlib.closing(store.open_registry(api)) as warmup:  # 스키마를 미리 만들어 둔다(위와 동일한 이유)
+        del warmup
+    for i in range(20):
+        session_id = f"race-same-{i}"
+        errors: list[Exception] = []
+        results: list[store.StoreResult] = []
+        barrier = threading.Barrier(2)
+
+        def work():
+            try:
+                with contextlib.closing(store.open_registry(api)) as conn:
+                    barrier.wait(timeout=5)
+                    r = store.store_artifact_version(
+                        api, conn, meta=_meta(session_id=session_id), data=b"identical", max_bytes=10_000,
+                    )
+                    results.append(r)
+            except Exception as exc:  # noqa: BLE001 - surfaced via assertion below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=work) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        assert not errors, f"iteration {i}: {errors}"
+        assert len(results) == 2
+        assert len({r.artifact_id for r in results}) == 1, f"iteration {i}: {results}"
+        assert {r.version for r in results} == {1}, f"iteration {i}: {results}"
+        assert sum(1 for r in results if r.created) == 1, f"iteration {i}: {results}"
+        assert sum(1 for r in results if r.deduped) == 1, f"iteration {i}: {results}"
+
+        with contextlib.closing(store.open_registry(api)) as conn:
+            artifact_id = results[0].artifact_id
+            assert len(store.list_versions(conn, artifact_id)) == 1, f"iteration {i}"
 
 
 def test_blob_path_for_는_루트_밖을_가리키는_행에_None_이다(api, tmp_path):

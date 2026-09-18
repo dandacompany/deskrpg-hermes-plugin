@@ -200,30 +200,38 @@ def _resolve_target(conn, meta: ArtifactMeta) -> str | None:
 
 
 def store_artifact_version(api, conn, *, meta: ArtifactMeta, data: bytes, max_bytes: int) -> StoreResult:
+    """유일한 쓰기 경로. 정체성 판정과 dedup 비교는 `BEGIN IMMEDIATE` 로 쓰기 잠금을 먼저 쥔
+    *뒤에* 한다 — 그래야 훅과 도구가 같은 정체성을 동시에 저장해도(스펙 ⑤) 트랜잭션이 직렬화돼
+    한쪽이 잠금을 기다리는 동안 다른 쪽이 커밋하고, 뒤에 깨어난 쪽은 갱신된 `current_version` 을
+    보고 다음 버전을 잡는다. 잠금 전에 판정하면 두 커넥션이 동시에 "새 아티팩트" 로 보고 각자
+    버전 1 을 만드는 경합이 생긴다(과거 결함, 리뷰에서 실증됨)."""
     if len(data) > max_bytes:
         raise ArtifactTooLarge(f"artifact exceeds {max_bytes} bytes")
     digest = hashlib.sha256(data).hexdigest()
     now = int(time.time())
-    target = _resolve_target(conn, meta)
-    if target is not None:
-        head = conn.execute(
-            "SELECT version, sha256 FROM artifact_versions WHERE artifact_id=? ORDER BY version DESC LIMIT 1",
-            (target,),
-        ).fetchone()
-        if head and head["sha256"] == digest:
-            return StoreResult(target, head["version"], deduped=True, created=False)
-        version = (head["version"] if head else 0) + 1
-        artifact_id, created = target, False
-    else:
-        artifact_id, version, created = new_artifact_id(), 1, True
-
-    dest_dir = artifacts_root(api) / "blobs" / artifact_id / str(version)
-    dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = _collision_free(dest_dir, _safe_filename(meta.filename))
-    dest.write_bytes(data)
+    dest = None
+    dest_dir = None
     try:
         with conn:
             conn.execute("BEGIN IMMEDIATE")
+            target = _resolve_target(conn, meta)
+            if target is not None:
+                head = conn.execute(
+                    "SELECT version, sha256 FROM artifact_versions WHERE artifact_id=? ORDER BY version DESC LIMIT 1",
+                    (target,),
+                ).fetchone()
+                if head and head["sha256"] == digest:
+                    return StoreResult(target, head["version"], deduped=True, created=False)
+                version = (head["version"] if head else 0) + 1
+                artifact_id, created = target, False
+            else:
+                artifact_id, version, created = new_artifact_id(), 1, True
+
+            dest_dir = artifacts_root(api) / "blobs" / artifact_id / str(version)
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest = _collision_free(dest_dir, _safe_filename(meta.filename))
+            dest.write_bytes(data)
+
             if created:
                 conn.execute(
                     "INSERT INTO artifacts (id, kind, title, title_norm, summary, profile, source_kind, session_id,"
@@ -251,10 +259,12 @@ def store_artifact_version(api, conn, *, meta: ArtifactMeta, data: bytes, max_by
                 **({"supersedes": meta.supersedes} if meta.supersedes and not created else {}),
             })
     except Exception:
-        with contextlib.suppress(OSError):
-            dest.unlink(missing_ok=True)
-        with contextlib.suppress(OSError):
-            dest_dir.rmdir()
+        if dest is not None:
+            with contextlib.suppress(OSError):
+                dest.unlink(missing_ok=True)
+        if dest_dir is not None:
+            with contextlib.suppress(OSError):
+                dest_dir.rmdir()
         raise
     return StoreResult(artifact_id, version, deduped=False, created=created)
 
