@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from aiohttp import web
 
@@ -36,10 +37,23 @@ def _hermes_profile(api, raw_name: str):
     """
     name = api.normalize_profile_name(raw_name)
     if name == "default":
+        _require_default_is_process_home(api)
         return api._oauth_profile_name(None)
     if api._oauth_profile_name(name) != name:
         raise RequestError(400, "invalid_profile", "this profile name cannot be used for OAuth login")
     return name
+
+
+def _require_default_is_process_home(api):
+    """Hermes 는 profile=None 을 게이트웨이 **프로세스 홈**으로 푼다(오버라이드 없는 홈).
+
+    `hermes -p noah gateway` 처럼 프로세스 홈이 default 프로필 홈이 아니면, default 로 시작한 로그인의 토큰이
+    그 프로세스의 프로필에 저장된다. 두 경로가 같을 때만 None 매핑을 쓴다 — 확인할 수 없으면 거절한다.
+    """
+    process_home = getattr(api, "get_process_hermes_home", None)
+    default_home = resolve_profile_home(api, "default")
+    if process_home is None or Path(process_home()).resolve() != Path(default_home).resolve():
+        raise RequestError(400, "invalid_profile", "the gateway process home is not the default profile home")
 
 
 def _http_error(exc):

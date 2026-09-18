@@ -19,11 +19,12 @@ def _install(monkeypatch, missing=(), skip_modules=()):
     """
     for pkg in ("hermes_cli", "cron", "gateway", "gateway.platforms"):
         monkeypatch.setitem(sys.modules, pkg, types.ModuleType(pkg))
+    made = {}  # 한 모듈이 SPEC 과 OPTIONAL_SPEC 에 함께 나오면(hermes_constants) 같은 가짜에 더한다
     for module_path, names in (*_hermes_api.SPEC, *_hermes_api.OPTIONAL_SPEC):
         if module_path in skip_modules:
             monkeypatch.setitem(sys.modules, module_path, None)
             continue
-        mod = types.ModuleType(module_path)
+        mod = made.setdefault(module_path, types.ModuleType(module_path))
         for name in names:
             if name not in missing:
                 setattr(mod, name, lambda *a, **k: None)

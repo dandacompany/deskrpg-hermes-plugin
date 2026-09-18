@@ -291,6 +291,7 @@ def _add_automation_fakes(api, tmp_path):
         set_hermes_home_override=set_hermes_home_override,
         reset_hermes_home_override=reset_hermes_home_override,
         get_hermes_home=get_hermes_home,
+        get_process_hermes_home=lambda: hermes_home,
         get_timezone=lambda: ZoneInfo("Asia/Seoul"),
         # cron.jobs
         use_cron_store=lambda home: _noop_context(),

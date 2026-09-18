@@ -167,6 +167,8 @@ OPTIONAL_SPEC = (
         "hermes_cli.web_server_oauth",
         ("_OAUTH_PROVIDER_CATALOG", "_oauth_sessions", "_oauth_sessions_lock", "_oauth_profile_name"),
     ),
+    # 계획 B — OAuth 가 default 를 None(=프로세스 홈)으로 넘겨도 되는지 본다. 없으면 default 의 앱 안 로그인만 거절된다.
+    ("hermes_constants", ("get_process_hermes_home",)),
     ("hermes_cli.kanban_swarm", ("create_swarm", "latest_blackboard", "SwarmWorkerSpec")),
     # 0.7.1 — 대시보드 공개 주소. 없는 빌드는 `/deskrpg/info` 의 dashboard_url 만 null 이 된다.
     ("hermes_cli.dashboard_auth.prefix", ("resolve_public_url",)),

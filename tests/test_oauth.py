@@ -53,6 +53,8 @@ def oauth_api(fake_api):
     fake_api.clear_provider_auth = lambda pid=None: cleared.append(pid) or True
     fake_api._calls = calls
     fake_api._cleared = cleared
+    # 보통의 배치 — 게이트웨이 프로세스 홈이 default 프로필 홈이다.
+    fake_api.get_process_hermes_home = lambda: fake_api.get_profile_dir("default")
     fake_api.create_profile("noah")
     return fake_api
 
@@ -281,3 +283,24 @@ async def test_디바이스_지원_프로바이더의_Hermes_400_은_거절로_�
     body = await resp.json()
     assert body["error"] == "oauth_start_rejected"
     assert body["detail"].startswith("Already signed in") and len(body["detail"]) <= 200
+
+
+# Hermes 는 profile=None 을 **게이트웨이 프로세스 홈**으로 푼다. `hermes -p noah gateway` 처럼 프로세스 홈이
+# default 프로필 홈이 아니면 default 로 시작한 로그인의 토큰이 다른 프로필에 저장된다 — 거절한다.
+async def test_프로세스_홈이_default_홈이_아니면_default_OAuth_는_400(aiohttp_client, oauth_api):
+    oauth_api.create_profile("default")
+    oauth_api.get_process_hermes_home = lambda: oauth_api.get_profile_dir("noah")
+    client = await _client(aiohttp_client, oauth_api)
+    resp = await client.post("/p/default/deskrpg/oauth/openai-codex/start")
+    assert resp.status == 400 and (await resp.json())["error"] == "invalid_profile"
+    assert "start" not in oauth_api._calls and oauth_api._oauth_sessions == {}
+    assert (await client.post("/p/noah/deskrpg/oauth/openai-codex/start")).status == 200
+
+
+async def test_프로세스_홈을_알_수_없는_빌드는_default_OAuth_를_거절한다(aiohttp_client, oauth_api):
+    oauth_api.create_profile("default")
+    oauth_api.get_process_hermes_home = None
+    client = await _client(aiohttp_client, oauth_api)
+    resp = await client.post("/p/default/deskrpg/oauth/openai-codex/start")
+    assert resp.status == 400 and (await resp.json())["error"] == "invalid_profile"
+    assert "start" not in oauth_api._calls
