@@ -1,7 +1,8 @@
 """자동 승격 훅 둘 — 사용자가 말하지 않아도 산출물을 아티팩트로 남긴다.
 
-- `post_tool_call`(`make_hook`): 산출 도구가 만든 **파일**.
-- `post_llm_call`(`make_response_hook`, 0.8.1): 턴의 최종 응답 속 **큰 코드 블록**(`artifacts_fences`).
+- `post_tool_call`(`make_hook`): 산출 도구가 만든 **파일**과, 도구 결과 키 규칙에 걸린 **링크**(0.8.3 — 강한 키는
+  모든 도구, 약한 키는 산출 도구).
+- `post_llm_call`(`make_response_hook`, 0.8.1·0.8.3): 턴의 최종 응답 속 **큰 코드 블록**(artifacts_fences)과 **링크**(artifacts_links).
 
 아래는 `post_tool_call` 훅의 설명이다.
 
@@ -25,6 +26,7 @@ import time
 from . import artifacts_context as context
 from . import artifacts_detect as detect
 from . import artifacts_fences as fences
+from . import artifacts_links as links
 from . import artifacts_policy as policy
 from . import artifacts_store as store
 from .artifacts_tool import TOOL_NAME, artifact_storage_max_bytes
@@ -35,7 +37,10 @@ logger = logging.getLogger("deskrpg_plugin")
 MAX_FILES_PER_CALL = 8
 MAX_CANDIDATES_SCANNED = 64
 MAX_RESPONSE_BLOCKS = 8
+MAX_RESPONSE_LINKS = 30
+MAX_LINKS_PER_CALL = 8
 RESPONSE_SWITCH_ENV = "HERMES_DESKRPG_CAPTURE_RESPONSES"
+LINKS_SWITCH_ENV = "HERMES_DESKRPG_CAPTURE_LINKS"
 RESPONSE_SOURCE = "assistant_response"  # capture_failed 의 tool_name 자리에 쓰는 출처 이름
 _OFF_VALUES = frozenset({"0", "false", "no", "off"})
 
@@ -61,10 +66,18 @@ def make_hook(api):
 
 
 def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None:
-    if tool_name == TOOL_NAME or not detect.is_producer_tool(tool_name):
+    if tool_name == TOOL_NAME:
+        return
+    producer = detect.is_producer_tool(tool_name)
+    want_links = links_enabled() and (producer or detect.mentions_strong_key(result))
+    if not producer and not want_links:
         return
     payloads = detect.parse_tool_result(result)
     if not payloads:
+        return
+    if want_links:
+        _capture_tool_links(api, tool_name, payloads, producer, session_id, task_id)
+    if not producer:
         return
     candidates = detect.candidate_paths(payloads, producer=True)[:MAX_CANDIDATES_SCANNED]
     if not candidates:
@@ -112,6 +125,21 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
             record_capture_failure(api, tool_name=tool_name, reason=type(exc).__name__)
 
 
+def _capture_tool_links(api, tool_name: str, payloads: list, producer: bool, session_id: str, task_id: str) -> None:
+    found = links.links_in_payload(payloads, producer=producer)[:MAX_LINKS_PER_CALL]
+    if not found:
+        return
+    limit = artifact_storage_max_bytes()
+    writer = _TurnWriter(api, session_id, task_id or None)
+    try:
+        for link in found:
+            if writer.stopped:
+                break
+            writer.save(_link_meta(writer.context(), link, "hook"), links.url_blob(link.url), limit, "artifact.capture")
+    finally:
+        writer.close(tool_name)
+
+
 # ---------------------------------------------------------------------------
 # post_llm_call — 응답 속 큰 코드 블록 (0.8.1)
 # ---------------------------------------------------------------------------
@@ -120,6 +148,61 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
 def responses_enabled() -> bool:
     """`HERMES_DESKRPG_CAPTURE_RESPONSES` 가 0/false/no/off 면 끈다. 없거나 그 밖의 값이면 켠다."""
     return os.environ.get(RESPONSE_SWITCH_ENV, "").strip().lower() not in _OFF_VALUES
+
+
+def links_enabled() -> bool:
+    """`HERMES_DESKRPG_CAPTURE_LINKS` 가 0/false/no/off 면 두 훅의 링크 자동 수집을 끈다(명시 저장은 유지)."""
+    return os.environ.get(LINKS_SWITCH_ENV, "").strip().lower() not in _OFF_VALUES
+
+
+class _TurnWriter:
+    """한 번의 훅 호출이 쓰는 저장 비용 묶음 — 연결은 하나, 컨텍스트는 한 번, 실패 사건은 이유를 합쳐 한 번.
+    `sqlite3.OperationalError`(잠금 등)를 만나면 `stopped` 가 되고 이후 저장을 하지 않는다."""
+
+    def __init__(self, api, session_id: str, task_id):
+        self.api, self.session_id, self.task_id = api, session_id, task_id
+        self.ctx = self.conn = None
+        self.reasons: list = []
+        self.stopped = False
+
+    def context(self):
+        if self.ctx is None:
+            self.ctx = context.resolve_context(self.api, session_id=self.session_id, task_id=self.task_id)
+        return self.ctx
+
+    def fail(self, reason: str) -> None:
+        self.reasons.append(reason)
+
+    def save(self, meta, data: bytes, limit: int, event: str) -> bool:
+        try:
+            if self.conn is None:
+                self.conn = store.open_registry(self.api)
+            out = store.store_artifact_version(self.api, self.conn, meta=meta, data=data, max_bytes=limit)
+            log_event(event, artifact_id=out.artifact_id, version=out.version, kind=meta.kind, deduped=out.deduped)
+            return True
+        except sqlite3.OperationalError as exc:
+            logger.warning("[deskrpg] 아티팩트 저장 중단(레지스트리): %s", type(exc).__name__)
+            self.reasons.append(type(exc).__name__)
+            self.stopped = True
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[deskrpg] 아티팩트 저장 실패: %s", type(exc).__name__)
+            self.reasons.append(type(exc).__name__)
+        return False
+
+    def close(self, tool_name: str) -> None:
+        if self.conn is not None:
+            self.conn.close()
+        if self.reasons:
+            record_capture_failure(self.api, tool_name=tool_name, reason=",".join(dict.fromkeys(self.reasons)))
+
+
+def _link_meta(ctx, link, captured_via: str):
+    return store.ArtifactMeta(
+        kind="link", title=link.title, summary=link.url, filename=links.link_filename(link.title),
+        mime=links.LINK_MIME, profile=ctx.profile, source_kind=ctx.source_kind, session_id=ctx.session_id,
+        created_by=f"agent:{ctx.profile}", captured_via=captured_via, board=ctx.board, task_id=ctx.task_id,
+        identity=link.url,
+    )
 
 
 def make_response_hook(api):
@@ -142,55 +225,42 @@ def make_response_hook(api):
 
 
 def _capture_response(api, response, session_id: str, task_id) -> None:
-    """턴 하나의 비용을 묶는다: 시도는 `MAX_RESPONSE_BLOCKS` 번까지, 레지스트리 연결은 하나,
-    capture_failed 사건은 이유를 합쳐 한 번. 레지스트리가 잠기면(`OperationalError`) 그 자리에서 멈춘다 —
-    남은 블록마다 잠금 대기를 되풀이하면 턴 마무리가 그만큼 늦어진다."""
+    """턴 하나의 비용을 묶는다: 코드 블록은 `MAX_RESPONSE_BLOCKS` 번, 링크는 `MAX_RESPONSE_LINKS` 번까지
+    시도하고, 둘이 레지스트리 연결 하나와 capture_failed 사건 한 번을 함께 쓴다. 잠기면 그 자리에서 멈춘다."""
     if not responses_enabled():
         return
     blocks = fences.extract_blocks(response)
-    if not blocks:
+    found_links = links.links_in_response(response) if links_enabled() else []
+    if not blocks and not found_links:
         return
     limit = artifact_storage_max_bytes()
-    ctx = conn = None
-    attempts = 0
-    reasons: list = []
+    writer = _TurnWriter(api, session_id, task_id)
     try:
+        attempts = 0
         for block in blocks:
-            if attempts >= MAX_RESPONSE_BLOCKS:
+            if attempts >= MAX_RESPONSE_BLOCKS or writer.stopped:
                 break
             if len(block.content.encode("utf-8")) > limit:
                 # 정규식 감지 전에 거른다 — 상한을 넘는 블록은 어차피 저장하지 못한다.
                 if fences.is_candidate_language(block.language):
-                    reasons.append("too_large")
+                    writer.fail("too_large")
                 continue
             found = fences.detect(block.language, block.content)
             if found is None:
                 continue
-            if ctx is None:
-                ctx = context.resolve_context(api, session_id=session_id, task_id=task_id)
+            attempts += 1
+            ctx = writer.context()
             meta = store.ArtifactMeta(
                 kind=found.kind, title=found.title, summary=f"응답 속 {found.language} 코드 블록",
                 filename=found.filename, mime=policy.mime_for_filename(found.filename), profile=ctx.profile,
                 source_kind=ctx.source_kind, session_id=ctx.session_id, created_by=f"agent:{ctx.profile}",
                 captured_via="response", board=ctx.board, task_id=ctx.task_id,
             )
-            attempts += 1
-            try:
-                if conn is None:
-                    conn = store.open_registry(api)
-                out = store.store_artifact_version(api, conn, meta=meta, data=found.content.encode("utf-8"),
-                                                   max_bytes=limit)
-                log_event("artifact.capture_response", artifact_id=out.artifact_id, version=out.version,
-                          kind=meta.kind, deduped=out.deduped)
-            except sqlite3.OperationalError as exc:
-                logger.warning("[deskrpg] 응답 아티팩트 저장 중단(레지스트리): %s", type(exc).__name__)
-                reasons.append(type(exc).__name__)
+            writer.save(meta, found.content.encode("utf-8"), limit, "artifact.capture_response")
+        for link in found_links[:MAX_RESPONSE_LINKS]:
+            if writer.stopped:
                 break
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("[deskrpg] 응답 아티팩트 저장 실패: %s", type(exc).__name__)
-                reasons.append(type(exc).__name__)
+            writer.save(_link_meta(writer.context(), link, "response"), links.url_blob(link.url), limit,
+                        "artifact.capture_response")
     finally:
-        if conn is not None:
-            conn.close()
-    if reasons:
-        record_capture_failure(api, tool_name=RESPONSE_SOURCE, reason=",".join(dict.fromkeys(reasons)))
+        writer.close(RESPONSE_SOURCE)

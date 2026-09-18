@@ -3,7 +3,7 @@
 DeskRPG 전용 라우트를 Hermes API Server 에 등록하는 Hermes 플러그인이다.
 프로필 목록·생성·삭제, SOUL.md(인격) 읽기/쓰기, 프로필 설정 읽기/쓰기에 더해
 **0.6.0 부터 칸반(보드·카드·동작·첨부·디스패치)·통합 사건 스트림·크론(프로필별 잡)** 을
-제공한다. 0.8.0 부터 **아티팩트**(저장소·`artifact_save` 도구·`post_tool_call` 자동 승격)까지, 0.8.1 부터 **응답 속 큰 코드 블록 자동 승격**(`post_llm_call`, `HERMES_DESKRPG_CAPTURE_RESPONSES=0` 으로 끔)까지, 0.8.2 부터 **보존 규칙**(git 저장소 안 파일·설정 파일은 자동 승격에서 제외, 아티팩트당 최근 20 버전만 파일을 남김 — `HERMES_DESKRPG_ARTIFACT_MAX_VERSIONS`, 0 은 무제한)까지 더해
+제공한다. 0.8.0 부터 **아티팩트**(저장소·`artifact_save` 도구·`post_tool_call` 자동 승격)까지, 0.8.1 부터 **응답 속 큰 코드 블록 자동 승격**(`post_llm_call`, `HERMES_DESKRPG_CAPTURE_RESPONSES=0` 으로 끔)까지, 0.8.2 부터 **보존 규칙**(git 저장소 안 파일·설정 파일은 자동 승격에서 제외, 아티팩트당 최근 20 버전만 파일을 남김 — `HERMES_DESKRPG_ARTIFACT_MAX_VERSIONS`, 0 은 무제한)까지, 0.8.3 부터 **링크 아티팩트**(답변·도구 결과의 http(s) 링크를 `link` 로 자동 저장, `artifact_save url=` 명시 저장 — `HERMES_DESKRPG_CAPTURE_LINKS=0` 으로 자동 수집을 끔)까지 더해
 쉰한 개 라우트다. DeskRPG 가 Hermes 관리 화면(대시보드) 없이 자기 화면에서
 칸반과 크론을 보고 조작하도록, DeskRPG 설계 문서 부록 A 의 HTTP 계약을 그대로 낸다.
 

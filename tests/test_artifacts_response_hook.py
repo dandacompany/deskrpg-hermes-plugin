@@ -1,5 +1,6 @@
 """post_llm_call 훅 — 턴의 최종 응답 속 큰 코드 블록을 아티팩트로 승격한다. 절대 던지지 않는다."""
 import contextlib
+import json
 import types
 
 import pytest
@@ -11,6 +12,7 @@ from deskrpg_plugin import artifacts_store as store
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.delenv("HERMES_DESKRPG_CAPTURE_RESPONSES", raising=False)
+    monkeypatch.delenv("HERMES_DESKRPG_CAPTURE_LINKS", raising=False)
     home = tmp_path / "profiles" / "sophie"; home.mkdir(parents=True)
     kanban = tmp_path / "kanban"; kanban.mkdir()
 
@@ -164,3 +166,85 @@ def test_시도_자체를_턴당_여덟_번으로_묶는다(api, monkeypatch):
     _fire(api, answer)
     monkeypatch.setattr(store, "store_artifact_version", real)
     assert len(attempts) == hook.MAX_RESPONSE_BLOCKS
+
+
+# ---------------------------------------------------------------------------
+# 링크 (0.8.3)
+# ---------------------------------------------------------------------------
+
+
+def _links(api):
+    with contextlib.closing(store.open_registry(api)) as conn:
+        return store.list_artifacts(conn, kind="link")
+
+
+def test_답변의_링크를_response_출처의_link_로_저장한다(api):
+    _fire(api, "정리했습니다: [9월 보고](https://docs.io/r) 원문 https://news.io/a")
+    rows = sorted(_links(api), key=lambda r: r["title"])
+    assert [(r["title"], r["summary"]) for r in rows] == [("9월 보고", "https://docs.io/r"), ("a", "https://news.io/a")]
+    with contextlib.closing(store.open_registry(api)) as conn:
+        v = store.list_versions(conn, rows[0]["id"])[0]
+        assert (v["captured_via"], v["mime"]) == ("response", "text/uri-list")
+        assert store.blob_path_for(api, v).read_bytes() == b"https://docs.io/r\n"
+
+
+def test_같은_세션에서_같은_링크가_다시_나오면_하나다(api):
+    _fire(api, "https://x.io/a")
+    _fire(api, "다시 [이름](https://x.io/a)")
+    assert len(_links(api)) == 1
+
+
+def test_링크는_턴당_30개까지다(api):
+    _fire(api, " ".join(f"https://x.io/{i}" for i in range(40)))
+    assert len(_links(api)) == hook.MAX_RESPONSE_LINKS == 30
+
+
+def test_링크_스위치가_꺼지면_코드_블록만_잡는다(api, monkeypatch):
+    monkeypatch.setenv("HERMES_DESKRPG_CAPTURE_LINKS", "off")
+    _fire(api, _html_answer("페이지") + "\nhttps://x.io/a")
+    assert [r["kind"] for r in _rows(api)] == ["web"]
+
+
+def test_코드_블록과_링크는_한_연결과_한_실패_사건을_쓴다(api, monkeypatch):
+    import sqlite3
+
+    attempts = []
+
+    def locked(*a, **k):
+        attempts.append(1)
+        raise sqlite3.OperationalError("database is locked")
+
+    real = store.store_artifact_version
+    monkeypatch.setattr(store, "store_artifact_version", locked)
+    _fire(api, _html_answer("페이지") + "\nhttps://x.io/a https://x.io/b")
+    monkeypatch.setattr(store, "store_artifact_version", real)
+    assert attempts == [1]  # 첫 잠금에서 멈춘다 — 링크로 넘어가지 않는다
+    with contextlib.closing(store.open_registry(api)) as conn:
+        assert [r["kind"] for r in conn.execute("SELECT kind FROM artifact_events")] == ["artifact.capture_failed"]
+
+
+def test_코드_블록_안의_URL_은_링크가_아니다(api):
+    _fire(api, "```bash\ncurl https://api.example.com\n```")
+    assert not store.registry_path(api).exists()
+
+
+def test_도구가_supersedes_로_바꾼_링크는_옛_URL_이_다시_나와도_되돌아가지_않는다(api):
+    from deskrpg_plugin import artifacts_tool as tool
+
+    def save(**args):
+        return json.loads(tool.make_handler(api)(args, task_id=None, session_id="s1"))
+
+    first = save(kind="link", summary="s", url="https://x.io/a")
+    moved = save(kind="link", summary="s", url="https://x.io/zzz", supersedes=first["artifact_id"])
+    assert (moved["artifact_id"], moved["version"]) == (first["artifact_id"], 2)
+    _fire(api, "바뀐 곳 https://x.io/zzz 예전 https://x.io/a")
+    rows = {r["id"]: r for r in _links(api)}
+    assert len(rows) == 2
+    with contextlib.closing(store.open_registry(api)) as conn:
+        versions = store.list_versions(conn, first["artifact_id"])
+        assert [v["version"] for v in versions] == [1, 2]  # zzz 는 중복, a 는 이 아티팩트로 오지 않는다
+        assert store.blob_path_for(api, versions[-1]).read_bytes() == b"https://x.io/zzz\n"
+        assert rows[first["artifact_id"]]["title_norm"] == "https://x.io/zzz"
+        assert rows[first["artifact_id"]]["title"] == "zzz"
+        other = next(r for i, r in rows.items() if i != first["artifact_id"])
+        assert other["title_norm"] == "https://x.io/a"

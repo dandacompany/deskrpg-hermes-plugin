@@ -119,3 +119,24 @@ async def test_응답_훅이_실제_Hermes_위에서_큰_HTML_블록을_저장�
     assert detail["versions"][0]["captured_via"] == "response"
     resp = await client.get(f"/deskrpg/artifacts/{got[0]['id']}/versions/1/content")
     assert (await resp.read()).decode("utf-8") == page
+
+
+async def test_응답_훅과_도구_결과_훅이_실제_Hermes_위에서_링크를_저장한다(client, api, hermes_env):
+    import json as _json
+
+    artifacts_hook.make_response_hook(api)(
+        session_id="int-link", task_id=None, turn_id="t1", user_message="정리해 줘",
+        assistant_response="요약입니다. [통합 링크](https://int.example.com/report)", conversation_history=[],
+        model="m", platform="cli",
+    )
+    artifacts_hook.make_hook(api)(
+        tool_name="deploy_status", args={}, result=_json.dumps({"output_url": "https://int.example.com/app"}),
+        session_id="int-link", task_id="", tool_call_id="c1", turn_id="", api_request_id="", duration_ms=1,
+        status="ok", error_type=None, error_message=None, middleware_trace=[],
+    )
+    body = await (await client.get("/deskrpg/artifacts?kind=link&q=int.example.com")).json()
+    got = {a["summary"]: a for a in body["artifacts"] if a["session_id"] == "int-link"}
+    assert set(got) == {"https://int.example.com/report", "https://int.example.com/app"}
+    assert got["https://int.example.com/report"]["title"] == "통합 링크"
+    resp = await client.get(f"/deskrpg/artifacts/{got['https://int.example.com/app']['id']}/versions/1/content")
+    assert (await resp.read()) == b"https://int.example.com/app\n"

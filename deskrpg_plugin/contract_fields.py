@@ -255,7 +255,7 @@ ENVELOPES = {
 # ---------------------------------------------------------------------------
 # 아티팩트 (0.8.0)
 # ---------------------------------------------------------------------------
-ARTIFACT_KINDS = ("document", "image", "media", "web", "react", "data", "file")
+ARTIFACT_KINDS = ("document", "image", "media", "web", "react", "data", "file", "link")
 ARTIFACT_SOURCES = ("chat", "kanban", "cron")
 ARTIFACT_SUMMARY_REQUIRED = frozenset({
     "id", "kind", "title", "profile", "source_kind", "session_id", "current_version",

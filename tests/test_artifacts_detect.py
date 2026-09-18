@@ -62,3 +62,33 @@ def test_약한_키는_producer일_때만_하위_트리를_태그한다():
 def test_태그는_리스트를_통해서도_전파된다():
     # "files_created" 강한 키가 태그되면, 리스트 내 객체의 문자열 값도 후보가 됨
     assert detect.candidate_paths([{"files_created": [{"name": "/w/n.md"}]}], producer=False) == ["/w/n.md"]
+
+
+def test_강한_키_사전_검사는_JSON_키로_나올_때만_참이다():
+    from deskrpg_plugin import artifacts_detect as detect
+    assert detect.mentions_strong_key('{"output_url": "https://x.io"}') is True
+    assert detect.mentions_strong_key('{"Result_URL" : 1}') is True
+    assert detect.mentions_strong_key('{"url": "https://x.io", "text": "output_url 설명"}') is False
+    assert detect.mentions_strong_key({"output_url": "x"}) is True
+    assert detect.mentions_strong_key(None) is False
+
+
+_STRONG_KEYS = (
+    "artifact_file", "artifact_image", "artifact_path", "artifact_url",
+    "file_created", "files_created", "file_modified", "files_modified", "file_written", "files_written",
+    "generated_file", "generated_image", "generated_path", "generated_url", "media_tag",
+    "output_file", "output_path", "output_url", "result_file", "result_path", "result_url",
+    "saved_to", "screenshot_path",
+)
+
+
+def test_강한_키_텍스트_사전_검사는_강한_키_정규식과_같은_키를_본다():
+    # `_STRONG_KEY_TEXT_RE` 는 `STRONG_KEY_RE.pattern[4:-2]` 를 잘라 쓴다 — 앞 `^(?:` 와 뒤 `)$` 를 전제로 한다.
+    assert detect.STRONG_KEY_RE.pattern.startswith("^(?:") and detect.STRONG_KEY_RE.pattern.endswith(")$")
+    for key in _STRONG_KEYS:
+        assert detect.STRONG_KEY_RE.match(key), key
+        assert detect._STRONG_KEY_TEXT_RE.search(f'{{"{key}": "x"}}'), key
+        assert detect._STRONG_KEY_TEXT_RE.search(f'{{"{key.upper()}" : "x"}}'), key
+    for key in ("url", "path", "output", "artifact", "xoutput_url", "output_urls", "files_create"):
+        assert not detect.STRONG_KEY_RE.match(key), key
+        assert not detect._STRONG_KEY_TEXT_RE.search(f'{{"{key}": "x"}}'), key

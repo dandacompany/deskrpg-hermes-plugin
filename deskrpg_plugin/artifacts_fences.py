@@ -196,3 +196,27 @@ def is_candidate_language(language: str) -> bool:
 
 def detect_in_response(text) -> list:
     return [d for d in (detect(b.language, b.content) for b in extract_blocks(text)) if d is not None]
+
+
+def prose_outside_blocks(text) -> str:
+    """닫힌 코드 블록을 뺀 본문. 블록 판정은 `extract_blocks` 와 같다 — 닫히지 않은 블록은 본문으로 둔다."""
+    if not isinstance(text, str) or not text:
+        return ""
+    lines = text.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        match = _OPEN_RE.match(lines[i])
+        if not match or (match.group(1)[0] == "`" and "`" in match.group(2)):
+            out.append(lines[i])
+            i += 1
+            continue
+        fence = match.group(1)
+        close_re = re.compile(r"^ {0,3}" + re.escape(fence[0]) + "{" + str(len(fence)) + r",}\s*$")
+        for j in range(i + 1, len(lines)):
+            if close_re.match(lines[j]):
+                i = j + 1
+                break
+        else:
+            out.extend(lines[i:])  # 닫히지 않은 블록 — 본문으로 둔다
+            break
+    return "\n".join(out)

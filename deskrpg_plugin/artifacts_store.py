@@ -185,6 +185,10 @@ class ArtifactTooLarge(ValueError):
     pass
 
 
+class ArtifactKindMismatch(ValueError):
+    """`supersedes` 대상과 새 버전의 kind 가 다르고 한쪽이 link 다 — URL 한 줄과 파일 본문은 한 계보에 섞지 않는다."""
+
+
 @dataclasses.dataclass(frozen=True)
 class ArtifactMeta:
     kind: str
@@ -204,6 +208,7 @@ class ArtifactMeta:
     origin_path: str | None = None
     note: str | None = None
     supersedes: str | None = None
+    identity: str | None = None  # 있으면 정체성 키(제목 대신). 링크는 정리한 URL 을 넣는다(0.8.3)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -212,6 +217,10 @@ class StoreResult:
     version: int
     deduped: bool
     created: bool
+
+
+def _identity_key(meta: ArtifactMeta) -> str:
+    return meta.identity if meta.identity else normalize_title(meta.title)
 
 
 def _safe_filename(name: str) -> str:
@@ -235,17 +244,22 @@ def _collision_free(dest_dir: Path, name: str) -> Path:
 
 
 def _resolve_target(conn, meta: ArtifactMeta) -> str | None:
-    """정체성 규칙 1·2. 살아 있는 아티팩트 id 또는 None(새 아티팩트)."""
+    """정체성 규칙 1·2. 살아 있는 아티팩트 id 또는 None(새 아티팩트).
+
+    `supersedes` 대상의 kind 가 다르고 어느 한쪽이 link 면 `ArtifactKindMismatch` — link 가 아닌 kind 끼리는
+    예전처럼 대상의 새 버전이 된다."""
     if meta.supersedes:
         row = conn.execute(
-            "SELECT id FROM artifacts WHERE id=? AND deleted_at IS NULL", (meta.supersedes,)
+            "SELECT id, kind FROM artifacts WHERE id=? AND deleted_at IS NULL", (meta.supersedes,)
         ).fetchone()
         if row:
+            if row["kind"] != meta.kind and "link" in (row["kind"], meta.kind):
+                raise ArtifactKindMismatch(f"supersedes 대상은 {row['kind']} 인데 {meta.kind} 로 저장하려 했다")
             return row["id"]
     row = conn.execute(
         "SELECT id FROM artifacts WHERE session_id=? AND kind=? AND title_norm=? AND deleted_at IS NULL "
         "ORDER BY updated_at DESC LIMIT 1",
-        (meta.session_id, meta.kind, normalize_title(meta.title)),
+        (meta.session_id, meta.kind, _identity_key(meta)),
     ).fetchone()
     return row["id"] if row else None
 
@@ -290,15 +304,25 @@ def store_artifact_version(api, conn, *, meta: ArtifactMeta, data: bytes, max_by
                     "INSERT INTO artifacts (id, kind, title, title_norm, summary, profile, source_kind, session_id,"
                     " board, task_id, job_id, run_id, current_version, created_at, updated_at)"
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (artifact_id, meta.kind, meta.title, normalize_title(meta.title), meta.summary, meta.profile,
+                    (artifact_id, meta.kind, meta.title, _identity_key(meta), meta.summary, meta.profile,
                      meta.source_kind, meta.session_id, meta.board, meta.task_id, meta.job_id, meta.run_id,
                      version, now, now),
                 )
             else:
-                conn.execute(
-                    "UPDATE artifacts SET current_version=?, updated_at=?, summary=COALESCE(?, summary) WHERE id=?",
-                    (version, now, meta.summary or None, artifact_id),
-                )
+                # 정체성 키를 넘긴 저장(링크)은 새 버전의 키와 제목으로 행을 옮긴다 — 그래야 supersedes·사람 편집으로
+                # 바꾼 URL 이 다음 턴에 같은 아티팩트로 합쳐지고, 옛 URL 이 다시 나와도 이 아티팩트를 되돌리지 않는다.
+                # 사람 편집은 기존 제목을 그대로 넘기므로 보이는 제목은 바뀌지 않는다. 제목 규칙 아티팩트는 그대로다.
+                if meta.identity:
+                    conn.execute(
+                        "UPDATE artifacts SET current_version=?, updated_at=?, summary=COALESCE(?, summary),"
+                        " title=?, title_norm=? WHERE id=?",
+                        (version, now, meta.summary or None, meta.title, meta.identity, artifact_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE artifacts SET current_version=?, updated_at=?, summary=COALESCE(?, summary) WHERE id=?",
+                        (version, now, meta.summary or None, artifact_id),
+                    )
             conn.execute(
                 "INSERT INTO artifact_versions (artifact_id, version, filename, mime, size, sha256, stored_path,"
                 " origin_path, created_by, captured_via, note, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",

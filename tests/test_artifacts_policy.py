@@ -152,3 +152,13 @@ def test_환경변수로_옮긴_아티팩트_저장소도_거부된다(api, tmp_
     assert e.value.code == "artifact_path_sensitive"
     ok = tmp_path / "kanban" / "ok.md"; ok.write_text("x")
     assert policy.resolve_source_path(api, str(ok)) == ok.resolve()
+
+
+def test_link_종류와_url_MIME_이_있고_path_content_로는_저장할_수_없다():
+    from deskrpg_plugin import contract_fields as cf
+    assert policy.KINDS[-1] == "link" and cf.ARTIFACT_KINDS == policy.KINDS
+    assert policy.mime_for_filename("a.url") == "text/uri-list"
+    for from_path in (True, False):
+        with pytest.raises(policy.PolicyError) as err:
+            policy.validate_completeness("link", filename="a.url", text="https://x.io", from_path=from_path)
+        assert err.value.code == "artifact_incomplete"

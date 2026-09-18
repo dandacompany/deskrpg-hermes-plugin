@@ -17,6 +17,7 @@ description: 결과물을 DeskRPG 아티팩트로 저장하는 규칙과 artifac
 | data | `content`+`filename`(.csv/.json/.jsonl) | 헤더 행이 있는 CSV, 배열 JSON, 또는 한 줄에 객체 하나인 JSONL |
 | image / media | `path`(절대 경로) | 워크스페이스에 이미 있는 파일 |
 | file | `path`(절대 경로) 또는 `content`+`filename` | 위 어디에도 맞지 않는 결과물(.zip 등)을 형식 검사 없이 그대로 남기는 탈출구. 맞는 kind 가 있으면 그걸 쓴다 |
+| link | `url`(http/https) | 결과물이 웹에 있는 경우(배포 주소, 공유 문서, 업로드 결과). `path`·`content`·`filename` 은 넘기지 않는다. `title` 을 빼면 주소의 마지막 조각이 제목이 된다 |
 
 `path` 는 항상 **절대 경로**다(`/…` 또는 `~/…`). 상대 경로는 거부된다.
 
@@ -30,6 +31,12 @@ description: 결과물을 DeskRPG 아티팩트로 저장하는 규칙과 artifac
 
 ```json
 {"kind":"document","title":"9월 3주 AI 동향","summary":"…","content":"…","filename":"ai-weekly-w38.md","supersedes":"<이전 artifact_id>","note":"출처 링크 3건 보강"}
+```
+
+링크:
+
+```json
+{"kind":"link","title":"9월 보고서 공유본","summary":"편집장 검토용 공유 링크","url":"https://docs.example.com/d/abc"}
 ```
 
 ## 실패 응답

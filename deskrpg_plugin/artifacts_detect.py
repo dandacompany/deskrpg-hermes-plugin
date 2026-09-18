@@ -22,9 +22,18 @@ WEAK_KEY_RE = re.compile(
     r"|download(?:s|_(?:file|path|url))?|(?:audio|image|video)(?:_(?:file|path|url))?|file_path|local_path"
     r"|media(?:_(?:file|path|url))?|path)$", re.I
 )
+# 비산출 도구의 결과를 JSON 으로 파싱하기 전 싼 사전 검사 — 강한 키가 JSON 키 자리에 글자로 나오는가.
+_STRONG_KEY_TEXT_RE = re.compile(r'"(?:' + STRONG_KEY_RE.pattern[4:-2] + r')"\s*:', re.I)
+
 _UNTRUSTED_OPEN = re.compile(r"^<untrusted_tool_result\b[^>]*>\s*")
 _UNTRUSTED_CLOSE = "</untrusted_tool_result>"
 MAX_DEPTH = 6
+
+
+def mentions_strong_key(result) -> bool:
+    if isinstance(result, dict):
+        return True  # 이미 구조체 — 파싱 비용이 없다
+    return isinstance(result, str) and bool(_STRONG_KEY_TEXT_RE.search(result))
 
 
 def is_producer_tool(name: str) -> bool:
