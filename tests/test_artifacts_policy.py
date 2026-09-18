@@ -96,3 +96,17 @@ def test_모르는_kind_는_bad_kind_다():
     with pytest.raises(policy.PolicyError) as e:
         policy.validate_completeness("sticker", filename="a", text="", from_path=False)
     assert e.value.code == "artifact_bad_kind"
+
+
+def test_image_는_확장자_허용_목록을_확인한다():
+    with pytest.raises(policy.PolicyError) as e:
+        policy.validate_completeness("image", filename="payload.exe", text=None, from_path=True)
+    assert e.value.code == "artifact_incomplete"
+    policy.validate_completeness("image", filename="A.PNG", text=None, from_path=True)
+
+
+def test_media_는_확장자_허용_목록을_확인한다():
+    with pytest.raises(policy.PolicyError) as e:
+        policy.validate_completeness("media", filename="a.png", text=None, from_path=True)
+    assert e.value.code == "artifact_incomplete"
+    policy.validate_completeness("media", filename="a.mp4", text=None, from_path=True)

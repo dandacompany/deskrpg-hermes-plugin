@@ -94,5 +94,11 @@ def validate_completeness(kind: str, *, filename: str, text, from_path: bool) ->
         raise PolicyError("artifact_incomplete", "data 는 CSV 또는 JSON 이어야 한다")
     if kind == "document" and suffix not in (".md", ".txt", ".pdf", ".docx", ".doc", ".rtf", ".html"):
         raise PolicyError("artifact_incomplete", "document 는 md·txt·pdf·docx·html 이어야 한다")
-    if kind in ("image", "media") and not from_path:
-        raise PolicyError("artifact_incomplete", f"{kind} 는 인라인 본문이 아니라 파일 경로로 넘겨야 한다")
+    if kind in ("image", "media"):
+        if not from_path:
+            raise PolicyError("artifact_incomplete", f"{kind} 는 인라인 본문이 아니라 파일 경로로 넘겨야 한다")
+        if _KIND_BY_EXT.get(suffix) != kind:
+            if kind == "image":
+                raise PolicyError("artifact_incomplete", "image 는 png·jpg·gif·webp·svg·bmp 파일이어야 한다")
+            else:  # kind == "media"
+                raise PolicyError("artifact_incomplete", "media 는 오디오·비디오 파일(mp3·wav·mp4·webm 등)이어야 한다")
