@@ -63,3 +63,33 @@ async def test_post_tool_call_훅이_실제_홈_아래_산출_파일을_잡아_�
     body = await (await client.get("/deskrpg/artifacts")).json()
     filenames = [a["filename"] for a in body["artifacts"]]
     assert "hook-output.md" in filenames
+
+
+async def test_프로필_오버라이드_안에서_도구를_부르면_레지스트리는_기본_홈이고_출처_프로필이_남는다(api, hermes_env, profile):
+    """게이트웨이가 프로필 세션을 돌리듯 `set_hermes_home_override(<sophie 홈>)` 안에서 도구 핸들러를 부른다.
+
+    레지스트리는 게이트웨이당 하나라 기본 홈 아래에 생기고(R4), 행의 `profile` 은 오버라이드된 홈에서
+    읽혀 `sophie` 다(I3).
+    """
+    import contextlib
+
+    from deskrpg_plugin import artifacts_store as store
+
+    sophie_home = Path(api.get_profile_dir(profile))
+    assert sophie_home.parent.name == "profiles"
+    handler = artifacts_tool.make_handler(api)
+    token = api.set_hermes_home_override(str(sophie_home))
+    try:
+        assert Path(api.get_hermes_home()).resolve() == sophie_home.resolve()
+        out = json.loads(handler({"kind": "document", "title": "프로필 출처", "summary": "s", "content": "# p",
+                                  "filename": "p.md"}, task_id=None, session_id="int-profile", user_task=""))
+    finally:
+        api.reset_hermes_home_override(token)
+    assert "error" not in out, out
+    root = Path(hermes_env["home"]) / "deskrpg" / "artifacts"
+    assert (root / "registry.db").is_file()
+    assert not (sophie_home / "deskrpg" / "artifacts").exists()
+    with contextlib.closing(store.open_registry(api)) as conn:
+        assert store.artifacts_root(api).resolve() == root.resolve()
+        row = store.get_artifact(conn, out["artifact_id"])
+        assert row["profile"] == "sophie"
