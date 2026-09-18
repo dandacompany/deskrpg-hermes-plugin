@@ -37,7 +37,11 @@ def _load_config(home) -> dict:
     try:
         return _config._load(home / _config.CONFIG_FILENAME)
     except _config.ConfigUnreadable as exc:
-        raise RequestError(409, "config_unreadable", str(exc)) from exc
+        # 사유 문자열을 싣지 않는다 — PyYAML 오류는 망가진 줄을 인용하므로 `api_key: "sk-…` 같은
+        # 값이 그대로 나간다. 응답은 고정 문구, 로그는 타입 이름, 체인은 끊는다(`from None`).
+        logger.warning("[deskrpg] 피커 config 읽기 실패: %s",
+                       type(exc.__cause__ or exc).__name__)
+        raise RequestError(409, "config_unreadable", "config.yaml 을 해석할 수 없다") from None
 
 
 def _configurable(api):

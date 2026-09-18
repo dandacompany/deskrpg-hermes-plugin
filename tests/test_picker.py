@@ -105,3 +105,21 @@ async def test_심볼이_없는_빌드에는_라우트가_없다(aiohttp_client,
     client = await _client(aiohttp_client, fake_api)
     assert (await client.get("/p/sophie/deskrpg/skills")).status == 404
     assert (await client.get("/p/sophie/deskrpg/toolsets")).status == 200
+
+
+async def test_망가진_config_의_비밀_값은_409_본문과_로그에_없다(aiohttp_client, fake_api, caplog):
+    import logging
+
+    secret = "sk-PICKER-LEAK-0123456789abcdef"
+    fake_api.create_profile("sophie")
+    (fake_api.get_profile_dir("sophie") / "config.yaml").write_text(
+        f'providers:\n  x:\n    api_key: "{secret}\n  y: [\n', encoding="utf-8")
+    client = await _client(aiohttp_client, fake_api)
+    with caplog.at_level(logging.DEBUG):
+        for path in ("/p/sophie/deskrpg/toolsets", "/p/sophie/deskrpg/skills"):
+            resp = await client.get(path)
+            assert resp.status == 409
+            text = await resp.text()
+            assert (await resp.json())["error"] == "config_unreadable"
+            assert secret not in text
+    assert secret not in caplog.text
