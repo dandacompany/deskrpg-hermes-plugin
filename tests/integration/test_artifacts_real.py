@@ -27,15 +27,20 @@ async def test_도구_핸들러가_임시_홈_아래_저장소에_쓰고_라우�
 
 
 async def test_아티팩트_사건이_기존_사건_커서에_실린다(client, api, hermes_env):
+    """`include=artifacts` 로 옵트인하면 실리고, 옵트인하지 않은 같은 커서에는 `artifact.*` 가 하나도 없다(R17)."""
     resp = await client.post("/deskrpg/kanban/boards", json={"slug": "default", "name": "d"})
     assert resp.status in (200, 201)
-    start = (await (await client.get(f"/deskrpg/events{B}")).json())["cursor"]
+    inc = "&include=artifacts"
+    start = (await (await client.get(f"/deskrpg/events{B}{inc}")).json())["cursor"]
+    plain_start = (await (await client.get(f"/deskrpg/events{B}")).json())["cursor"]
     handler = artifacts_tool.make_handler(api)
     handler({"kind": "data", "title": "표", "summary": "s", "content": "a,b\n1,2", "filename": "t.csv"},
             task_id=None, session_id="int-2", user_task="")
-    body = await (await client.get(f"/deskrpg/events{B}&cursor={start}")).json()
+    body = await (await client.get(f"/deskrpg/events{B}{inc}&cursor={start}")).json()
     kinds = [e["kind"] for e in body["events"]]
     assert "artifact.created" in kinds
+    plain = await (await client.get(f"/deskrpg/events{B}&cursor={plain_start}")).json()
+    assert not [e["kind"] for e in plain["events"] if e["kind"].startswith("artifact.")]
 
 
 async def test_info_가_artifacts_능력과_상한을_낸다(client):

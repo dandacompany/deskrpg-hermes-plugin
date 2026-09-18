@@ -10,6 +10,7 @@
    장부 파일이 없는 프로필은 잡 레코드(`fire_claim`·`last_run_at`)로 폴백한다.
 4. **아티팩트** — 아티팩트 레지스트리(`registry.db`)의 `artifact_events` 를 `id > a` 로 tail 한다.
    게이트웨이 전역 사건이라 `board` 로 거르지 않는다(R6) — DeskRPG 가 채널로 거른다.
+   `include=artifacts` 로 옵트인한 호출에서만 읽는다(R17). `ts` 는 다른 출처처럼 epoch **초**다.
 
 커서는 `v1.` + base64url(JSON) 의 불투명 토큰이고, **각 출처의 위치는 실제로 응답에 실은 사건까지만
 전진**한다(E5·E6). 잘린 사건은 다음 호출에 다시 나온다 — 스트림에 구멍이 나는 것보다 두 번 보이는
@@ -648,7 +649,7 @@ def read_artifact_events(api, after_id: int, limit: int) -> list:
     for row in rows:
         payload = json.loads(row["payload"]) if row["payload"] else {}
         event = {
-            "id": f"a:{row['id']}", "ts": int(row["ts"]) * 1000, "kind": row["kind"], "payload": payload,
+            "id": f"a:{row['id']}", "ts": int(row["ts"]), "kind": row["kind"], "payload": payload,
             "artifact_id": payload.get("artifact_id"), "_src": "a", "_pos": (int(row["id"]),),
         }
         for key in ("profile", "board", "task_id"):
@@ -823,17 +824,26 @@ def _timezone_of(api):
         return None
 
 
-def now_state(api, conn, slug) -> dict:
-    """E1 — 커서가 없을 때의 "지금" 위치."""
-    return {
+def wants_artifacts(raw) -> bool:
+    """`include=artifacts` 옵트인(R17). 쉼표 목록을 받고 모르는 토큰은 무시한다."""
+    if not raw:
+        return False
+    return "artifacts" in {token.strip() for token in str(raw).split(",")}
+
+
+def now_state(api, conn, slug, *, include_artifacts=False) -> dict:
+    """E1 — 커서가 없을 때의 "지금" 위치. `a` 는 옵트인했을 때만 싣는다."""
+    state = {
         "k": max_event_id(conn),
         "d": deleted_log_position(api, slug),
         "c": cron_now_positions(api),
-        "a": artifact_position(api, {}),
     }
+    if include_artifacts:
+        state["a"] = artifact_position(api, {})
+    return state
 
 
-def collect(api, slug, state, limit) -> dict:
+def collect(api, slug, state, limit, *, include_artifacts=False) -> dict:
     """E3–E6 을 한 번에: 세 출처를 읽고 병합해 `{events, cursor, has_more}` 를 만든다. 워커 스레드 안에서 부른다."""
     tz = _timezone_of(api)
     with board_conn(api, slug) as conn:
@@ -845,8 +855,12 @@ def collect(api, slug, state, limit) -> dict:
             kanban_events.extend(map_kanban_row(api, conn, slug, row))
     deleted_events = deleted_tail(api, slug, state["d"])
     cron_events, cron_info = cron_tail(api, state.get("c") or {}, tz)
-    old_a = artifact_position(api, state)
-    artifact_events = read_artifact_events(api, old_a, limit + 1)
+    # 옵트인하지 않은 호출자는 아티팩트 출처를 읽지도 합치지도 않고, 받은 `a` 를 그대로 돌려준다(없으면 없는 채로).
+    if include_artifacts:
+        old_a = artifact_position(api, state)
+        artifact_events = read_artifact_events(api, old_a, limit + 1)
+    else:
+        old_a, artifact_events = state.get("a"), []
 
     emitted, has_more, _by_source = merge(kanban_events, deleted_events, cron_events, artifact_events, limit)
     # 읽기 상한에 닿았으면 그 뒤에 행이 더 있을 수 있다. 과하게 켜는 쪽이 안전하다 — 다음 호출이 비어 있을 뿐이다.
@@ -857,8 +871,9 @@ def collect(api, slug, state, limit) -> dict:
         "d": advance_deleted(state["d"], deleted_events, emitted_ids),
         "c": {**{p: v for p, v in (state.get("c") or {}).items() if p not in cron_info},
               **advance_cron(cron_info, cron_events, emitted_ids)},
-        "a": advance_artifacts(old_a, artifact_events, emitted_ids),
     }
+    if old_a is not None:
+        next_state["a"] = advance_artifacts(old_a, artifact_events, emitted_ids)
     return {
         "events": [public_event(event) for event in emitted],
         "cursor": encode_cursor(next_state),
@@ -867,23 +882,27 @@ def collect(api, slug, state, limit) -> dict:
 
 
 def events_handler(api):
-    """GET /deskrpg/events?board=&cursor=&limit= → `{events, cursor, has_more}` (E1–E7)."""
+    """GET /deskrpg/events?board=&cursor=&limit=&include= → `{events, cursor, has_more}` (E1–E7).
+
+    아티팩트 사건은 `include=artifacts` 일 때만 섞인다(R17) — 구버전 DeskRPG 는 모르는 kind 를 받지 않는다.
+    """
 
     @guarded
     async def handler(request):
         slug = parse_board_slug(request)
         limit = clamp_limit(request.query.get("limit"))
         token = request.query.get("cursor")
+        include_artifacts = wants_artifacts(request.query.get("include"))
 
         def work():
             if not api.board_exists(slug):
                 raise RequestError(404, "board_not_found", slug)
             if token is None or token == "":
                 with board_conn(api, slug) as conn:
-                    state = now_state(api, conn, slug)
+                    state = now_state(api, conn, slug, include_artifacts=include_artifacts)
                 return {"events": [], "cursor": encode_cursor(state), "has_more": False}
             state = decode_cursor(token)
-            result = collect(api, slug, state, limit)
+            result = collect(api, slug, state, limit, include_artifacts=include_artifacts)
             log_event("events.tail", board=slug, count=len(result["events"]), has_more=result["has_more"])
             return result
 

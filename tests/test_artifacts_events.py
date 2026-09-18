@@ -7,6 +7,8 @@ import pytest
 
 from deskrpg_plugin import artifacts_store as store
 from deskrpg_plugin import events
+from tests.fakes_cron import install_fake_cron
+from tests.fakes_events import events_client, install_fake_events
 
 
 @pytest.fixture
@@ -25,7 +27,7 @@ def test_읽기는_after_id_이후를_오름차순으로_주고_모양이_계약
     _emit(api, "artifact.deleted", 11, artifact_id="x", deleted_by="human:u")
     rows = events.read_artifact_events(api, after_id=0, limit=10)
     assert [r["kind"] for r in rows] == ["artifact.created", "artifact.deleted"]
-    assert rows[0]["id"] == "a:1" and rows[0]["ts"] == 10_000 and rows[0]["artifact_id"] == "x"
+    assert rows[0]["id"] == "a:1" and rows[0]["ts"] == 10 and rows[0]["artifact_id"] == "x"
     assert rows[0]["_src"] == "a" and rows[0]["_pos"] == (1,)
     assert events.read_artifact_events(api, after_id=1, limit=10)[0]["id"] == "a:2"
 
@@ -47,3 +49,72 @@ def test_커서에_a_가_없으면_지금_위치로_본다(api):
     _emit(api, "artifact.created", 1, artifact_id="old")
     state = {"k": 0, "d": 0, "c": {}}
     assert events.artifact_position(api, state) == 1
+
+
+# ---------------------------------------------------------------------------
+# 라우트 — ts 단위(초)와 include=artifacts 옵트인(R17)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def kanban(fake_api, tmp_path):
+    return install_fake_events(fake_api, tmp_path / "kanban")
+
+
+@pytest.fixture
+def cron_store(fake_api, tmp_path):
+    return install_fake_cron(fake_api, tmp_path)
+
+
+def _cursor(**state):
+    return events.encode_cursor({"k": 0, "d": 0, "c": {}, **state})
+
+
+async def test_아티팩트_ts_는_초라서_칸반_사건과_실제_단위로_섞인다(aiohttp_client, fake_api, kanban, cron_store):
+    conn = kanban.connect(board="default")
+    task = kanban.make_task(conn, title="카드")
+    k_start = max(e.id for e in kanban.boards["default"].events)
+    kanban.emit("default", task.id, "commented", {"author": "dante", "len": 3}, ts=100)
+    _emit(fake_api, "artifact.created", 50, artifact_id="x", version=1)
+    client = await events_client(aiohttp_client, fake_api)
+    body = await (await client.get(
+        f"/deskrpg/events?board=default&include=artifacts&cursor={_cursor(k=k_start, a=0)}")).json()
+    assert [(e["kind"], e["ts"]) for e in body["events"]] == [("artifact.created", 50), ("task.comment", 100)]
+
+
+async def test_include_가_없으면_아티팩트_사건을_싣지_않고_a_를_그대로_넘긴다(aiohttp_client, fake_api, kanban, cron_store):
+    client = await events_client(aiohttp_client, fake_api)
+    _emit(fake_api, "artifact.created", 50, artifact_id="x", version=1)
+    body = await (await client.get(f"/deskrpg/events?board=default&cursor={_cursor(a=0)}")).json()
+    assert body["events"] == []
+    assert events.decode_cursor(body["cursor"])["a"] == 0
+
+
+async def test_include_가_없고_커서에_a_가_없으면_a_를_만들지_않는다(aiohttp_client, fake_api, kanban, cron_store):
+    _emit(fake_api, "artifact.created", 50, artifact_id="x", version=1)
+    client = await events_client(aiohttp_client, fake_api)
+    body = await (await client.get(f"/deskrpg/events?board=default&cursor={_cursor()}")).json()
+    assert body["events"] == []
+    assert "a" not in events.decode_cursor(body["cursor"])
+    first = await (await client.get("/deskrpg/events?board=default")).json()
+    assert "a" not in events.decode_cursor(first["cursor"])
+
+
+@pytest.mark.parametrize("include", ["artifacts", "foo,artifacts", "artifacts,foo"])
+async def test_include_artifacts_면_아티팩트_사건을_싣는다(aiohttp_client, fake_api, kanban, cron_store, include):
+    client = await events_client(aiohttp_client, fake_api)
+    start = await (await client.get(f"/deskrpg/events?board=default&include={include}")).json()
+    assert events.decode_cursor(start["cursor"])["a"] == 0
+    _emit(fake_api, "artifact.created", 50, artifact_id="x", version=1)
+    body = await (await client.get(
+        f"/deskrpg/events?board=default&include={include}&cursor={start['cursor']}")).json()
+    assert [e["kind"] for e in body["events"]] == ["artifact.created"]
+    assert events.decode_cursor(body["cursor"])["a"] == 1
+
+
+async def test_include_artifacts_면_a_없는_구커서는_지금_위치에서_시작한다(aiohttp_client, fake_api, kanban, cron_store):
+    _emit(fake_api, "artifact.created", 50, artifact_id="old", version=1)
+    client = await events_client(aiohttp_client, fake_api)
+    body = await (await client.get(f"/deskrpg/events?board=default&include=artifacts&cursor={_cursor()}")).json()
+    assert body["events"] == []
+    assert events.decode_cursor(body["cursor"])["a"] == 1
