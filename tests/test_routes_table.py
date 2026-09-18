@@ -175,3 +175,30 @@ def test_프로필_라우트가_포괄_라우트_앞으로_올라간다(fake_api
     profile_indexes = [i for i, c in enumerate(canonicals) if c.startswith("/p/{profile}/deskrpg/")]
     assert profile_indexes, "프로필 스코프 라우트가 하나도 등록되지 않았다"
     assert max(profile_indexes) < catchall_index
+
+
+# F3 — `get_toolsets`/`get_skills` 라우트 등록은 `profile_toolsets`/`profile_skills`
+# capability 와 같은 심볼 집합(has_toolset_symbols/has_skill_symbols)을 봐야 한다.
+# 기존에는 단일 심볼(`_get_platform_tools`/`_find_all_skills`)만 봐서, 그 심볼만 있고
+# 나머지가 빠진 반쪽짜리 빌드에서도 라우트는 뜨는데 capability 는 없다고 광고하는
+# 모순이 생겼다.
+
+
+def test_get_toolsets_라우트는_capability_와_같은_심볼_집합을_본다(fake_api):
+    from deskrpg_plugin.contract_fields import capabilities
+
+    # _get_platform_tools 는 남기고, has_toolset_symbols 를 구성하는 다른 심볼 하나만 뺀다.
+    fake_api._toolset_has_keys = None
+    paths = [p for _m, p, _h, _s in routes.routes_for(fake_api)]
+    assert "/p/{profile}/deskrpg/toolsets" not in paths
+    assert "profile_toolsets" not in capabilities(fake_api)
+
+
+def test_get_skills_라우트는_capability_와_같은_심볼_집합을_본다(fake_api):
+    from deskrpg_plugin.contract_fields import capabilities
+
+    # _find_all_skills 는 남기고, has_skill_symbols 를 구성하는 다른 심볼 하나만 뺀다.
+    fake_api._sort_skills = None
+    paths = [p for _m, p, _h, _s in routes.routes_for(fake_api)]
+    assert "/p/{profile}/deskrpg/skills" not in paths
+    assert "profile_skills" not in capabilities(fake_api)

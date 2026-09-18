@@ -9,6 +9,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .auth import Scope, require_auth
+from . import contract_fields as _contract_fields
 from . import identity as _identity
 from . import profiles as _profiles
 from . import config as _config
@@ -362,22 +363,32 @@ def handler_for(name, api):
 
 # 이 Hermes 빌드에 심볼이 없으면 등록하지 않는 라우트. 등록해 놓고 500 을 내지 않는다 —
 # 호출부가 "설치는 됐는데 고장" 과 "기능이 없음" 을 구분할 수 없게 된다.
+#
+# 값은 심볼 이름(문자열, `getattr(api, name) is not None` 으로 판정) 또는 판정 함수
+# (`predicate(api) -> bool`)다. `get_toolsets`/`get_skills` 는 단일 심볼이 아니라
+# `contract_fields.has_toolset_symbols`/`has_skill_symbols` 를 그대로 써야 한다 — 그래야
+# 라우트 유무가 `capabilities()` 의 `profile_toolsets`/`profile_skills` 와 항상 같은
+# 심볼 집합으로 판정된다(F3, 2026-09-19).
 _OPTIONAL_ROUTES = {
     "kanban_create_swarm": "create_swarm",
     "kanban_blackboard": "latest_blackboard",
-    "get_toolsets": "_get_platform_tools",
-    "get_skills": "_find_all_skills",
+    "get_toolsets": _contract_fields.has_toolset_symbols,
+    "get_skills": _contract_fields.has_skill_symbols,
 }
+
+
+def _route_available(api, handler_name: str) -> bool:
+    gate = _OPTIONAL_ROUTES.get(handler_name)
+    if gate is None:
+        return True
+    if callable(gate):
+        return bool(gate(api))
+    return getattr(api, gate, None) is not None
 
 
 def routes_for(api):
     """이 빌드에서 실제로 뜰 라우트만."""
-    return [
-        row
-        for row in ROUTES
-        if _OPTIONAL_ROUTES.get(row[2]) is None
-        or getattr(api, _OPTIONAL_ROUTES[row[2]], None) is not None
-    ]
+    return [row for row in ROUTES if _route_available(api, row[2])]
 
 
 def attach(app, adapter, api) -> None:
