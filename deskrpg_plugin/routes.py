@@ -9,10 +9,14 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .auth import Scope, require_auth
+from . import contract_fields as _contract_fields
 from . import identity as _identity
 from . import profiles as _profiles
 from . import config as _config
 from . import catalog as _catalog
+from . import picker as _picker
+from . import provider_keys as _provider_keys
+from . import oauth as _oauth
 from . import kanban_board as _kanban_board
 from . import kanban_actions as _kanban_actions
 from . import kanban_files as _kanban_files
@@ -59,6 +63,17 @@ ROUTES = [
     ("PUT", "/p/{profile}/deskrpg/identity", "put_identity", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/config", "get_config", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/catalog", "get_catalog", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/toolsets", "get_toolsets", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/skills", "get_skills", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", "put_provider_key", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/provider-keys/{provider}", "delete_provider_key", Scope.PROFILE),
+    # OAuth 디바이스 로그인 — Hermes 세션 위임. 취소 행이 연결 끊기 행보다 **먼저** 와야 한다:
+    # 둘 다 DELETE 이고 `/oauth/sessions/x` 는 `/oauth/{provider}` 에도 맞지 않지만(세그먼트 수가 다르다)
+    # 순서로 의도를 고정해 둔다.
+    ("POST", "/p/{profile}/deskrpg/oauth/{provider}/start", "oauth_start", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/oauth/{provider}/sessions/{session_id}", "oauth_poll", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/oauth/sessions/{session_id}", "oauth_cancel", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/oauth/{provider}", "oauth_disconnect", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/config", "put_config", Scope.PROFILE),
     # ---- 0.6.0 칸반 (소유자 키, spec §5) ------------------------------------------------
     # 칸반은 프로필과 무관한 호스트 공유 저장소(HERMES_KANBAN_HOME)라 전부 소유자 키다(C7).
@@ -150,6 +165,14 @@ _HANDLERS = {
     "get_config": lambda api: _config.get_handler(api),
     "put_config": lambda api: _config.put_handler(api),
     "get_catalog": lambda api: _catalog.get_handler(api),
+    "get_toolsets": lambda api: _picker.toolsets_handler(api),
+    "get_skills": lambda api: _picker.skills_handler(api),
+    "put_provider_key": lambda api: _provider_keys.put_handler(api),
+    "delete_provider_key": lambda api: _provider_keys.delete_handler(api),
+    "oauth_start": lambda api: _oauth.start_handler(api),
+    "oauth_poll": lambda api: _oauth.poll_handler(api),
+    "oauth_cancel": lambda api: _oauth.cancel_handler(api),
+    "oauth_disconnect": lambda api: _oauth.disconnect_handler(api),
     # 칸반
     "kanban_list_boards": lambda api: _kanban_board.list_boards_handler(api),
     "kanban_create_board": lambda api: _kanban_board.create_board_handler(api),
@@ -357,20 +380,38 @@ def handler_for(name, api):
 
 # 이 Hermes 빌드에 심볼이 없으면 등록하지 않는 라우트. 등록해 놓고 500 을 내지 않는다 —
 # 호출부가 "설치는 됐는데 고장" 과 "기능이 없음" 을 구분할 수 없게 된다.
+#
+# 값은 심볼 이름(문자열, `getattr(api, name) is not None` 으로 판정) 또는 판정 함수
+# (`predicate(api) -> bool`)다. `get_toolsets`/`get_skills` 는 단일 심볼이 아니라
+# `contract_fields.has_toolset_symbols`/`has_skill_symbols` 를 그대로 써야 한다 — 그래야
+# 라우트 유무가 `capabilities()` 의 `profile_toolsets`/`profile_skills` 와 항상 같은
+# 심볼 집합으로 판정된다(F3, 2026-09-19).
 _OPTIONAL_ROUTES = {
     "kanban_create_swarm": "create_swarm",
     "kanban_blackboard": "latest_blackboard",
+    "get_toolsets": _contract_fields.has_toolset_symbols,
+    "get_skills": _contract_fields.has_skill_symbols,
+    "put_provider_key": "PROVIDER_REGISTRY",
+    "delete_provider_key": "PROVIDER_REGISTRY",
+    "oauth_start": _contract_fields.has_oauth_symbols,
+    "oauth_poll": _contract_fields.has_oauth_symbols,
+    "oauth_cancel": _contract_fields.has_oauth_symbols,
+    "oauth_disconnect": _contract_fields.has_oauth_symbols,
 }
+
+
+def _route_available(api, handler_name: str) -> bool:
+    gate = _OPTIONAL_ROUTES.get(handler_name)
+    if gate is None:
+        return True
+    if callable(gate):
+        return bool(gate(api))
+    return getattr(api, gate, None) is not None
 
 
 def routes_for(api):
     """이 빌드에서 실제로 뜰 라우트만."""
-    return [
-        row
-        for row in ROUTES
-        if _OPTIONAL_ROUTES.get(row[2]) is None
-        or getattr(api, _OPTIONAL_ROUTES[row[2]], None) is not None
-    ]
+    return [row for row in ROUTES if _route_available(api, row[2])]
 
 
 def attach(app, adapter, api) -> None:

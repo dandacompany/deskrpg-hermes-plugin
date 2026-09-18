@@ -22,6 +22,17 @@ EXPECTED_ROUTES = {
     # 같지만(루트 auth 폴백), 프로필이 자기 자격증명을 갖는 순간 갈린다 —
     # 그때 스코프를 좁히면 이미 쓰던 화면이 깨지므로 처음부터 좁게 둔다.
     ("GET", "/p/{profile}/deskrpg/catalog", _PROFILE),
+    # 0.9.0 — 직원 설정 피커: 프로필 홈 스코프의 툴셋·스킬 목록.
+    ("GET", "/p/{profile}/deskrpg/toolsets", _PROFILE),
+    ("GET", "/p/{profile}/deskrpg/skills", _PROFILE),
+    # 프로바이더 API 키 입력 — 쓰기 전용, PROVIDER_REGISTRY 없는 빌드에서는 라우트가 없다.
+    ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", _PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/provider-keys/{provider}", _PROFILE),
+    # OAuth 디바이스 로그인 — Hermes 세션 위임, 디바이스 로그인 심볼이 없는 빌드에서는 라우트가 없다.
+    ("POST", "/p/{profile}/deskrpg/oauth/{provider}/start", _PROFILE),
+    ("GET", "/p/{profile}/deskrpg/oauth/{provider}/sessions/{session_id}", _PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/oauth/sessions/{session_id}", _PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/oauth/{provider}", _PROFILE),
     # §5.1 보드
     ("GET", "/deskrpg/kanban/boards", _OWNER),
     ("POST", "/deskrpg/kanban/boards", _OWNER),
@@ -77,18 +88,27 @@ EXPECTED_ROUTES = {
 }
 
 
-def test_라우트_테이블이_스펙의_쉰한_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 51
-    assert len(routes.ROUTES) == 51, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+def test_라우트_테이블이_스펙의_쉰아홉_개와_스코프까지_정확히_같다():
+    assert len(EXPECTED_ROUTES) == 59
+    assert len(routes.ROUTES) == 59, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
-def test_소유자_라우트는_34_개_프로필_라우트는_17_개다():
+def test_소유자_라우트는_34_개_프로필_라우트는_25_개다():
     by_scope = {}
     for _m, _p, _h, scope in routes.ROUTES:
         by_scope[scope] = by_scope.get(scope, 0) + 1
-    # 소유자: 기존 4 + 칸반 21 + 스웜 2 + 사건 1 + 아티팩트 6 = 34 · 프로필: 기존 5 + 크론 12 = 17.
-    assert by_scope == {routes.Scope.DEFAULT: 4 + 21 + 2 + 1 + 6, routes.Scope.PROFILE: 5 + 12}
+    # 소유자: 기존 4 + 칸반 21 + 스웜 2 + 사건 1 + 아티팩트 6 = 34 ·
+    # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 = 25.
+    assert by_scope == {routes.Scope.DEFAULT: 4 + 21 + 2 + 1 + 6, routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4}
+
+
+def test_OAuth_취소_행이_연결_끊기_행보다_앞에_있다():
+    # 둘 다 `/p/{profile}/deskrpg/oauth/` 아래 DELETE 다. 취소를 앞에 둬 의도를 고정한다.
+    rows = [(m, p) for m, p, _h, _s in routes.ROUTES]
+    cancel = rows.index(("DELETE", "/p/{profile}/deskrpg/oauth/sessions/{session_id}"))
+    disconnect = rows.index(("DELETE", "/p/{profile}/deskrpg/oauth/{provider}"))
+    assert cancel < disconnect
 
 
 def test_고정_세그먼트_카드_라우트가_action_와일드카드보다_앞에_있다():
@@ -142,7 +162,7 @@ def test_plugin_yaml_이_requires_hermes_를_최상위에_선언하고_버전은
 
     raw = (pathlib.Path(__file__).resolve().parent.parent / "plugin.yaml").read_text(encoding="utf-8")
     manifest = yaml.safe_load(raw)
-    assert manifest["version"] == "0.8.4"
+    assert manifest["version"] == "0.9.0"
     assert manifest["requires_hermes"] == ">=0.21.1"
     assert "requires" not in manifest
 
@@ -171,3 +191,30 @@ def test_프로필_라우트가_포괄_라우트_앞으로_올라간다(fake_api
     profile_indexes = [i for i, c in enumerate(canonicals) if c.startswith("/p/{profile}/deskrpg/")]
     assert profile_indexes, "프로필 스코프 라우트가 하나도 등록되지 않았다"
     assert max(profile_indexes) < catchall_index
+
+
+# F3 — `get_toolsets`/`get_skills` 라우트 등록은 `profile_toolsets`/`profile_skills`
+# capability 와 같은 심볼 집합(has_toolset_symbols/has_skill_symbols)을 봐야 한다.
+# 기존에는 단일 심볼(`_get_platform_tools`/`_find_all_skills`)만 봐서, 그 심볼만 있고
+# 나머지가 빠진 반쪽짜리 빌드에서도 라우트는 뜨는데 capability 는 없다고 광고하는
+# 모순이 생겼다.
+
+
+def test_get_toolsets_라우트는_capability_와_같은_심볼_집합을_본다(fake_api):
+    from deskrpg_plugin.contract_fields import capabilities
+
+    # _get_platform_tools 는 남기고, has_toolset_symbols 를 구성하는 다른 심볼 하나만 뺀다.
+    fake_api._toolset_has_keys = None
+    paths = [p for _m, p, _h, _s in routes.routes_for(fake_api)]
+    assert "/p/{profile}/deskrpg/toolsets" not in paths
+    assert "profile_toolsets" not in capabilities(fake_api)
+
+
+def test_get_skills_라우트는_capability_와_같은_심볼_집합을_본다(fake_api):
+    from deskrpg_plugin.contract_fields import capabilities
+
+    # _find_all_skills 는 남기고, has_skill_symbols 를 구성하는 다른 심볼 하나만 뺀다.
+    fake_api._sort_skills = None
+    paths = [p for _m, p, _h, _s in routes.routes_for(fake_api)]
+    assert "/p/{profile}/deskrpg/skills" not in paths
+    assert "profile_skills" not in capabilities(fake_api)

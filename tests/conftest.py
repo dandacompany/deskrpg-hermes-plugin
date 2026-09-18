@@ -1,12 +1,19 @@
 import contextlib
 import re
+import threading
 import types
+from pathlib import Path
+
 import pytest
 from aiohttp import web
 
 # 실제 Hermes 0.20.6 의 validate_profile_name 정규식(앵커 있음). fake 가 이보다
 # 느슨하면 대문자·점·유니코드 이름이 테스트에서만 통과해 회귀를 못 잡는다(M-7).
 _PROFILE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+async def _unfaked_oauth(*_a, **_k):
+    raise AssertionError("OAuth 시작·폴링 가짜를 덮지 않은 테스트가 불렀다")
 
 
 class FakeAdapter:
@@ -136,6 +143,34 @@ def fake_api(tmp_path):
     def latest_blackboard(conn, root_id):
         return {"topology": {"goal": "g"}, "_authors": {"topology": "swarm-orchestrator"}}
 
+    FAKE_TOOLSETS = [
+        ("web", "🔍 Web", "검색과 스크래핑"),
+        ("file", "📁 File", "파일 읽기·쓰기"),
+        ("tts", "🔊 TTS", "음성 합성"),
+        ("discord", "Discord", "디스코드 전용"),
+    ]
+
+    def _get_platform_tools(cfg, platform, *, include_default_mcp_servers=True):
+        saved = (cfg.get("platform_toolsets") or {}).get(platform)
+        return set(saved) if isinstance(saved, list) else {"web", "file"}
+
+    def _parse_config_string_list(value):
+        # agent/skill_utils.py:parse_config_string_list 와 같은 규칙(JSON 배열 문자열 → 목록).
+        import ast
+        if isinstance(value, str):
+            if value.strip().startswith("["):
+                parsed = ast.literal_eval(value.strip())
+                return [str(x) for x in parsed]
+            return [value] if value.strip() else []
+        return [str(x) for x in value] if isinstance(value, list) else []
+
+    def _find_all_skills(*, skip_disabled=False):
+        return [
+            {"name": "hermes-agent", "description": "필수", "category": "core"},
+            {"name": "pdf", "description": "PDF 다루기", "category": "docs"},
+            {"name": "xlsx", "description": "엑셀", "category": "docs"},
+        ]
+
     api = types.SimpleNamespace(
         get_profile_dir=get_profile_dir,
         get_wrapper_path=get_wrapper_path,
@@ -158,6 +193,35 @@ def fake_api(tmp_path):
         swarm_calls=swarm_calls,
         # 0.7.1 — hermes_cli.dashboard_auth.prefix (OPTIONAL_SPEC). 기본은 공개 주소 없음.
         resolve_public_url=lambda: "",
+        # 0.9.0 — 직원 설정 피커 (OPTIONAL_SPEC). fake 는 심볼이 다 있는 빌드를 흉내 낸다.
+        _get_effective_configurable_toolsets=lambda: list(FAKE_TOOLSETS),
+        _get_platform_tools=_get_platform_tools,
+        _toolset_has_keys=lambda name, cfg=None: name != "tts",
+        _toolset_allowed_for_platform=lambda name, platform: name != "discord",
+        _configurable_keys=lambda: {row[0] for row in FAKE_TOOLSETS},
+        _platform_default_keys=lambda: {"hermes-api-server", "hermes-cron", "hermes-cli", "hermes-telegram"},
+        _get_plugin_toolset_keys=lambda: set(),
+        parse_config_string_list=_parse_config_string_list,
+        _find_all_skills=_find_all_skills,
+        _sort_skills=lambda rows: sorted(rows, key=lambda s: (s.get("category") or "", s["name"])),
+        ESSENTIAL_SKILLS=frozenset({"hermes-agent"}),
+        PROVIDER_REGISTRY={
+            "openai": types.SimpleNamespace(id="openai", name="OpenAI", auth_type="api_key",
+                                            api_key_env_vars=("OPENAI_API_KEY",), base_url_env_var="OPENAI_BASE_URL"),
+            "openai-codex": types.SimpleNamespace(id="openai-codex", name="Codex", auth_type="oauth_external",
+                                                  api_key_env_vars=(), base_url_env_var=""),
+        },
+        # 계획 B — 디바이스 코드 로그인 (OPTIONAL_SPEC). 심볼이 다 있는 빌드를 흉내 낸다(라우트·capability 가 뜬다).
+        # 동작이 필요한 테스트(tests/test_oauth.py)는 시작·폴링을 제 가짜로 덮는다.
+        _DEVICE_CODE_STARTERS={"openai-codex": object()},
+        _start_device_code_flow=_unfaked_oauth,
+        poll_oauth_session=_unfaked_oauth,
+        _gc_oauth_sessions=lambda: None,
+        _OAUTH_PROVIDER_CATALOG=(),
+        _oauth_sessions={},
+        _oauth_sessions_lock=threading.Lock(),
+        _oauth_profile_name=lambda p: None if not p or p == "current" else p,
+        clear_provider_auth=lambda pid=None: True,
     )
     _add_automation_fakes(api, tmp_path)
     return api
@@ -179,6 +243,19 @@ def _add_automation_fakes(api, tmp_path):
     kanban_root = tmp_path / "kanban"
     kanban_root.mkdir(exist_ok=True)
     api.kanban = install_fake_kanban(api, kanban_root)
+
+    # 홈 오버라이드를 실제처럼 기억한다 — 스택(리스트)이라 중첩 호출도 재현한다.
+    _override = []
+
+    def set_hermes_home_override(path):
+        _override.append(Path(path))
+        return len(_override)
+
+    def reset_hermes_home_override(token):
+        del _override[token - 1:]
+
+    def get_hermes_home():
+        return _override[-1] if _override else hermes_home
 
     class _Config(dict):
         pass
@@ -211,9 +288,10 @@ def _add_automation_fakes(api, tmp_path):
         load_config=lambda *a, **k: config,
         save_config=lambda cfg, *a, **k: None,
         # hermes_constants / hermes_time
-        set_hermes_home_override=lambda path: object(),
-        reset_hermes_home_override=lambda token: None,
-        get_hermes_home=lambda: hermes_home,
+        set_hermes_home_override=set_hermes_home_override,
+        reset_hermes_home_override=reset_hermes_home_override,
+        get_hermes_home=get_hermes_home,
+        get_process_hermes_home=lambda: hermes_home,
         get_timezone=lambda: ZoneInfo("Asia/Seoul"),
         # cron.jobs
         use_cron_store=lambda home: _noop_context(),

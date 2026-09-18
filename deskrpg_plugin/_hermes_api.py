@@ -157,9 +157,44 @@ SPEC = (
 # 않으므로 반쯤 되는 상태가 생기지 않는다. 반대로 이걸 `SPEC` 에 넣으면 `kanban_swarm`
 # 이 없는 구버전 Hermes 에서 칸반·크론까지 전부 죽는다.
 OPTIONAL_SPEC = (
+    # 계획 B — 디바이스 코드 로그인. 대시보드 라우터 모듈이라 fastapi 가 없는 빌드에서는 통째로 빠진다.
+    (
+        "hermes_cli.web_routers.oauth",
+        # `_gc_oauth_sessions` 는 없으면 시작 전 만료 세션 정리만 빠진다.
+        ("_DEVICE_CODE_STARTERS", "_start_device_code_flow", "poll_oauth_session", "_gc_oauth_sessions"),
+    ),
+    (
+        "hermes_cli.web_server_oauth",
+        ("_OAUTH_PROVIDER_CATALOG", "_oauth_sessions", "_oauth_sessions_lock", "_oauth_profile_name"),
+    ),
+    # 계획 B — OAuth 가 default 를 None(=프로세스 홈)으로 넘겨도 되는지 본다. 없으면 default 의 앱 안 로그인만 거절된다.
+    ("hermes_constants", ("get_process_hermes_home",)),
     ("hermes_cli.kanban_swarm", ("create_swarm", "latest_blackboard", "SwarmWorkerSpec")),
     # 0.7.1 — 대시보드 공개 주소. 없는 빌드는 `/deskrpg/info` 의 dashboard_url 만 null 이 된다.
     ("hermes_cli.dashboard_auth.prefix", ("resolve_public_url",)),
+    # 0.9.0 — 직원 설정 피커. 없는 빌드는 그 라우트와 capability 만 빠진다.
+    (
+        "hermes_cli.tools_config",
+        (
+            "_get_effective_configurable_toolsets",
+            "_get_platform_tools",
+            "_toolset_has_keys",
+            "_toolset_allowed_for_platform",
+            # 0.9.0 — config PUT 이 `_save_platform_tools` 와 같은 규칙으로 쓰는 데 쓴다.
+            "_configurable_keys",
+            "_platform_default_keys",
+            "_get_plugin_toolset_keys",
+        ),
+    ),
+    # 툴셋 목록이 구독 기능 판정을 한 번만 계산하는 데 쓴다. 없으면 툴셋마다 Hermes 가 다시 계산한다.
+    ("hermes_cli.nous_subscription", ("get_nous_subscription_features",)),
+    ("tools.skills_tool", ("_find_all_skills", "_sort_skills")),
+    ("agent.skill_utils", ("ESSENTIAL_SKILLS", "parse_config_string_list")),
+    # `_plugin_aliases` 는 복제가 설정의 프로바이더 id 를 Hermes 와 같이 정식 id 로 푸는 데 쓴다.
+    (
+        "hermes_cli.auth",
+        ("PROVIDER_REGISTRY", "_plugin_aliases", "clear_provider_auth"),
+    ),
 )
 
 REQUIRED = tuple(name for _module, names in SPEC for name in names)

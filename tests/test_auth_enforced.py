@@ -17,7 +17,8 @@ def _app(adapter, fake_api):
 # 새 변수를 더하고 여기 빠뜨리면 `{…}` 가 그대로 URL 에 실려 404 로 떨어지고, 아래 단정이 잡는다.
 _PATH_VALUES = {
     "profile": "sophie", "name": "sophie", "slug": "deskrpg-abc", "task_id": "t0001", "id": "t0001",
-    "action": "approve", "artifact_id": "01abc", "v": "1",
+    "action": "approve", "artifact_id": "01abc", "v": "1", "provider": "openai",
+    "session_id": "sid-1",
 }
 
 

@@ -22,14 +22,73 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 CAPABILITIES = ("kanban", "cron", "events", "artifacts")
 
 
+_TOOLSET_SYMBOLS = (
+    "_get_effective_configurable_toolsets", "_get_platform_tools",
+    "_toolset_has_keys", "_toolset_allowed_for_platform",
+    # 쓰기(config PUT)가 `hermes tools` 저장과 같은 규칙을 따르는 데 필요하다 — config._apply_enabled_toolsets.
+    "_configurable_keys", "_platform_default_keys", "_get_plugin_toolset_keys", "parse_config_string_list",
+)
+_SKILL_SYMBOLS = ("_find_all_skills", "_sort_skills")
+_OAUTH_SYMBOLS = (
+    "_DEVICE_CODE_STARTERS", "_start_device_code_flow", "poll_oauth_session",
+    "_oauth_sessions", "_oauth_sessions_lock", "_oauth_profile_name", "clear_provider_auth",
+)
+
+
+def _has(api, names) -> bool:
+    return all(getattr(api, n, None) is not None for n in names)
+
+
+def has_toolset_symbols(api) -> bool:
+    """`profile_toolsets` capability 와 config PUT `enabledToolsets` 가 같은 판정을 쓴다."""
+    return _has(api, _TOOLSET_SYMBOLS)
+
+
+def has_skill_symbols(api) -> bool:
+    """`profile_skills` capability 와 config PUT `disabledSkills` 가 같은 판정을 쓴다."""
+    return _has(api, _SKILL_SYMBOLS)
+
+
+def has_oauth_symbols(api) -> bool:
+    """`profile_oauth` capability 와 OAuth 라우트 네 개가 같은 판정을 쓴다."""
+    return _has(api, _OAUTH_SYMBOLS)
+
+
+# 앱 안 디바이스 로그인을 허용하는 프로바이더. Hermes 의 `_DEVICE_CODE_STARTERS` 에 있어도 여기 없으면
+# 카탈로그는 CLI 안내(external)를 주고 OAuth 라우트는 400 `oauth_flow_unsupported` 로 거절한다.
+# - xAI·MiniMax 폴러는 저장 직전 `_profile_scope(_oauth_session_profile(session_id))` 로 프로필을 다시 풀고
+#   `cancelled` 를 보지 않는다(hermes_cli/web_server_oauth.py:397, :424). 취소(또는 `_gc_oauth_sessions`)로
+#   세션이 사라지면 프로필이 None 이 되어 토큰이 **default 프로필**에 저장된다.
+# - Nous 는 저장 전에 `cancelled` 를 보지만 15초 네트워크 갱신 동안 프로세스 전역 `_profile_scope` 를 쥔다(:343).
+# Codex 워커는 세션 프로필을 시작 때 잡아 두고 저장 직전 락 안에서 `cancelled` 를 본다(web_routers/oauth.py:279-292).
+IN_APP_DEVICE_LOGIN = frozenset({"openai-codex"})
+
+
+def in_app_device_login(api, provider_id: str) -> bool:
+    """카탈로그의 로그인 버튼과 OAuth 라우트가 같은 판정을 쓴다."""
+    starters = getattr(api, "_DEVICE_CODE_STARTERS", None) or {}
+    return provider_id in IN_APP_DEVICE_LOGIN and provider_id in starters and has_oauth_symbols(api)
+
+
 def capabilities(api) -> tuple[str, ...]:
     """이 Hermes 빌드에서 **실제로 되는** 것만 돌려준다.
 
     버전만 보고 판단하면 "새 플러그인인데 404" 라는 진단 불가능한 상태가 된다.
     capability 문자열이 가용성을 말하게 한다.
     """
-    extra = ("swarm",) if getattr(api, "create_swarm", None) is not None else ()
-    return CAPABILITIES + extra
+    extra = []
+    if getattr(api, "create_swarm", None) is not None:
+        extra.append("swarm")
+    if has_toolset_symbols(api):
+        extra.append("profile_toolsets")
+    if has_skill_symbols(api):
+        extra.append("profile_skills")
+    if _has(api, ("PROVIDER_REGISTRY",)):
+        extra.append("profile_clone")
+        extra.append("profile_provider_keys")
+    if has_oauth_symbols(api):
+        extra.append("profile_oauth")
+    return CAPABILITIES + tuple(extra)
 
 # ---------------------------------------------------------------------------
 # A.1 칸반 — 상태·열

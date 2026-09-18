@@ -25,6 +25,8 @@ import logging
 import secrets
 from pathlib import Path
 
+from . import envfile
+
 logger = logging.getLogger(__name__)
 
 ENV_FILENAME = ".env"
@@ -51,52 +53,20 @@ def generate_key() -> str:
     return secrets.token_urlsafe(_TOKEN_BYTES)
 
 
-def _render(lines: list[str], key: str) -> list[str]:
-    """`API_SERVER_KEY` 줄만 갈아끼운 새 줄 목록.
-
-    같은 키가 여러 번 있으면 **첫 줄만** 바꾸고 나머지는 지운다 — dotenv 는
-    나중 정의가 이기므로, 첫 줄만 고치고 뒷줄을 남기면 우리가 쓴 값이
-    조용히 무시된다. 여기서 정확히 한 줄만 남기는 이유다.
-    """
-    out: list[str] = []
-    written = False
-    for line in lines:
-        stripped = line.lstrip()
-        # 주석 처리된 정의는 정의가 아니다 — 그대로 둔다.
-        if stripped.startswith("#") or "=" not in stripped:
-            out.append(line)
-            continue
-        name = stripped.split("=", 1)[0].strip()
-        if name != KEY_NAME:
-            out.append(line)
-            continue
-        if not written:
-            out.append(f"{KEY_NAME}={key}")
-            written = True
-        # 두 번째 이후의 같은 키는 버린다.
-    if not written:
-        out.append(f"{KEY_NAME}={key}")
-    return out
-
-
 def write_key(profile_dir: Path, key: str) -> None:
     """프로필 `.env` 에 키를 기록한다. 기존 내용은 보존한다.
 
-    실패는 `KeyIssueFailed` 로 올린다 — 호출자가 "프로필은 생겼는데 키는 없다"를
-    사용자에게 정직하게 말할 수 있어야 하기 때문이다.
-    """
-    path = profile_dir / ENV_FILENAME
-    try:
-        existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    except (OSError, UnicodeDecodeError) as exc:
-        raise KeyIssueFailed(f"{ENV_FILENAME} 을 읽을 수 없다: {type(exc).__name__}") from None
+    줄 보존·같은 키 중복 줄 정리·0600·원자적 교체는 `envfile.upsert_lines` 의 규칙이다
+    (주석 처리된 정의는 정의가 아니므로 그대로 남는다).
 
-    body = "\n".join(_render(existing, key)) + "\n"
+    실패는 `KeyIssueFailed` 로 올린다 — 호출자가 "프로필은 생겼는데 키는 없다"를
+    사용자에게 정직하게 말할 수 있어야 하기 때문이다. 사유에는 예외 타입 이름만 싣고
+    체인을 끊는다(`from None`).
+    """
     try:
-        path.write_text(body, encoding="utf-8")
-        path.chmod(0o600)
-    except OSError as exc:
-        raise KeyIssueFailed(f"{ENV_FILENAME} 을 쓸 수 없다: {type(exc).__name__}") from None
+        envfile.upsert_lines(profile_dir / ENV_FILENAME, {KEY_NAME: f"{KEY_NAME}={key}"})
+    except (OSError, UnicodeDecodeError) as exc:
+        raise KeyIssueFailed(f"{ENV_FILENAME} 쓰기 실패: {type(exc).__name__}") from None
 
     # 값은 절대 찍지 않는다.
     logger.info("[deskrpg] %s 발급 완료: %s", KEY_NAME, profile_dir.name)

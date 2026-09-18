@@ -10,7 +10,7 @@ import logging
 
 from aiohttp import web
 
-from . import keyissue, safedelete
+from . import cloneprofile, keyissue, safedelete
 from .identity import SOUL_FILENAME, is_default_template
 
 logger = logging.getLogger(__name__)
@@ -76,17 +76,44 @@ def create_handler(api):
             raise web.HTTPBadRequest(reason="body must be a JSON object")
 
         name = _validated_name(payload.get("name") or "", api)
+        # 복제 원본은 default 뿐이다 — 다른 직원의 프로필을 원본으로 열면 그 직원의 키가
+        # 새 프로필로 번진다. 거절은 프로필을 만들기 **전에** 한다.
+        clone_from = payload.get("cloneFrom")
+        if clone_from is not None and clone_from != cloneprofile.SOURCE_PROFILE:
+            raise web.HTTPBadRequest(reason="cloneFrom must be 'default'")
+        if clone_from and getattr(api, "PROVIDER_REGISTRY", None) is None:
+            raise web.HTTPBadRequest(reason="cloneFrom is not supported by this Hermes build")
+        clone_keys = payload.get("cloneKeys")
+        if clone_keys is not None:
+            if not clone_from:
+                raise web.HTTPBadRequest(reason="cloneKeys requires cloneFrom")
+            if clone_keys not in cloneprofile.KEY_SCOPES:
+                raise web.HTTPBadRequest(reason=f"cloneKeys must be one of: {', '.join(cloneprofile.KEY_SCOPES)}")
         if api.profile_exists(name):
             return web.json_response({"error": "already_exists", "name": name}, status=409)
         api.create_profile(name)
         logger.info("[deskrpg] 프로필 생성: %s", name)
+
+        body = {"name": name}
+        # 복제는 키 발급 **앞**에 한다 — 복제가 `.env` 에 모델 키를 쓰고, 키 발급이 그 위에
+        # API_SERVER_KEY 한 줄을 더한다. 복제가 실패해도 프로필은 이미 있으므로 201 로
+        # 말하고 cloneError 에 (값 없는) 사유를 싣는다. 응답에는 키 **이름**만 나간다.
+        if clone_from:
+            try:
+                cloned = await asyncio.to_thread(cloneprofile.clone_from_default, api, name,
+                                                 key_scope=clone_keys or "referenced")
+                body["cloned"] = {"configKeys": cloned["configKeys"], "envKeys": cloned["envKeys"],
+                                  "keyScope": cloned["keyScope"]}
+                body["needsLogin"] = cloned["needsLogin"]
+            except cloneprofile.CloneFailed as exc:
+                body["cloneError"] = exc.reason
+                logger.warning("[deskrpg] 프로필 복제 실패: %s — %s", name, exc.reason)
 
         # Hermes 는 빈 .env 를 씨딩할 뿐이라, 키를 발급하지 않으면 이 프로필은
         # 아무도 말을 걸 수 없는 상태로 태어난다(keyissue 모듈 주석 참조).
         # 키 발급이 실패해도 **프로필은 이미 존재한다** — 500 으로 덮으면
         # 사용자는 만들어진 프로필을 모른 채 같은 이름으로 다시 시도하고 409 를
         # 만난다. 만들어졌다는 사실(201)과 키가 없다는 사실을 함께 말한다.
-        body = {"name": name}
         try:
             body["apiKey"] = keyissue.issue(api.get_profile_dir(name))
             body["keyIssued"] = True
