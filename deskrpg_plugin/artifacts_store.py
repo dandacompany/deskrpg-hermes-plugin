@@ -54,47 +54,76 @@ def registry_path(api) -> Path:
     return artifacts_root(api) / "registry.db"
 
 
+_WAL_RETRY_ATTEMPTS = 20
+_WAL_RETRY_SLEEP_S = 0.03
+
+
+def _set_wal_mode(conn: sqlite3.Connection) -> None:
+    """`PRAGMA journal_mode=WAL` 은 트랜잭션 안에서 돌지 않고, 갓 만든 파일에 대해서도
+    busy 타임아웃을 우회해 SQLITE_BUSY(`database is locked`)를 낼 수 있다 — 이 한 문장에만
+    짧은 유한 재시도를 둔다. 다른 경로에는 재시도를 넣지 않는다."""
+    for attempt in range(_WAL_RETRY_ATTEMPTS):
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() or attempt == _WAL_RETRY_ATTEMPTS - 1:
+                raise
+            time.sleep(_WAL_RETRY_SLEEP_S)
+
+
 def open_registry(api) -> sqlite3.Connection:
     root = artifacts_root(api)
     (root / "blobs").mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(registry_path(api), timeout=10)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    _set_wal_mode(conn)
     conn.execute("PRAGMA foreign_keys=ON")
     init_registry(conn)
     return conn
 
 
-_SCHEMA = """
-CREATE TABLE IF NOT EXISTS artifacts (
+_SCHEMA_STATEMENTS = (
+    """CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, title_norm TEXT NOT NULL, summary TEXT,
   profile TEXT NOT NULL, source_kind TEXT NOT NULL, session_id TEXT NOT NULL,
   board TEXT, task_id TEXT, job_id TEXT, run_id TEXT,
   current_version INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
   deleted_at INTEGER, deleted_by TEXT
-);
-CREATE INDEX IF NOT EXISTS artifacts_profile_updated ON artifacts(profile, updated_at DESC);
-CREATE INDEX IF NOT EXISTS artifacts_board_task ON artifacts(board, task_id);
-CREATE INDEX IF NOT EXISTS artifacts_session_kind ON artifacts(session_id, kind, title_norm);
-CREATE TABLE IF NOT EXISTS artifact_versions (
+)""",
+    "CREATE INDEX IF NOT EXISTS artifacts_profile_updated ON artifacts(profile, updated_at DESC)",
+    "CREATE INDEX IF NOT EXISTS artifacts_board_task ON artifacts(board, task_id)",
+    "CREATE INDEX IF NOT EXISTS artifacts_session_kind ON artifacts(session_id, kind, title_norm)",
+    """CREATE TABLE IF NOT EXISTS artifact_versions (
   artifact_id TEXT NOT NULL REFERENCES artifacts(id), version INTEGER NOT NULL,
   filename TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL,
   stored_path TEXT NOT NULL, origin_path TEXT, created_by TEXT NOT NULL, captured_via TEXT NOT NULL,
   note TEXT, created_at INTEGER NOT NULL, PRIMARY KEY (artifact_id, version)
-);
-CREATE TABLE IF NOT EXISTS artifact_events (
+)""",
+    """CREATE TABLE IF NOT EXISTS artifact_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, kind TEXT NOT NULL, payload TEXT NOT NULL
-);
-"""
+)""",
+)
 
 
 def init_registry(conn: sqlite3.Connection) -> None:
-    """멱등. `user_version` 이 0 이면 만들고 1 로 올린다. 앞으로의 마이그레이션은 여기 번호로 잇는다."""
+    """멱등. `user_version` 이 0 이면 만들고 1 로 올린다. 앞으로의 마이그레이션은 여기 번호로 잇는다.
+
+    스키마 생성은 명시적 쓰기 잠금(`BEGIN IMMEDIATE`) 안에서 한다 — busy 타임아웃은 잠금을
+    잡을 때는 적용되므로, 여러 스레드가 같은 새 `registry.db` 를 동시에 처음 열어도(칸반 워커의
+    훅과 게이트웨이 라우트가 한 번도 안 쓰인 게이트웨이를 같은 순간 건드리는 경우) 순서대로
+    처리된다. `executescript` 는 쓰지 않는다 — 자체적으로 트랜잭션을 커밋/시작해 우리가 쥔
+    잠금을 깨기 때문에, 문장을 하나씩 `execute` 한다."""
     version = conn.execute("PRAGMA user_version").fetchone()[0]
     if version >= SCHEMA_VERSION:
         return
     with conn:
-        conn.executescript(_SCHEMA)
+        conn.execute("BEGIN IMMEDIATE")
+        version = conn.execute("PRAGMA user_version").fetchone()[0]  # 잠금 안에서 재확인 — 먼저 온
+        if version >= SCHEMA_VERSION:                                # 커넥션이 이미 마이그레이션했을 수 있다
+            return
+        for statement in _SCHEMA_STATEMENTS:
+            conn.execute(statement)
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 

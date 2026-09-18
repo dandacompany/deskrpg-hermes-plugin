@@ -180,9 +180,9 @@ def test_목록은_프로필과_보드를_OR_로_거르고_최신순이다(api):
 
 def test_동시_저장은_서로_다른_데이터면_한_아티팩트에_버전_1_2_를_만든다(api):
     """훅+도구 동시 저장(스펙 ⑤): 두 스레드가 각자의 커넥션으로 같은 정체성에 동시에 쓰면
-    트랜잭션 직렬화로 버전이 하나씩 순서대로 배정돼야 한다 — 두 개의 새 아티팩트가 생기면 안 된다."""
-    with contextlib.closing(store.open_registry(api)) as warmup:  # 스키마를 미리 만들어 둔다 —
-        del warmup  # 두 스레드가 첫 CREATE TABLE 을 동시에 밟는 건 이 테스트의 관심사가 아니다.
+    트랜잭션 직렬화로 버전이 하나씩 순서대로 배정돼야 한다 — 두 개의 새 아티팩트가 생기면 안 된다.
+    (사전 워밍업 없이 iteration 0 은 첫 오픈 경합도 함께 겪는다 — open_registry 의 잠금 처리가
+    맞다면 여기도 걸리면 안 된다.)"""
     for i in range(20):
         session_id = f"race-{i}"
         errors: list[Exception] = []
@@ -219,8 +219,6 @@ def test_동시_저장은_서로_다른_데이터면_한_아티팩트에_버전_
 
 
 def test_동시_저장은_같은_데이터면_버전_하나만_남고_한_쪽만_deduped_다(api):
-    with contextlib.closing(store.open_registry(api)) as warmup:  # 스키마를 미리 만들어 둔다(위와 동일한 이유)
-        del warmup
     for i in range(20):
         session_id = f"race-same-{i}"
         errors: list[Exception] = []
@@ -254,6 +252,36 @@ def test_동시_저장은_같은_데이터면_버전_하나만_남고_한_쪽만
         with contextlib.closing(store.open_registry(api)) as conn:
             artifact_id = results[0].artifact_id
             assert len(store.list_versions(conn, artifact_id)) == 1, f"iteration {i}"
+
+
+def test_새_레지스트리를_여러_스레드가_동시에_처음_열어도_잠금_오류가_없다(tmp_path_factory, monkeypatch):
+    """워밍업 없이 신선한 registry.db 를 여러 스레드가 동시에 처음 연다 — 스키마 생성
+    (`init_registry`)과 `PRAGMA journal_mode=WAL` 이 busy 타임아웃을 우회해 `database is
+    locked` 를 내면 안 된다."""
+    monkeypatch.delenv("HERMES_DESKRPG_ARTIFACTS_ROOT", raising=False)
+    for trial in range(50):
+        home = tmp_path_factory.mktemp(f"home{trial}")
+        trial_api = types.SimpleNamespace(get_hermes_home=lambda h=home: str(h))
+        barrier = threading.Barrier(8)
+        errors: list[Exception] = []
+
+        def work():
+            try:
+                barrier.wait(timeout=5)
+                with contextlib.closing(store.open_registry(trial_api)):
+                    pass
+            except Exception as exc:  # noqa: BLE001 - surfaced via assertion below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=work) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        assert not errors, f"trial {trial}: {errors}"
+        with contextlib.closing(store.open_registry(trial_api)) as conn:
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 1, f"trial {trial}"
 
 
 def test_blob_path_for_는_루트_밖을_가리키는_행에_None_이다(api, tmp_path):
