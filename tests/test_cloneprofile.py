@@ -75,3 +75,16 @@ def test_default_config_가_망가졌으면_실패하고_사유에_값이_없다
     assert SECRET not in exc.value.reason
     assert not (fake_api.get_profile_dir("noah") / ".env").exists() or SECRET not in (
         fake_api.get_profile_dir("noah") / ".env").read_text(encoding="utf-8")
+
+
+def test_복제한_config_는_0600_으로_원자적으로_쓴다(fake_api, default_home):
+    import os
+    import stat
+
+    fake_api.create_profile("noah")
+    target = fake_api.get_profile_dir("noah")
+    (target / "config.yaml").write_text("toolsets: [hermes-cli]\n", encoding="utf-8")
+    os.chmod(target / "config.yaml", 0o644)
+    cloneprofile.clone_from_default(fake_api, "noah")
+    assert stat.S_IMODE(os.stat(target / "config.yaml").st_mode) == 0o600
+    assert not [p.name for p in target.iterdir() if p.name.startswith(".config.yaml.")]

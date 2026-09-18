@@ -31,3 +31,16 @@ def test_지우면_지운_이름을_돌려준다(tmp_path):
     p.write_text("A=1\nB=2\nA=3\n", encoding="utf-8")
     assert envfile.remove_keys(p, ["A", "Z"]) == ["A"]
     assert p.read_text(encoding="utf-8") == "B=2\n"
+
+
+def test_write_text_atomic_은_0600_으로_갈아_끼운다(tmp_path):
+    import os
+    import stat
+
+    from deskrpg_plugin import envfile as _envfile
+
+    path = tmp_path / "sub" / "config.yaml"
+    _envfile.write_text_atomic(path, "a: 1\n")
+    assert path.read_text(encoding="utf-8") == "a: 1\n"
+    assert stat.S_IMODE(os.stat(path).st_mode) == 0o600
+    assert [p.name for p in path.parent.iterdir()] == ["config.yaml"]

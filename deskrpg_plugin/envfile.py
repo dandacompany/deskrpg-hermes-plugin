@@ -42,19 +42,27 @@ def read_assignments(path: Path) -> dict[str, str]:
     return out
 
 
-def _write(path: Path, lines: list[str]) -> None:
+def write_text_atomic(path: Path, text: str) -> None:
+    """`text` 를 0600 임시 파일에 쓰고 `os.replace` 로 갈아 끼운다.
+
+    `.env` 뿐 아니라 키가 인라인으로 들어갈 수 있는 파일(복제한 config.yaml 의 `providers`)도 쓴다.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(prefix=".env.", dir=str(path.parent))
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
     try:
         # mkstemp 는 0600 으로 만든다 — 값이 담긴 채로 넓은 권한에 놓이는 순간이 없다.
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write("".join(f"{line}\n" for line in lines))
+            handle.write(text)
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
+
+
+def _write(path: Path, lines: list[str]) -> None:
+    write_text_atomic(path, "".join(f"{line}\n" for line in lines))
 
 
 def upsert_lines(path: Path, lines_by_key: dict[str, str]) -> None:

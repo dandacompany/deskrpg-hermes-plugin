@@ -68,8 +68,9 @@ def clone_from_default(api, target_name: str) -> dict:
     try:
         if config_keys:
             merged = {**target_cfg, **{k: source_cfg[k] for k in config_keys}}
-            path = target / _config.CONFIG_FILENAME
-            path.write_text(yaml.safe_dump(merged, allow_unicode=True, sort_keys=False), encoding="utf-8")
+            # `providers`·`custom_providers` 에 인라인 api_key 가 있을 수 있다 — 0600·원자적으로 쓴다.
+            envfile.write_text_atomic(target / _config.CONFIG_FILENAME,
+                                      yaml.safe_dump(merged, allow_unicode=True, sort_keys=False))
 
         wanted = _provider_env_names(api)
         found = envfile.read_assignments(source / ENV_FILENAME)
