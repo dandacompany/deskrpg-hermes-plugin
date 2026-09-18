@@ -69,7 +69,11 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
             continue  # 루트 밖·민감 파일·비경로 문자열은 조용히 넘어간다 — 저장 슬롯을 쓰지 않는다
         if source.suffix.lower() not in policy.HOOK_EXTENSIONS:
             continue
-        if source.stat().st_size > limit:
+        try:
+            size = source.stat().st_size
+        except OSError:
+            continue  # 찾은 뒤 사라진 파일 — 루트 밖 경로와 같은 취급, capture_failed 는 남기지 않는다
+        if size > limit:
             record_capture_failure(api, tool_name=tool_name, reason="too_large")
             continue
         if ctx is None:

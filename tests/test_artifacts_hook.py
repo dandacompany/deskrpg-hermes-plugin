@@ -6,6 +6,7 @@ import types
 import pytest
 
 from deskrpg_plugin import artifacts_hook as hook
+from deskrpg_plugin import artifacts_policy as policy
 from deskrpg_plugin import artifacts_store as store
 
 
@@ -110,3 +111,26 @@ def test_비경로_문자열_후보가_저장_슬롯을_소모하지_않는다(a
     _fire(api, "export_file", json.dumps(payload))
     rows = _rows(api)
     assert len(rows) == 1 and rows[0]["title"] == "note.md"
+
+
+def test_중간에_사라진_파일은_건너뛰고_다음_후보는_잡는다(api, tmp_path, monkeypatch):
+    """R12: `resolve_source_path` 통과 뒤 `stat()` 전에 파일이 사라지면(OSError) 그 후보만
+    건너뛰고 나머지 후보는 계속 시도한다. 사라진 파일은 capture_failed 사건도 남기지 않는다
+    (루트 밖 경로와 같은 취급)."""
+    a = tmp_path / "kanban" / "a.md"; a.write_text("a")
+    b = tmp_path / "kanban" / "b.md"; b.write_text("b")
+    real = policy.resolve_source_path
+
+    def flaky(api_, raw):
+        resolved = real(api_, raw)
+        if resolved == a.resolve():
+            resolved.unlink()  # resolve 직후, stat 직전에 사라진 상황을 흉내낸다
+        return resolved
+
+    monkeypatch.setattr(hook.policy, "resolve_source_path", flaky)
+    _fire(api, "write_file", json.dumps({"files_created": [str(a), str(b)]}))
+    rows = _rows(api)
+    assert len(rows) == 1 and rows[0]["title"] == "b.md"
+    with contextlib.closing(store.open_registry(api)) as conn:
+        kinds = [r["kind"] for r in conn.execute("SELECT kind FROM artifact_events")]
+        assert "artifact.capture_failed" not in kinds
