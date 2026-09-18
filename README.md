@@ -3,7 +3,8 @@
 DeskRPG 전용 라우트를 Hermes API Server 에 등록하는 Hermes 플러그인이다.
 프로필 목록·생성·삭제, SOUL.md(인격) 읽기/쓰기, 프로필 설정 읽기/쓰기에 더해
 **0.6.0 부터 칸반(보드·카드·동작·첨부·디스패치)·통합 사건 스트림·크론(프로필별 잡)** 을
-제공한다 — 마흔세 개 라우트다. DeskRPG 가 Hermes 관리 화면(대시보드) 없이 자기 화면에서
+제공한다. 0.8.0 부터 **아티팩트**(저장소·`artifact_save` 도구·`post_tool_call` 자동 승격)까지 더해
+쉰한 개 라우트다. DeskRPG 가 Hermes 관리 화면(대시보드) 없이 자기 화면에서
 칸반과 크론을 보고 조작하도록, DeskRPG 설계 문서 부록 A 의 HTTP 계약을 그대로 낸다.
 
 ## 요구사항
@@ -106,13 +107,13 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 
 스코프 `default` = 프리픽스 없음, 리스너 소유자 키. `profile` = `/p/{profile}/...`, 그 프로필의 키
 (위 경고의 멀티플렉스 단서 포함). 모든 행은 `deskrpg_plugin/routes.py` 의 테이블 한 곳에 있고 예외 없이
-`require_auth` 로 감싸인다 — `tests/test_routes_table.py` 가 이 표와 같은 43 행을 손으로 적어 대조한다.
+`require_auth` 로 감싸인다 — `tests/test_routes_table.py` 가 이 표와 같은 51 행을 손으로 적어 대조한다.
 
 ### 플러그인·프로필 (0.5.0 까지의 아홉 개)
 
 | Method | Path | Scope | 설명 |
 |---|---|---|---|
-| GET | `/deskrpg/info` | default | 버전·라우트 목록·`capabilities`·`timezone`·`kanban{dispatcher_present, attachments, attachment_max_bytes}`·`dashboard_url`(0.7.1, 대시보드 공개 주소 또는 `null`) (**default 키 전용**) |
+| GET | `/deskrpg/info` | default | 버전·라우트 목록·`capabilities`(`kanban, cron, events, artifacts` + 스웜이 켜져 있으면 `swarm`)·`timezone`·`kanban{dispatcher_present, attachments, attachment_max_bytes}`·`dashboard_url`(0.7.1)·`artifact_max_bytes`(0.8.0) (**default 키 전용**) |
 | GET | `/deskrpg/profiles` | default | 프로필 목록 (`hasCustomPersona` 포함) |
 | POST | `/deskrpg/profiles` | default | 프로필 생성 (**응답이 새 키를 한 번만 싣는다**) |
 | DELETE | `/deskrpg/profiles/{name}` | default | 프로필 삭제 (`?confirm={name}` 필수) |
@@ -153,6 +154,23 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 | Method | Path | Scope | 설명 |
 |---|---|---|---|
 | GET | `/deskrpg/events?board=&cursor=&limit=200` | default | 칸반·삭제·크론 사건을 시간순으로 합친 `{events, cursor, has_more}` (아래) |
+
+### 아티팩트 (0.8.0 · 전부 default — 호스트 공유 저장소)
+
+| Method | Path | Scope | 설명 |
+|---|---|---|---|
+| GET | `/deskrpg/artifacts?profiles=&board=&kind=&source=&q=&cursor=&limit=` | default | `{artifacts:[ArtifactSummary], cursor, has_more}` |
+| GET | `/deskrpg/artifacts/{artifact_id}` | default | `{artifact:ArtifactSummary, versions:[ArtifactVersion]}` |
+| GET | `/deskrpg/artifacts/{artifact_id}/versions/{v}/content` | default | 바이트 스트림(Range 지원, 단일 범위만). `?download=1` 이면 첨부, 아니면 인라인. 항상 `Content-Security-Policy: sandbox`·`X-Content-Type-Options: nosniff` |
+| POST | `/deskrpg/artifacts/{artifact_id}/versions` | default | 사람이 편집(JSON `{content, filename, note?}` 또는 multipart `file`+`note`) → 201 `{version}`. 초과 시 413 `{error, detail, max_bytes}` |
+| POST | `/deskrpg/artifacts/{artifact_id}/rework` | default | **501 `not_implemented`** — 수정 루프는 자리만 잡아 뒀다 |
+| DELETE | `/deskrpg/artifacts/{artifact_id}` | default | 소프트 삭제 → `{ok:true}` |
+
+모델은 `artifact_save` 도구로, 산출 도구(생성·다운로드·저장·렌더 계열)가 만든 파일은 `post_tool_call`
+훅이 사용자가 말하지 않아도 자동으로 승격한다(호출당 최대 8개). 저장소는 게이트웨이당 `registry.db` 하나와
+`deskrpg/artifacts/blobs/` 뿐이며, `HERMES_DESKRPG_ARTIFACTS_ROOT` 로 옮길 수 있다. 사건 스트림
+(`/deskrpg/events`)에 `artifact.created`·`artifact.versioned`·`artifact.deleted`·`artifact.delete_partial`·
+`artifact.capture_failed` 다섯 kind 로 합류하며, 게이트웨이 전역이라 채널/보드로 거르는 것은 DeskRPG 쪽 몫이다.
 
 ### 크론 (0.6.0 · 전부 profile — 잡은 그 프로필의 `cron/jobs.json` 에만 산다)
 
