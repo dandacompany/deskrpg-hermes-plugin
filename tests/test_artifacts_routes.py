@@ -142,3 +142,57 @@ async def test_삭제는_ok_이고_두_번째는_410(client, api):
     r = _seed(api)
     assert (await client.delete(f"/deskrpg/artifacts/{r.artifact_id}")).status == 200
     assert (await client.delete(f"/deskrpg/artifacts/{r.artifact_id}")).status == 410
+
+
+# ---------------------------------------------------------------------------
+# fix round 1 — 편집 업로드는 상한에서 끊고, 413 에 max_bytes 를 싣고, content 는 sandbox 로 낸다
+# ---------------------------------------------------------------------------
+
+
+async def test_사람_편집_multipart_는_상한을_넘으면_413_이고_새_버전이_생기지_않는다(client, api, monkeypatch):
+    monkeypatch.setenv("HERMES_DESKRPG_ARTIFACT_MAX_BYTES", "8")
+    r = _seed(api)
+    from aiohttp import FormData
+    form = FormData()
+    form.add_field("file", b"0" * 32, filename="r.md", content_type="text/markdown")
+    resp = await client.post(f"/deskrpg/artifacts/{r.artifact_id}/versions", data=form)
+    assert resp.status == 413
+    body = await resp.json()
+    assert body["error"] == "artifact_too_large" and body["max_bytes"] == 8
+    with contextlib.closing(store.open_registry(api)) as conn:
+        assert len(store.list_versions(conn, r.artifact_id)) == 1
+
+
+async def test_사람_편집_JSON_은_상한을_넘으면_413_이고_max_bytes_를_싣는다(client, api, monkeypatch):
+    monkeypatch.setenv("HERMES_DESKRPG_ARTIFACT_MAX_BYTES", "8")
+    r = _seed(api)
+    resp = await client.post(f"/deskrpg/artifacts/{r.artifact_id}/versions",
+                             json={"content": "0" * 32, "filename": "r.md"})
+    assert resp.status == 413
+    body = await resp.json()
+    assert body["error"] == "artifact_too_large" and body["max_bytes"] == 8
+    with contextlib.closing(store.open_registry(api)) as conn:
+        assert len(store.list_versions(conn, r.artifact_id)) == 1
+
+
+async def test_사람_편집_multipart_파일_파트가_두_개면_400(client, api):
+    r = _seed(api)
+    from aiohttp import FormData
+    form = FormData()
+    form.add_field("file", b"a", filename="a.md", content_type="text/markdown")
+    form.add_field("file", b"b", filename="b.md", content_type="text/markdown")
+    resp = await client.post(f"/deskrpg/artifacts/{r.artifact_id}/versions", data=form)
+    assert resp.status == 400
+    assert (await resp.json())["error"] == "invalid_field"
+
+
+async def test_content_는_sandbox_CSP_와_nosniff_를_200_과_206_에_모두_싣는다(client, api):
+    r = _seed(api, filename="r.html", mime="text/html")
+    resp = await client.get(f"/deskrpg/artifacts/{r.artifact_id}/versions/1/content")
+    assert resp.status == 200
+    assert resp.headers["Content-Security-Policy"] == "sandbox"
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"
+    resp = await client.get(f"/deskrpg/artifacts/{r.artifact_id}/versions/1/content", headers={"Range": "bytes=0-3"})
+    assert resp.status == 206
+    assert resp.headers["Content-Security-Policy"] == "sandbox"
+    assert resp.headers["X-Content-Type-Options"] == "nosniff"

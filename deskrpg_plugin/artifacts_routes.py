@@ -18,14 +18,28 @@ from aiohttp import web
 from . import artifacts_policy as policy
 from . import artifacts_store as store
 from .artifacts_tool import artifact_max_bytes
-from .common import RequestError, guarded, log_event, read_json_object, run_blocking
+from .common import RequestError, guarded, json_error, log_event, read_json_object, run_blocking
 from .contract_fields import ARTIFACT_SUMMARY_KEYS, ARTIFACT_VERSION_KEYS
 from .kanban_common import project
 
 USER_HEADER = "X-DeskRPG-User"
 LIMIT_DEFAULT, LIMIT_MAX = 50, 200
 UPLOAD_CHUNK = 1024 * 1024
+NOTE_READ_CHUNK = 4096
 _ALLOWED_EDIT_KEYS = {"content", "filename", "note"}
+
+
+class _TooLarge(Exception):
+    """`_read_edit_body`/`store_artifact_version` 이 상한 초과를 알리는 내부 신호.
+
+    `RequestError` 를 쓰지 않는다 — `guarded` 의 기본 413 모양(`{error, detail}`)에는
+    `max_bytes` 가 없고, 스펙 ⑤(413 + max_bytes)를 만족하려면 핸들러가 직접
+    `_too_large()` 로 응답을 만들어야 하기 때문이다.
+    """
+
+
+def _too_large(limit: int) -> web.Response:
+    return json_error(413, "artifact_too_large", str(limit), max_bytes=limit)
 
 
 def _user(request) -> str:
@@ -172,7 +186,17 @@ def content_handler(api):
 
         row, path, size = await run_blocking(work)
         disposition = "attachment" if request.query.get("download") == "1" else "inline"
-        headers = {"Content-Disposition": _disposition(disposition, row["filename"]), "Accept-Ranges": "bytes"}
+        headers = {
+            "Content-Disposition": _disposition(disposition, row["filename"]),
+            "Accept-Ranges": "bytes",
+            # DeskRPG 는 HTML/SVG 아티팩트를 iframe srcdoc 으로 텍스트째 렌더링하고, 이 URL 로
+            # 직접 이동하지 않는다. 그래도 채널 멤버가 이 URL 을 브라우저에 직접 열면 저장된
+            # mime(text/html·image/svg+xml …)이 이 오리진의 쿠키를 쥔 채 스크립트를 실행할 수
+            # 있다 — sandbox 로 불투명 오리진·스크립트 금지를 강제하고, nosniff 로 브라우저의
+            # content-type 추측을 막는다. inline/attachment 여부와 무관하게 항상 붙인다.
+            "Content-Security-Policy": "sandbox",
+            "X-Content-Type-Options": "nosniff",
+        }
         rng = request.headers.get("Range")
         start, end, status = 0, size - 1, 200
         if rng:
@@ -200,23 +224,37 @@ def content_handler(api):
     return handler
 
 
-async def _read_edit_body(request):
-    """JSON `{content, filename, note}` 또는 multipart `file`+`note` → (data, filename, note)."""
+async def _read_edit_body(request, limit: int):
+    """JSON `{content, filename, note}` 또는 multipart `file`+`note` → (data, filename, note).
+
+    `limit` 을 넘는 순간 읽기를 멈추고 `_TooLarge` 를 던진다 — `kanban_files._read_file_part`
+    와 같은 방어다. aiohttp 의 `client_max_size` 는 `request.multipart()` 스트림에는
+    적용되지 않으므로, 여기서 직접 끊지 않으면 채널 멤버가(DeskRPG 프록시를 거쳐) 게이트웨이에
+    임의 크기의 메모리를 물릴 수 있다. `note` 파트도 `part.text()`(무제한)가 아니라
+    `read_chunk` 로 한 번만, 작은 상한(4 KiB)까지만 읽는다.
+    """
     if request.content_type.startswith("multipart/"):
         reader = await request.multipart()
         data, filename, note = None, None, None
         async for part in reader:
             if part.name == "file":
+                if data is not None:
+                    raise RequestError(400, "invalid_field", "file")
                 filename = part.filename or "artifact"
                 buf = bytearray()
+                total = 0
                 while True:
                     chunk = await part.read_chunk(UPLOAD_CHUNK)
                     if not chunk:
                         break
+                    total += len(chunk)
+                    if total > limit:
+                        raise _TooLarge()
                     buf.extend(chunk)
                 data = bytes(buf)
             elif part.name == "note":
-                note = (await part.text())[:400]
+                chunk = await part.read_chunk(NOTE_READ_CHUNK)
+                note = chunk.decode("utf-8", "replace")[:400] if chunk else None
         if data is None:
             raise RequestError(400, "missing_field", "file")
         return data, filename, note
@@ -228,15 +266,23 @@ async def _read_edit_body(request):
     if not isinstance(content, str) or not isinstance(filename, str) or not filename.strip():
         raise RequestError(400, "missing_field", "content, filename")
     note = body.get("note")
-    return content.encode("utf-8"), filename.strip(), (note[:400] if isinstance(note, str) else None)
+    data = content.encode("utf-8")
+    # JSON 본문은 aiohttp 의 요청 크기 상한(MAX_REQUEST_BYTES)으로 이미 유계다 — 여기선
+    # 아티팩트 상한(더 작을 수 있다)만 다시 확인하면 된다. 레지스트리에 닿기 전에 끊는다.
+    if len(data) > limit:
+        raise _TooLarge()
+    return data, filename.strip(), (note[:400] if isinstance(note, str) else None)
 
 
 def add_version_handler(api):
     @guarded
     async def handler(request):
         artifact_id = request.match_info["artifact_id"]
-        data, filename, note = await _read_edit_body(request)
-        limit = artifact_max_bytes(api)
+        limit = artifact_max_bytes(api)  # 본문을 읽기 전에 상한부터 구한다 — 끊을 기준이 먼저다.
+        try:
+            data, filename, note = await _read_edit_body(request, limit)
+        except _TooLarge:
+            return _too_large(limit)
         user = _user(request)
 
         def work():
@@ -251,12 +297,15 @@ def add_version_handler(api):
                 try:
                     out = store.store_artifact_version(api, conn, meta=meta, data=data, max_bytes=limit)
                 except store.ArtifactTooLarge:
-                    raise RequestError(413, "artifact_too_large", str(limit))
+                    raise _TooLarge()
                 version = conn.execute("SELECT * FROM artifact_versions WHERE artifact_id=? AND version=?",
                                        (out.artifact_id, out.version)).fetchone()
                 return _version(version)
 
-        version = await run_blocking(work)
+        try:
+            version = await run_blocking(work)
+        except _TooLarge:
+            return _too_large(limit)
         log_event("artifact.edit", artifact_id=artifact_id, version=version["version"])
         return web.json_response({"version": version}, status=201)
 
