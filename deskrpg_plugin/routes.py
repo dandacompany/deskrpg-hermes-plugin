@@ -16,6 +16,7 @@ from . import config as _config
 from . import catalog as _catalog
 from . import picker as _picker
 from . import provider_keys as _provider_keys
+from . import oauth as _oauth
 from . import kanban_board as _kanban_board
 from . import kanban_actions as _kanban_actions
 from . import kanban_files as _kanban_files
@@ -66,6 +67,13 @@ ROUTES = [
     ("GET", "/p/{profile}/deskrpg/skills", "get_skills", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", "put_provider_key", Scope.PROFILE),
     ("DELETE", "/p/{profile}/deskrpg/provider-keys/{provider}", "delete_provider_key", Scope.PROFILE),
+    # OAuth 디바이스 로그인 — Hermes 세션 위임. 취소 행이 연결 끊기 행보다 **먼저** 와야 한다:
+    # 둘 다 DELETE 이고 `/oauth/sessions/x` 는 `/oauth/{provider}` 에도 맞지 않지만(세그먼트 수가 다르다)
+    # 순서로 의도를 고정해 둔다.
+    ("POST", "/p/{profile}/deskrpg/oauth/{provider}/start", "oauth_start", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/oauth/{provider}/sessions/{session_id}", "oauth_poll", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/oauth/sessions/{session_id}", "oauth_cancel", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/oauth/{provider}", "oauth_disconnect", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/config", "put_config", Scope.PROFILE),
     # ---- 0.6.0 칸반 (소유자 키, spec §5) ------------------------------------------------
     # 칸반은 프로필과 무관한 호스트 공유 저장소(HERMES_KANBAN_HOME)라 전부 소유자 키다(C7).
@@ -161,6 +169,10 @@ _HANDLERS = {
     "get_skills": lambda api: _picker.skills_handler(api),
     "put_provider_key": lambda api: _provider_keys.put_handler(api),
     "delete_provider_key": lambda api: _provider_keys.delete_handler(api),
+    "oauth_start": lambda api: _oauth.start_handler(api),
+    "oauth_poll": lambda api: _oauth.poll_handler(api),
+    "oauth_cancel": lambda api: _oauth.cancel_handler(api),
+    "oauth_disconnect": lambda api: _oauth.disconnect_handler(api),
     # 칸반
     "kanban_list_boards": lambda api: _kanban_board.list_boards_handler(api),
     "kanban_create_board": lambda api: _kanban_board.create_board_handler(api),
@@ -381,6 +393,10 @@ _OPTIONAL_ROUTES = {
     "get_skills": _contract_fields.has_skill_symbols,
     "put_provider_key": "PROVIDER_REGISTRY",
     "delete_provider_key": "PROVIDER_REGISTRY",
+    "oauth_start": _contract_fields.has_oauth_symbols,
+    "oauth_poll": _contract_fields.has_oauth_symbols,
+    "oauth_cancel": _contract_fields.has_oauth_symbols,
+    "oauth_disconnect": _contract_fields.has_oauth_symbols,
 }
 
 

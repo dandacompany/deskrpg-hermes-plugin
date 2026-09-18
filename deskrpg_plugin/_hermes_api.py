@@ -160,7 +160,8 @@ OPTIONAL_SPEC = (
     # 계획 B — 디바이스 코드 로그인. 대시보드 라우터 모듈이라 fastapi 가 없는 빌드에서는 통째로 빠진다.
     (
         "hermes_cli.web_routers.oauth",
-        ("_DEVICE_CODE_STARTERS", "_start_device_code_flow", "poll_oauth_session"),
+        # `_gc_oauth_sessions` 는 없으면 시작 전 만료 세션 정리만 빠진다.
+        ("_DEVICE_CODE_STARTERS", "_start_device_code_flow", "poll_oauth_session", "_gc_oauth_sessions"),
     ),
     (
         "hermes_cli.web_server_oauth",
@@ -188,7 +189,11 @@ OPTIONAL_SPEC = (
     ("tools.skills_tool", ("_find_all_skills", "_sort_skills")),
     ("agent.skill_utils", ("ESSENTIAL_SKILLS", "parse_config_string_list")),
     # `_plugin_aliases` 는 복제가 설정의 프로바이더 id 를 Hermes 와 같이 정식 id 로 푸는 데 쓴다.
-    ("hermes_cli.auth", ("PROVIDER_REGISTRY", "_plugin_aliases", "clear_provider_auth")),
+    # `invalidate_nous_auth_status_cache` 는 OAuth 연결 끊기가 nous 일 때 Hermes 처럼 상태 메모를 지우는 데 쓴다.
+    (
+        "hermes_cli.auth",
+        ("PROVIDER_REGISTRY", "_plugin_aliases", "clear_provider_auth", "invalidate_nous_auth_status_cache"),
+    ),
 )
 
 REQUIRED = tuple(name for _module, names in SPEC for name in names)

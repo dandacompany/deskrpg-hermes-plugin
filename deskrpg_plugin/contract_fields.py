@@ -29,6 +29,10 @@ _TOOLSET_SYMBOLS = (
     "_configurable_keys", "_platform_default_keys", "_get_plugin_toolset_keys", "parse_config_string_list",
 )
 _SKILL_SYMBOLS = ("_find_all_skills", "_sort_skills")
+_OAUTH_SYMBOLS = (
+    "_DEVICE_CODE_STARTERS", "_start_device_code_flow", "poll_oauth_session",
+    "_oauth_sessions", "_oauth_sessions_lock", "_oauth_profile_name", "clear_provider_auth",
+)
 
 
 def _has(api, names) -> bool:
@@ -43,6 +47,11 @@ def has_toolset_symbols(api) -> bool:
 def has_skill_symbols(api) -> bool:
     """`profile_skills` capability 와 config PUT `disabledSkills` 가 같은 판정을 쓴다."""
     return _has(api, _SKILL_SYMBOLS)
+
+
+def has_oauth_symbols(api) -> bool:
+    """`profile_oauth` capability 와 OAuth 라우트 네 개가 같은 판정을 쓴다."""
+    return _has(api, _OAUTH_SYMBOLS)
 
 
 def capabilities(api) -> tuple[str, ...]:
@@ -61,6 +70,8 @@ def capabilities(api) -> tuple[str, ...]:
     if _has(api, ("PROVIDER_REGISTRY",)):
         extra.append("profile_clone")
         extra.append("profile_provider_keys")
+    if has_oauth_symbols(api):
+        extra.append("profile_oauth")
     return CAPABILITIES + tuple(extra)
 
 # ---------------------------------------------------------------------------

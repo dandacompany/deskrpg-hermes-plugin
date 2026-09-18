@@ -12,6 +12,10 @@ from aiohttp import web
 _PROFILE_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
+async def _unfaked_oauth(*_a, **_k):
+    raise AssertionError("OAuth 시작·폴링 가짜를 덮지 않은 테스트가 불렀다")
+
+
 class FakeAdapter:
     """api_server 어댑터를 흉내 낸다. _check_auth 만 쓴다."""
 
@@ -207,10 +211,13 @@ def fake_api(tmp_path):
             "openai-codex": types.SimpleNamespace(id="openai-codex", name="Codex", auth_type="oauth_external",
                                                   api_key_env_vars=(), base_url_env_var=""),
         },
-        # 계획 B — 디바이스 코드 로그인 (OPTIONAL_SPEC). task-4 가 채우는 가짜는 여기서는 None.
+        # 계획 B — 디바이스 코드 로그인 (OPTIONAL_SPEC). 심볼이 다 있는 빌드를 흉내 낸다(라우트·capability 가 뜬다).
+        # 동작이 필요한 테스트(tests/test_oauth.py)는 시작·폴링을 제 가짜로 덮는다.
         _DEVICE_CODE_STARTERS={"openai-codex": object()},
-        _start_device_code_flow=None,
-        poll_oauth_session=None,
+        _start_device_code_flow=_unfaked_oauth,
+        poll_oauth_session=_unfaked_oauth,
+        _gc_oauth_sessions=lambda: None,
+        invalidate_nous_auth_status_cache=lambda: None,
         _OAUTH_PROVIDER_CATALOG=(),
         _oauth_sessions={},
         _oauth_sessions_lock=threading.Lock(),
