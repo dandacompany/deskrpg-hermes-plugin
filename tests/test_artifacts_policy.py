@@ -110,3 +110,45 @@ def test_media_는_확장자_허용_목록을_확인한다():
         policy.validate_completeness("media", filename="a.png", text=None, from_path=True)
     assert e.value.code == "artifact_incomplete"
     policy.validate_completeness("media", filename="a.mp4", text=None, from_path=True)
+
+
+# ---------------------------------------------------------------------------
+# R20 — 상대 경로·DB 파일·아티팩트 저장소 자신
+# ---------------------------------------------------------------------------
+
+
+def test_상대_경로는_작업_디렉터리와_무관하게_거부되고_절대_경로를_요구한다(api, tmp_path, monkeypatch):
+    (tmp_path / "home" / "rel.md").write_text("x")
+    monkeypatch.chdir(tmp_path / "home")
+    with pytest.raises(policy.PolicyError) as e:
+        policy.resolve_source_path(api, "rel.md")
+    assert e.value.code == "artifact_path_outside_root"
+    assert "절대 경로" in e.value.detail
+
+
+@pytest.mark.parametrize("name", ["state.db", "kanban.db-wal", "kanban.db-shm", "x.db-journal", "a.sqlite", "b.SQLITE3", "C.DB"])
+def test_데이터베이스_파일은_민감_경로로_거부된다(api, tmp_path, name):
+    p = tmp_path / "kanban" / name; p.write_bytes(b"SQLite format 3\x00")
+    with pytest.raises(policy.PolicyError) as e:
+        policy.resolve_source_path(api, str(p))
+    assert e.value.code == "artifact_path_sensitive"
+
+
+def test_아티팩트_저장소_안의_파일은_민감_경로로_거부된다(api, tmp_path, monkeypatch):
+    monkeypatch.delenv("HERMES_DESKRPG_ARTIFACTS_ROOT", raising=False)
+    blob = tmp_path / "home" / "deskrpg" / "artifacts" / "blobs" / "01x" / "v1" / "r.md"
+    blob.parent.mkdir(parents=True); blob.write_text("x")
+    with pytest.raises(policy.PolicyError) as e:
+        policy.resolve_source_path(api, str(blob))
+    assert e.value.code == "artifact_path_sensitive"
+
+
+def test_환경변수로_옮긴_아티팩트_저장소도_거부된다(api, tmp_path, monkeypatch):
+    root = tmp_path / "kanban" / "arts"
+    monkeypatch.setenv("HERMES_DESKRPG_ARTIFACTS_ROOT", str(root))
+    blob = root / "blobs" / "r.md"; blob.parent.mkdir(parents=True); blob.write_text("x")
+    with pytest.raises(policy.PolicyError) as e:
+        policy.resolve_source_path(api, str(blob))
+    assert e.value.code == "artifact_path_sensitive"
+    ok = tmp_path / "kanban" / "ok.md"; ok.write_text("x")
+    assert policy.resolve_source_path(api, str(ok)) == ok.resolve()

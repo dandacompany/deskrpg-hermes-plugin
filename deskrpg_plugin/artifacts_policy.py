@@ -4,11 +4,17 @@
 `_SENSITIVE_MANAGED_FILE_BASENAMES`·`_SENSITIVE_MANAGED_DIR_NAMES`·`_is_sensitive_filename`, 0.21.x).
 그 모듈은 FastAPI 를 import 하므로 가져올 수 없다(standards: 대시보드 모듈 금지). Hermes 를 올릴 때
 목록을 다시 대조한다.
+
+그 위에 이 플러그인만의 규칙이 셋 있다(R20): 상대 경로는 받지 않고(게이트웨이 작업 디렉터리에 따라 뜻이
+바뀐다), SQLite 류 DB 파일(`kanban.db`·`state.db` 와 WAL/SHM/저널)은 저장하지 않으며, 아티팩트 저장소
+자신(`artifacts_store.artifacts_root`) 안의 파일은 다시 아티팩트로 만들지 않는다.
 """
 
 import mimetypes
 import os
 from pathlib import Path
+
+from . import artifacts_store as store
 
 KINDS = ("document", "image", "media", "web", "react", "data", "file")
 
@@ -18,6 +24,7 @@ _SENSITIVE_BASENAMES = frozenset({
     "webhook_subscriptions.json", "bws_cache.json", "bws_cache.enc.json", ".git-credentials",
 })
 _SENSITIVE_DIRS = frozenset({"mcp-tokens", "pairing", ".ssh", ".gnupg", ".aws"})
+_DATABASE_SUFFIXES = (".db", ".db-wal", ".db-shm", ".db-journal", ".sqlite", ".sqlite3")
 
 _KIND_BY_EXT = {
     **dict.fromkeys((".md", ".txt", ".pdf", ".docx", ".doc", ".rtf"), "document"),
@@ -52,8 +59,18 @@ def is_sensitive_path(path: Path) -> bool:
     return any(part.lower() in _SENSITIVE_DIRS for part in path.parts)
 
 
+def is_database_file(path: Path) -> bool:
+    return path.name.lower().endswith(_DATABASE_SUFFIXES)
+
+
 def resolve_source_path(api, raw: str) -> Path:
     """허용 루트 아래의 **실제 파일**만 돌려준다. 심볼릭 링크는 resolve 뒤 판정한다."""
+    try:
+        is_absolute = Path(raw).expanduser().is_absolute()
+    except (RuntimeError, ValueError):
+        is_absolute = False
+    if not is_absolute:
+        raise PolicyError("artifact_path_outside_root", "절대 경로가 필요하다 — 상대 경로는 받지 않는다")
     try:
         target = Path(raw).expanduser().resolve(strict=True)
     except (OSError, RuntimeError, ValueError):
@@ -64,6 +81,11 @@ def resolve_source_path(api, raw: str) -> Path:
         raise PolicyError("artifact_path_outside_root", "게이트웨이 관리 루트 밖의 경로다")
     if is_sensitive_path(target) or is_sensitive_path(Path(raw)):
         raise PolicyError("artifact_path_sensitive", "자격증명 파일은 아티팩트로 저장할 수 없다")
+    if is_database_file(target) or is_database_file(Path(raw)):
+        raise PolicyError("artifact_path_sensitive", "데이터베이스 파일(.db·.sqlite 와 WAL/SHM/저널)은 아티팩트로 저장할 수 없다")
+    own = store.artifacts_root(api).resolve()
+    if target == own or own in target.parents:
+        raise PolicyError("artifact_path_sensitive", "아티팩트 저장소 안의 파일은 다시 저장할 수 없다")
     return target
 
 
