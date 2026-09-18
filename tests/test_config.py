@@ -417,3 +417,53 @@ async def test_capability_와_같은_심볼_집합이_하나라도_없으면_400
     resp = await client.put("/p/sophie/deskrpg/config", json={key: value})
     assert resp.status == 400
     assert path.read_text(encoding="utf-8") == before
+
+
+# P4 — Hermes `hermes_cli/tools_config.py:_save_platform_tools`(680-716) 와 같은 쓰기.
+
+async def test_enabledToolsets_는_MCP_같은_비설정_항목을_보존하고_기본_합성명과_no_mcp_는_버린다(aiohttp_client, fake_api):
+    path = _seed(fake_api, {"platform_toolsets": {
+        "api_server": ["web", "my-mcp", "hermes-api-server", "no_mcp"],
+        "cli": ["file", "github-mcp"],
+        "telegram": ["web", "tg-mcp"],
+    }})
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.put("/p/sophie/deskrpg/config", json={"enabledToolsets": ["file"]})).status == 200
+    saved = yaml.safe_load(path.read_text(encoding="utf-8"))
+    pt = saved["platform_toolsets"]
+    assert pt["api_server"] == ["file", "my-mcp"]
+    assert pt["cli"] == ["file", "github-mcp"]
+    assert pt["cron"] == ["file"]
+    assert pt["telegram"] == ["web", "tg-mcp"]  # 다른 플랫폼은 그대로
+    for platform in ("api_server", "cron", "cli"):
+        assert saved["known_builtin_toolsets"][platform] == ["discord", "file", "tts", "web"]
+    assert "telegram" not in saved["known_builtin_toolsets"]
+
+
+@pytest.mark.parametrize("disabled,expected", [
+    (["web", "memory"], ["memory"]),
+    ("['web', 'memory']", ["memory"]),
+])
+async def test_새로_켠_툴셋은_agent_disabled_toolsets_에서_뺀다(aiohttp_client, fake_api, disabled, expected):
+    path = _seed(fake_api, {"agent": {"disabled_toolsets": disabled, "max_turns": 5}})
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.put("/p/sophie/deskrpg/config", json={"enabledToolsets": ["web", "file"]})).status == 200
+    agent = yaml.safe_load(path.read_text(encoding="utf-8"))["agent"]
+    assert agent == {"disabled_toolsets": expected, "max_turns": 5}
+
+
+async def test_agent_disabled_toolsets_가_없으면_만들지_않는다(aiohttp_client, fake_api):
+    path = _seed(fake_api, {})
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.put("/p/sophie/deskrpg/config", json={"enabledToolsets": ["web"]})).status == 200
+    assert "agent" not in yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+async def test_플러그인_툴셋이_있으면_known_plugin_toolsets_를_기록한다(aiohttp_client, fake_api):
+    fake_api._get_plugin_toolset_keys = lambda: {"spotify"}
+    path = _seed(fake_api, {"platform_toolsets": {"api_server": ["spotify", "my-mcp"]}})
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.put("/p/sophie/deskrpg/config", json={"enabledToolsets": ["web"]})).status == 200
+    saved = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert saved["platform_toolsets"]["api_server"] == ["my-mcp", "web"]
+    assert saved["known_plugin_toolsets"] == {p: ["spotify"] for p in ("api_server", "cron", "cli")}

@@ -149,6 +149,16 @@ def fake_api(tmp_path):
         saved = (cfg.get("platform_toolsets") or {}).get(platform)
         return set(saved) if isinstance(saved, list) else {"web", "file"}
 
+    def _parse_config_string_list(value):
+        # agent/skill_utils.py:parse_config_string_list 와 같은 규칙(JSON 배열 문자열 → 목록).
+        import ast
+        if isinstance(value, str):
+            if value.strip().startswith("["):
+                parsed = ast.literal_eval(value.strip())
+                return [str(x) for x in parsed]
+            return [value] if value.strip() else []
+        return [str(x) for x in value] if isinstance(value, list) else []
+
     def _find_all_skills(*, skip_disabled=False):
         return [
             {"name": "hermes-agent", "description": "필수", "category": "core"},
@@ -183,6 +193,10 @@ def fake_api(tmp_path):
         _get_platform_tools=_get_platform_tools,
         _toolset_has_keys=lambda name, cfg=None: name != "tts",
         _toolset_allowed_for_platform=lambda name, platform: name != "discord",
+        _configurable_keys=lambda: {row[0] for row in FAKE_TOOLSETS},
+        _platform_default_keys=lambda: {"hermes-api-server", "hermes-cron", "hermes-cli", "hermes-telegram"},
+        _get_plugin_toolset_keys=lambda: set(),
+        parse_config_string_list=_parse_config_string_list,
         _find_all_skills=_find_all_skills,
         _sort_skills=lambda rows: sorted(rows, key=lambda s: (s.get("category") or "", s["name"])),
         ESSENTIAL_SKILLS=frozenset({"hermes-agent"}),

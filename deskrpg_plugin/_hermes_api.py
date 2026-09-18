@@ -168,10 +168,14 @@ OPTIONAL_SPEC = (
             "_get_platform_tools",
             "_toolset_has_keys",
             "_toolset_allowed_for_platform",
+            # 0.9.0 — config PUT 이 `_save_platform_tools` 와 같은 규칙으로 쓰는 데 쓴다.
+            "_configurable_keys",
+            "_platform_default_keys",
+            "_get_plugin_toolset_keys",
         ),
     ),
     ("tools.skills_tool", ("_find_all_skills", "_sort_skills")),
-    ("agent.skill_utils", ("ESSENTIAL_SKILLS",)),
+    ("agent.skill_utils", ("ESSENTIAL_SKILLS", "parse_config_string_list")),
     ("hermes_cli.auth", ("PROVIDER_REGISTRY",)),
 )
 

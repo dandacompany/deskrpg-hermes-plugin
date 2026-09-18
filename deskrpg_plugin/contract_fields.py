@@ -25,6 +25,8 @@ CAPABILITIES = ("kanban", "cron", "events", "artifacts")
 _TOOLSET_SYMBOLS = (
     "_get_effective_configurable_toolsets", "_get_platform_tools",
     "_toolset_has_keys", "_toolset_allowed_for_platform",
+    # 쓰기(config PUT)가 `hermes tools` 저장과 같은 규칙을 따르는 데 필요하다 — config._apply_enabled_toolsets.
+    "_configurable_keys", "_platform_default_keys", "_get_plugin_toolset_keys", "parse_config_string_list",
 )
 _SKILL_SYMBOLS = ("_find_all_skills", "_sort_skills")
 

@@ -122,6 +122,54 @@ def _load(path):
     return data
 
 
+def _apply_enabled_toolsets(api, data: dict, enabled: set) -> None:
+    """`platform_toolsets.{api_server,cron,cli}` 에 켠 툴셋을 쓴다 — Hermes 의 `hermes tools` 저장과 같게.
+
+    Hermes `hermes_cli/tools_config.py:_save_platform_tools`(0.21.3, 680-716)를 플랫폼마다 따라 한다.
+    그 함수를 직접 부르지 않는 이유: 안에서 `save_config` 를 불러 파일 전체를 Hermes 식으로 정규화해
+    다시 쓰는데(기본값 제거·전역 락·모듈 캐시), 이 PUT 은 같은 쓰기에 model·skills 등을 함께 싣고
+    자기 백업·거절 규칙을 가진다 — 한 요청이 파일을 두 번, 서로 다른 방식으로 쓰게 된다.
+
+    1. 켤 이름은 그 플랫폼에서 허용되는 것만(`_toolset_allowed_for_platform`, 원본 685행).
+    2. 기존 항목 중 설정 가능한 키·플러그인 키·플랫폼 기본 합성명·`no_mcp` 가 **아닌 것**(MCP 서버 이름 등)은
+       남긴다(원본 687-695행). 지우면 그 플랫폼의 MCP 허용목록이 사라져 "전부 허용" 으로 넓어진다.
+    3. `known_plugin_toolsets`·`known_builtin_toolsets` 를 기록한다(원본 696-702행). 없으면 끈 툴셋과
+       "저장 뒤 새로 나온 툴셋" 을 구분하지 못해 `_enable_recently_shipped_toolsets` 가 다시 켠다.
+    4. 방금 켠 이름을 `agent.disabled_toolsets` 에서 뺀다(원본 703-715행) — 그 목록은 마지막에 덮어쓰는
+       억제 목록이라, 빼지 않으면 체크한 툴셋이 켜지지 않는다.
+    """
+    block = data.get("platform_toolsets")
+    block = dict(block) if isinstance(block, dict) else {}
+    configurable = set(api._configurable_keys())
+    plugin_keys = set(api._get_plugin_toolset_keys())
+    drop = configurable | plugin_keys | set(api._platform_default_keys()) | {"no_mcp"}
+    for platform in TOOLSET_PLATFORMS:
+        allowed = {ts for ts in enabled if api._toolset_allowed_for_platform(ts, platform)}
+        existing = block.get(platform)
+        preserved = {str(e) for e in (existing if isinstance(existing, list) else []) if str(e) not in drop}
+        block[platform] = sorted(allowed | preserved)
+        if plugin_keys:
+            _section(data, "known_plugin_toolsets")[platform] = sorted(plugin_keys)
+        _section(data, "known_builtin_toolsets")[platform] = sorted(configurable)
+        agent_cfg = data.get("agent")
+        newly_enabled = allowed - preserved
+        if isinstance(agent_cfg, dict) and agent_cfg.get("disabled_toolsets") and newly_enabled:
+            parsed = api.parse_config_string_list(agent_cfg["disabled_toolsets"])
+            remaining = [ts for ts in parsed if ts not in newly_enabled]
+            if remaining != parsed:
+                agent_cfg["disabled_toolsets"] = remaining
+    data["platform_toolsets"] = block
+
+
+def _section(data: dict, key: str) -> dict:
+    """`tools_config._cfg_section` 과 같다 — 없거나 매핑이 아니면 `{}` 로 갈아 끼운다."""
+    section = data.get(key)
+    if not isinstance(section, dict):
+        section = {}
+        data[key] = section
+    return section
+
+
 def get_handler(api):
     async def handler(request):
         path = _resolve(request, api)
@@ -275,11 +323,7 @@ def put_handler(api):
         if "toolsets" in payload:
             data["toolsets"] = payload["toolsets"]
         if "enabledToolsets" in payload:
-            names = sorted(set(payload["enabledToolsets"]))
-            block = dict(data.get("platform_toolsets") or {})
-            for platform in TOOLSET_PLATFORMS:
-                block[platform] = list(names)
-            data["platform_toolsets"] = block
+            _apply_enabled_toolsets(api, data, set(payload["enabledToolsets"]))
         if "disabledSkills" in payload:
             block = dict(data.get("skills") or {})
             block["disabled"] = sorted(set(payload["disabledSkills"]))

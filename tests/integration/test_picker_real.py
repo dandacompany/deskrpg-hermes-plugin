@@ -61,3 +61,18 @@ async def test_복제된_프로필이_default_의_모델과_키_이름을_물려
     assert body["cloned"]["envKeys"] == ["OPENAI_API_KEY"]
     got = await (await client.get("/p/cloned/deskrpg/config")).json()
     assert got["model"] == "gpt-x" and got["provider"] == "openai"
+
+
+async def test_저장은_MCP_항목을_남기고_disabled_toolsets_의_막힌_툴셋을_푼다(client, make_profile):
+    home = make_profile("noah")
+    (home / "config.yaml").write_text(yaml.safe_dump({
+        "platform_toolsets": {"api_server": ["terminal", "my-mcp"]},
+        "agent": {"disabled_toolsets": ["web", "memory"]},
+    }), encoding="utf-8")
+    assert (await client.put("/p/noah/deskrpg/config", json={"enabledToolsets": ["file", "web"]})).status == 200
+    cfg = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))
+    assert cfg["platform_toolsets"]["api_server"] == ["file", "my-mcp", "web"]
+    assert cfg["agent"]["disabled_toolsets"] == ["memory"]
+    assert "web" in cfg["known_builtin_toolsets"]["api_server"]
+    rows = {r["name"]: r for r in (await (await client.get("/p/noah/deskrpg/toolsets")).json())["toolsets"]}
+    assert rows["web"]["enabled"] and rows["file"]["enabled"] and not rows["terminal"]["enabled"]
