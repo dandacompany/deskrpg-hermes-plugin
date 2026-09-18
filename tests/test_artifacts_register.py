@@ -1,4 +1,5 @@
 """register(ctx) 가 라우트 외에 도구·훅·프롬프트 섹션·스킬을 등록하고, 하나가 실패해도 나머지는 산다."""
+import sys
 import types
 
 import deskrpg_plugin
@@ -45,6 +46,21 @@ def test_도구_등록이_실패해도_라우트는_등록된다(monkeypatch):
     ctx = _Ctx(fail={"register_tool", "register_hook"})
     deskrpg_plugin.register(ctx)
     assert any(c[0] == "register_platform_handler" for c in ctx.calls)
+
+
+def test_아티팩트_모듈_import_가_실패해도_라우트는_등록되고_예외가_새지_않는다(monkeypatch):
+    monkeypatch.setattr(deskrpg_plugin, "load", lambda: types.SimpleNamespace())
+    # deskrpg_plugin.artifacts_hook 을 None 으로 만들면 `from . import artifacts_hook` 이
+    # ImportError 를 던진다(파이썬은 sys.modules 값이 None 이면 그렇게 취급한다) — 단, 패키지
+    # 객체에 이미 그 이름의 속성이 남아 있으면(다른 테스트가 먼저 성공 임포트했을 때) 파이썬이
+    # sys.modules 를 다시 보지 않고 그 속성을 그대로 쓴다. 그래서 속성도 함께 지운다.
+    monkeypatch.delattr(deskrpg_plugin, "artifacts_hook", raising=False)
+    monkeypatch.setitem(sys.modules, "deskrpg_plugin.artifacts_hook", None)
+    ctx = _Ctx()
+    deskrpg_plugin.register(ctx)  # 던지지 않아야 한다
+    names = [c[0] for c in ctx.calls]
+    assert names.count("register_platform_handler") == 1
+    assert "register_tool" not in names
 
 
 def test_스킬_파일이_존재하고_섹션_텍스트가_짧다():

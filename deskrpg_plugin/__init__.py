@@ -31,7 +31,13 @@ def register(ctx) -> None:
 
 
 def _register_artifacts(ctx, api) -> None:
-    from . import artifacts_hook, artifacts_prompt, artifacts_tool
+    try:
+        from . import artifacts_hook, artifacts_prompt, artifacts_tool
+    except Exception as exc:  # noqa: BLE001 — 이 임포트 실패로 라우트까지 끌려 내려가면 안 된다
+        # 로더(plugins_loader.py)는 register(ctx) 가 던지면 이 호출로 만든 등록을 전부(라우트
+        # 포함) 폐기한다 — 그래서 이 import 도 개별 단계와 똑같이 감싸고 그냥 돌아간다.
+        logger.warning("[deskrpg] 아티팩트 모듈 import 실패: %s", type(exc).__name__)
+        return
 
     steps = (
         ("tool", lambda: ctx.register_tool(
