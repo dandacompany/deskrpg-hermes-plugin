@@ -30,10 +30,11 @@ def _call(api, **args):
     return json.loads(handler(args, task_id=None, session_id="s1", user_task="x"))
 
 
-def test_스키마는_필수_셋과_kind_enum_을_가진다():
+def test_스키마는_필수_둘과_kind_enum_과_url_을_가진다():
     params = tool.TOOL_SCHEMA["parameters"]
-    assert set(params["required"]) == {"kind", "title", "summary"}
+    assert set(params["required"]) == {"kind", "summary"}
     assert params["properties"]["kind"]["enum"] == list(tool.policy.KINDS)
+    assert "url" in params["properties"]
 
 
 def test_인라인_문서를_저장하면_id_와_버전이_돌아오고_출처는_컨텍스트에서_온다(api):
@@ -127,3 +128,30 @@ def test_도구는_요청_본문_상한에_묶이지_않고_저장소_상한을_
     out = _call(api, kind="document", title="t", summary="s", content="0" * 20, filename="big.md")
     assert "error" not in out and out["version"] == 1
     assert tool.artifact_storage_max_bytes() == 100 * 1024 * 1024
+
+
+def test_url_로_링크를_저장하면_정리된_URL_한_줄이_blob_이고_제목은_라벨이다(api):
+    out = _call(api, kind="link", summary="참고 문서", url="https://Docs.io/guide/setup).")
+    assert out["kind"] == "link" and out["title"] == "setup" and out["version"] == 1
+    with contextlib.closing(store.open_registry(api)) as conn:
+        v = store.list_versions(conn, out["artifact_id"])[0]
+        assert (v["mime"], v["filename"], v["captured_via"]) == ("text/uri-list", "setup.url", "tool")
+        assert store.blob_path_for(api, v).read_bytes() == b"https://docs.io/guide/setup\n"
+
+
+def test_같은_세션에_같은_URL_을_다시_저장하면_중복이다(api):
+    first = _call(api, kind="link", summary="s", url="https://x.io/a", title="첫 이름")
+    again = _call(api, kind="link", summary="s", url="https://X.io/a", title="다른 이름")
+    assert again["artifact_id"] == first["artifact_id"] and again["deduped"] is True
+
+
+@pytest.mark.parametrize("args", [
+    dict(kind="link", summary="s"),                                               # url 없음
+    dict(kind="document", summary="s", url="https://x.io", title="t"),            # url 인데 link 아님
+    dict(kind="link", summary="s", url="https://x.io", content="x", filename="a.md"),
+    dict(kind="link", summary="s", url="https://x.io", path="/tmp/a.md"),
+    dict(kind="link", summary="s", url="javascript:alert(1)"),
+    dict(kind="document", summary="s", content="# a", filename="a.md"),           # link 아닌데 제목 없음
+])
+def test_링크_인자_조합이_틀리면_artifact_incomplete(api, args):
+    assert _call(api, **args)["error"] == "artifact_incomplete"

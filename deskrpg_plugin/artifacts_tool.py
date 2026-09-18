@@ -12,6 +12,7 @@ import logging
 import os
 
 from . import artifacts_context as context
+from . import artifacts_links as links
 from . import artifacts_policy as policy
 from . import artifacts_store as store
 from .common import log_event
@@ -27,15 +28,17 @@ TOOL_SCHEMA = {
     "description": (
         "사용자가 결과물을 아티팩트로 저장·보관·등록해 달라고 할 때 부른다. 저장 전에 산출물을 그 종류에 맞는 "
         "완결된 형태로 만든다 — web 은 하나의 완전한 HTML 파일, data 는 CSV/JSON, document 는 Markdown/PDF, "
-        "image/media 는 파일 경로. 이미 저장한 것을 고쳤으면 supersedes 에 이전 artifact_id 를 넣는다."
+        "image/media 는 파일 경로. 이미 저장한 것을 고쳤으면 supersedes 에 이전 artifact_id 를 넣는다. "
+        "링크를 남길 때는 kind=link 와 url 만 넘긴다(title 은 선택)."
     ),
     "parameters": {
         "type": "object",
-        "required": ["kind", "title", "summary"],
+        "required": ["kind", "summary"],
         "properties": {
             "kind": {"type": "string", "enum": list(policy.KINDS)},
-            "title": {"type": "string", "maxLength": 200},
+            "title": {"type": "string", "maxLength": 200, "description": "link 가 아니면 필수"},
             "summary": {"type": "string", "maxLength": 600, "description": "1~2문장. 무엇이고 누구를 위한 것인가"},
+            "url": {"type": "string", "description": "kind=link 일 때만. http(s) 주소. path·content 와 함께 쓰지 않는다"},
             "path": {"type": "string", "description": "게이트웨이 관리 루트 아래의 파일 경로. path 또는 content 중 하나"},
             "content": {"type": "string", "description": "인라인 본문(텍스트 계열만). filename 필수"},
             "filename": {"type": "string", "description": "content 일 때 필수. 확장자가 형식을 정한다"},
@@ -85,8 +88,13 @@ def make_handler(api):
 
 def _save(api, args: dict, kwargs: dict) -> str:
     kind, title, summary = _str(args, "kind", 40), _str(args, "title", 200), _str(args, "summary", 600)
-    if not (kind and title and summary):
-        return _err("artifact_incomplete", "kind, title, summary 는 필수다")
+    if not (kind and summary):
+        return _err("artifact_incomplete", "kind, summary 는 필수다")
+    url = _str(args, "url", links.MAX_URL_CHARS + 64)
+    if kind == "link" or url:
+        return _save_link(api, args, kwargs, kind=kind, title=title, summary=summary, url=url)
+    if not title:
+        return _err("artifact_incomplete", "title 은 필수다(link 제외)")
     path, content = _str(args, "path", 4096), args.get("content")
     if bool(path) == isinstance(content, str):
         return _err("artifact_incomplete", "path 또는 content 중 정확히 하나를 넘긴다")
@@ -126,3 +134,27 @@ def _save(api, args: dict, kwargs: dict) -> str:
               profile=ctx.profile, source_kind=ctx.source_kind, deduped=result.deduped)
     return json.dumps({"artifact_id": result.artifact_id, "version": result.version, "deduped": result.deduped,
                        "title": title, "kind": kind}, ensure_ascii=False)
+
+
+def _save_link(api, args: dict, kwargs: dict, *, kind: str, title: str, summary: str, url: str) -> str:
+    if kind != "link" or not url or _str(args, "path", 4096) or isinstance(args.get("content"), str) \
+            or _str(args, "filename", 200):
+        return _err("artifact_incomplete", "링크는 kind=link 와 url 만 넘긴다 — path·content·filename 과 함께 쓰지 않는다")
+    canonical = links.canonical_url(url)
+    if canonical is None:
+        return _err("artifact_incomplete", f"url 은 http(s) 주소여야 한다({links.MAX_URL_CHARS}자 이하)")
+    title = title or links.label_for(canonical)
+    ctx = context.resolve_context(api, session_id=str(kwargs.get("session_id") or ""), task_id=kwargs.get("task_id"))
+    meta = store.ArtifactMeta(
+        kind="link", title=title, summary=summary, filename=links.link_filename(title), mime=links.LINK_MIME,
+        profile=ctx.profile, source_kind=ctx.source_kind, session_id=ctx.session_id, created_by=f"agent:{ctx.profile}",
+        captured_via="tool", board=ctx.board, task_id=ctx.task_id, job_id=ctx.job_id, run_id=ctx.run_id,
+        note=_str(args, "note", 400) or None, supersedes=_str(args, "supersedes", 64) or None, identity=canonical,
+    )
+    limit = artifact_storage_max_bytes()
+    with contextlib.closing(store.open_registry(api)) as conn:
+        result = store.store_artifact_version(api, conn, meta=meta, data=links.url_blob(canonical), max_bytes=limit)
+    log_event("artifact.save", artifact_id=result.artifact_id, version=result.version, kind="link",
+              profile=ctx.profile, source_kind=ctx.source_kind, deduped=result.deduped)
+    return json.dumps({"artifact_id": result.artifact_id, "version": result.version, "deduped": result.deduped,
+                       "title": title, "kind": "link"}, ensure_ascii=False)
