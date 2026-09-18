@@ -44,6 +44,7 @@ def _register_artifacts(ctx, api) -> None:
             artifacts_tool.TOOL_NAME, artifacts_tool.TOOLSET, artifacts_tool.TOOL_SCHEMA,
             artifacts_tool.make_handler(api), description=artifacts_tool.TOOL_SCHEMA["description"], emoji="🗂️")),
         ("hook", lambda: ctx.register_hook("post_tool_call", artifacts_hook.make_hook(api))),
+        ("response_hook", lambda: ctx.register_hook("post_llm_call", artifacts_hook.make_response_hook(api))),
         ("prompt", lambda: ctx.register_system_prompt_section(
             artifacts_prompt.SECTION_ID, artifacts_prompt.SECTION_TEXT, position="after_memory")),
         ("skill", lambda: ctx.register_skill("artifact", artifacts_prompt.SKILL_PATH,

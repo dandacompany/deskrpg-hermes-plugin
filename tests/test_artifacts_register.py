@@ -66,3 +66,31 @@ def test_아티팩트_모듈_import_가_실패해도_라우트는_등록되고_�
 def test_스킬_파일이_존재하고_섹션_텍스트가_짧다():
     assert artifacts_prompt.SKILL_PATH.is_file()
     assert len(artifacts_prompt.SECTION_TEXT) < 900
+
+
+def test_응답_훅이_post_llm_call_로_따로_등록된다(monkeypatch):
+    monkeypatch.setattr(deskrpg_plugin, "load", lambda: types.SimpleNamespace())
+    ctx = _Ctx()
+    deskrpg_plugin.register(ctx)
+    hooks = {c[1][0]: c[1][1] for c in ctx.calls if c[0] == "register_hook"}
+    assert set(hooks) == {"post_tool_call", "post_llm_call"}
+    assert callable(hooks["post_llm_call"]) and hooks["post_llm_call"] is not hooks["post_tool_call"]
+
+
+def test_응답_훅_등록이_실패해도_도구와_라우트는_산다(monkeypatch):
+    monkeypatch.setattr(deskrpg_plugin, "load", lambda: types.SimpleNamespace())
+
+    class _FailLlmHook(_Ctx):
+        def __getattr__(self, name):
+            if name == "register_hook":
+                def f(hook_name, cb):
+                    self.calls.append((name, (hook_name, cb), {}))
+                    if hook_name == "post_llm_call":
+                        raise RuntimeError("no such hook")
+                return f
+            return super().__getattr__(name)
+
+    ctx = _FailLlmHook()
+    deskrpg_plugin.register(ctx)
+    names = [c[0] for c in ctx.calls]
+    assert "register_platform_handler" in names and "register_tool" in names and "register_skill" in names
