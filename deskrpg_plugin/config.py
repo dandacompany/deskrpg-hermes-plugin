@@ -11,14 +11,25 @@ import yaml
 from aiohttp import web
 
 from .catalog import REASONING_EFFORTS
+from .common import run_blocking
 
 logger = logging.getLogger(__name__)
 
-ALLOWED_KEYS = frozenset({"model", "provider", "toolsets", "reasoning_effort"})
+ALLOWED_KEYS = frozenset(
+    {"model", "provider", "toolsets", "reasoning_effort", "enabledToolsets", "disabledSkills"}
+)
 
 # `reasoning_effort` 는 **config 최상위 키**다(`model` 블록 안이 아니다) —
 # `agent/auxiliary_client.py:5555` 가 `config.get("reasoning_effort")` 로 읽는다.
 # 허용값은 catalog.REASONING_EFFORTS 와 같은 출처를 쓴다.
+#
+# `enabledToolsets`/`disabledSkills` 는 피커 화면(0.9.0)이 쓰는 파생 키다 —
+# 실제로는 `platform_toolsets`·`skills.disabled` 를 쓴다(아래 참조).
+
+# 대화(api_server)·크론(cron)·칸반 워커(cli)가 각자 다른 목록을 읽는다
+# (api_server.py:2159 · cron/scheduler.py:405 · kanban_db_dispatch.py:2355). 직원은 어디서 일하든
+# 같은 도구를 써야 하므로 셋에 같은 목록을 쓴다(2026-09-18 결정).
+TOOLSET_PLATFORMS = ("api_server", "cron", "cli")
 
 CONFIG_FILENAME = "config.yaml"
 
@@ -62,6 +73,10 @@ def _value_error(key, value):
             return "toolsets must be a list of strings"
         if not all(isinstance(v, str) for v in value):
             return "toolsets must be a list of strings"
+        return None
+    if key in ("enabledToolsets", "disabledSkills"):
+        if not isinstance(value, list) or not all(isinstance(v, str) and v.strip() for v in value):
+            return f"{key} must be a list of non-empty strings"
         return None
     return None
 
@@ -123,6 +138,8 @@ def get_handler(api):
                     "provider": None,
                     "toolsets": None,
                     "reasoning_effort": None,
+                    "enabledToolsets": None,
+                    "disabledSkills": None,
                     "unreadable": True,
                 }
             )
@@ -130,6 +147,10 @@ def get_handler(api):
         model_block = data.get("model") or {}
         if not isinstance(model_block, dict):
             model_block = {}
+        pt = data.get("platform_toolsets")
+        api_server = pt.get("api_server") if isinstance(pt, dict) else None
+        skills = data.get("skills")
+        disabled = skills.get("disabled") if isinstance(skills, dict) else None
         return web.json_response(
             {
                 "model": model_block.get("default"),
@@ -137,6 +158,8 @@ def get_handler(api):
                 "toolsets": data.get("toolsets"),
                 # 최상위 키다 — model 블록 안에서 찾지 않는다.
                 "reasoning_effort": data.get("reasoning_effort"),
+                "enabledToolsets": [str(x) for x in api_server] if isinstance(api_server, list) else None,
+                "disabledSkills": [str(x) for x in disabled] if isinstance(disabled, list) else [],
             }
         )
 
@@ -199,6 +222,38 @@ def put_handler(api):
                 status=409,
             )
 
+        from . import picker  # 지역 import — picker 가 config 를 import 한다(순환 방지)
+
+        home = path.parent
+        if "enabledToolsets" in payload:
+            if getattr(api, "_get_platform_tools", None) is None:
+                raise web.HTTPBadRequest(reason="enabledToolsets is not supported by this Hermes build")
+            if data.get("platform_toolsets") is not None and not isinstance(data["platform_toolsets"], dict):
+                return web.json_response(
+                    {"error": "config_unreadable", "reason": "existing 'platform_toolsets' key is not a mapping"},
+                    status=409,
+                )
+            known = await run_blocking(picker.known_toolset_names, api, home)
+            unknown_names = sorted(set(payload["enabledToolsets"]) - known)
+            if unknown_names:
+                raise web.HTTPBadRequest(reason=f"unknown toolsets: {', '.join(unknown_names)}")
+        if "disabledSkills" in payload:
+            if getattr(api, "_find_all_skills", None) is None:
+                raise web.HTTPBadRequest(reason="disabledSkills is not supported by this Hermes build")
+            if data.get("skills") is not None and not isinstance(data["skills"], dict):
+                return web.json_response(
+                    {"error": "config_unreadable", "reason": "existing 'skills' key is not a mapping"},
+                    status=409,
+                )
+            requested = set(payload["disabledSkills"])
+            essential = sorted(requested & set(getattr(api, "ESSENTIAL_SKILLS", None) or ()))
+            if essential:
+                raise web.HTTPBadRequest(reason=f"essential skills cannot be disabled: {', '.join(essential)}")
+            known = await run_blocking(picker.known_skill_names, api, home)
+            unknown_names = sorted(requested - known)
+            if unknown_names:
+                raise web.HTTPBadRequest(reason=f"unknown skills: {', '.join(unknown_names)}")
+
         if path.is_file():
             # 같은 초에 두 번 써도 백업이 서로 덮어쓰지 않도록 마이크로초까지
             # 찍는다(identity.py 와 동일한 방식) — 백업의 존재 이유가 옛 내용
@@ -218,6 +273,16 @@ def put_handler(api):
             data["model"] = model_block
         if "toolsets" in payload:
             data["toolsets"] = payload["toolsets"]
+        if "enabledToolsets" in payload:
+            names = sorted(set(payload["enabledToolsets"]))
+            block = dict(data.get("platform_toolsets") or {})
+            for platform in TOOLSET_PLATFORMS:
+                block[platform] = list(names)
+            data["platform_toolsets"] = block
+        if "disabledSkills" in payload:
+            block = dict(data.get("skills") or {})
+            block["disabled"] = sorted(set(payload["disabledSkills"]))
+            data["skills"] = block
         if "reasoning_effort" in payload:
             # 최상위 키다. 빈 문자열이면 키를 지운다 — 빈 값을 남기면 Hermes 가
             # 그것을 "지정됨" 으로 읽을지 "미지정" 으로 읽을지 확실하지 않다.

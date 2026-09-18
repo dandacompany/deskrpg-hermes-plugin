@@ -163,8 +163,10 @@ async def test_읽기_권한이_없는_config는_GET에서_unreadable(aiohttp_cl
         p.chmod(stat.S_IRUSR | stat.S_IWUSR)  # tmp_path 정리가 지울 수 있도록 복구
 
 
-async def test_ALLOWED_KEYS_는_문서화된_네_키다():
-    assert config.ALLOWED_KEYS == frozenset({"model", "provider", "toolsets", "reasoning_effort"})
+async def test_ALLOWED_KEYS_는_문서화된_여섯_키다():
+    assert config.ALLOWED_KEYS == frozenset(
+        {"model", "provider", "toolsets", "reasoning_effort", "enabledToolsets", "disabledSkills"}
+    )
 
 
 # 허용목록은 키만 막고 값의 타입은 열어 두면 목적이 무색해진다 — model.default 에
@@ -315,3 +317,87 @@ async def test_GET_은_읽기_실패시에도_reasoning_effort_필드를_준다(
     body = await (await client.get("/p/noah/deskrpg/config")).json()
     assert body["unreadable"] is True
     assert body["reasoning_effort"] is None
+
+
+async def test_enabledToolsets_는_세_플랫폼에_같은_목록을_쓴다(aiohttp_client, fake_api):
+    path = _seed(fake_api, {"platform_toolsets": {"telegram": ["web"], "cli": ["file"]}})
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/sophie/deskrpg/config", json={"enabledToolsets": ["web", "file", "web"]})
+    assert resp.status == 200
+    saved = yaml.safe_load(path.read_text(encoding="utf-8"))["platform_toolsets"]
+    assert saved["api_server"] == saved["cron"] == saved["cli"] == ["file", "web"]
+    assert saved["telegram"] == ["web"]  # 다른 플랫폼은 건드리지 않는다
+
+
+async def test_빈_enabledToolsets_는_명시적_없음으로_저장된다(aiohttp_client, fake_api):
+    path = _seed(fake_api, {})
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.put("/p/sophie/deskrpg/config", json={"enabledToolsets": []})).status == 200
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["platform_toolsets"]["api_server"] == []
+
+
+async def test_모르는_툴셋_이름은_거절하고_파일을_건드리지_않는다(aiohttp_client, fake_api):
+    path = _seed(fake_api, {"model": {"default": "m"}})
+    before = path.read_text(encoding="utf-8")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/sophie/deskrpg/config", json={"enabledToolsets": ["web", "nope", "discord"]})
+    assert resp.status == 400
+    assert "nope" in resp.reason and "discord" in resp.reason
+    assert path.read_text(encoding="utf-8") == before
+    assert not list(path.parent.glob("config.yaml.bak-*"))
+
+
+async def test_disabledSkills_는_skills_disabled_에_쓰고_다른_키를_보존한다(aiohttp_client, fake_api):
+    path = _seed(fake_api, {"skills": {"platform_disabled": {"telegram": ["pdf"]}, "external_dirs": ["~/x"]}})
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.put("/p/sophie/deskrpg/config", json={"disabledSkills": ["xlsx", "pdf"]})).status == 200
+    skills = yaml.safe_load(path.read_text(encoding="utf-8"))["skills"]
+    assert skills["disabled"] == ["pdf", "xlsx"]
+    assert skills["platform_disabled"] == {"telegram": ["pdf"]}
+    assert skills["external_dirs"] == ["~/x"]
+
+
+@pytest.mark.parametrize("names", [["hermes-agent"], ["ghost-skill"]])
+async def test_필수_스킬과_모르는_스킬은_끌_수_없다(aiohttp_client, fake_api, names):
+    _seed(fake_api, {})
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.put("/p/sophie/deskrpg/config", json={"disabledSkills": names})).status == 400
+
+
+@pytest.mark.parametrize("key,bad", [("enabledToolsets", "web"), ("enabledToolsets", [1]), ("disabledSkills", {"a": 1})])
+async def test_목록이_아니면_400(aiohttp_client, fake_api, key, bad):
+    _seed(fake_api, {})
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.put("/p/sophie/deskrpg/config", json={key: bad})).status == 400
+
+
+async def test_platform_toolsets_가_매핑이_아니면_409(aiohttp_client, fake_api):
+    path = _seed(fake_api, {"platform_toolsets": ["web"]})
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/sophie/deskrpg/config", json={"enabledToolsets": ["web"]})
+    assert resp.status == 409
+    assert (await resp.json())["error"] == "config_unreadable"
+    assert not list(path.parent.glob("config.yaml.bak-*"))
+
+
+async def test_읽으면_enabledToolsets_와_disabledSkills_를_준다(aiohttp_client, fake_api):
+    _seed(fake_api, {"platform_toolsets": {"api_server": ["web"]}, "skills": {"disabled": ["pdf"]}})
+    client = await _client(aiohttp_client, fake_api)
+    body = await (await client.get("/p/sophie/deskrpg/config")).json()
+    assert body["enabledToolsets"] == ["web"]
+    assert body["disabledSkills"] == ["pdf"]
+
+
+async def test_저장한_적_없으면_enabledToolsets_는_null_이다(aiohttp_client, fake_api):
+    _seed(fake_api, {})
+    client = await _client(aiohttp_client, fake_api)
+    body = await (await client.get("/p/sophie/deskrpg/config")).json()
+    assert body["enabledToolsets"] is None
+    assert body["disabledSkills"] == []
+
+
+async def test_피커_심볼이_없는_빌드는_두_키를_거절한다(aiohttp_client, fake_api):
+    _seed(fake_api, {})
+    fake_api._get_platform_tools = None
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.put("/p/sophie/deskrpg/config", json={"enabledToolsets": ["web"]})).status == 400
