@@ -44,3 +44,21 @@ def test_중첩_깊이는_6_까지만_보고_중복은_한_번만():
 
 def test_문자열이_아닌_값과_빈_문자열은_무시한다():
     assert detect.candidate_paths([{"saved_to": 3, "output_path": "", "screenshot_path": "  /w/s.png  "}], producer=False) == ["/w/s.png"]
+
+
+def test_조상_키가_하위_트리_전체를_산출물_후보로_표시한다():
+    # 강한 키가 하위 트리의 모든 문자열 값을 태그한다
+    assert detect.candidate_paths([{"generated_image": {"url": "/w/x.png"}}], producer=False) == ["/w/x.png"]
+    assert detect.candidate_paths([{"artifact_file": {"path": "/w/a.pdf", "mime": "application/pdf"}}], producer=False) == ["/w/a.pdf", "application/pdf"]
+
+
+def test_약한_키는_producer일_때만_하위_트리를_태그한다():
+    # 약한 키 "result"는 producer=False일 때 태그하지 않으므로 하위의 "image", "src"도 매칭 안 됨
+    assert detect.candidate_paths([{"result": {"image": {"src": "/w/i.png"}}}], producer=False) == []
+    # producer=True일 때만 "result"가 태그되고 하위 문자열 "/w/i.png"가 후보가 됨
+    assert detect.candidate_paths([{"result": {"image": {"src": "/w/i.png"}}}], producer=True) == ["/w/i.png"]
+
+
+def test_태그는_리스트를_통해서도_전파된다():
+    # "files_created" 강한 키가 태그되면, 리스트 내 객체의 문자열 값도 후보가 됨
+    assert detect.candidate_paths([{"files_created": [{"name": "/w/n.md"}]}], producer=False) == ["/w/n.md"]

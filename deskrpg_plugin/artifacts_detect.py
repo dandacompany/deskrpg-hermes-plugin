@@ -2,6 +2,9 @@
 
 순수 함수. 파일시스템을 보지 않는다(그건 `artifacts_policy.resolve_source_path`). 본문 정규식 스캔은 하지
 않는다 — 데스크톱은 하지만 오탐이 많고, 여기서는 사용자가 `artifact_save` 도구를 갖고 있다.
+
+조상 키가 일치하면 그 전체 하위 트리가 산출물 후보로 태그된다. 예: {"generated_image": {"url": "/w/x.png"}}
+에서 "generated_image"(강한 키)가 일치하면 하위의 모든 문자열 값 "/w/x.png"가 후보가 된다.
 """
 
 import json
@@ -76,19 +79,29 @@ def candidate_paths(payloads: list, *, producer: bool) -> list:
             for item in value:
                 push(item)
 
-    def walk(node, depth):
+    def walk(node, depth, tagged=False):
         if depth > MAX_DEPTH:
             return
         if isinstance(node, dict):
             for key, value in node.items():
                 k = str(key)
-                if STRONG_KEY_RE.match(k) or (producer and WEAK_KEY_RE.match(k)):
+                matched = STRONG_KEY_RE.match(k) or (producer and WEAK_KEY_RE.match(k))
+                # 이 부분트리가 태그되어야 하는지 결정
+                new_tagged = tagged or matched
+
+                # 이 키가 일치하면 값을 push한다
+                if matched:
                     push(value)
+                # 태그된 부분트리에서 문자열 값이면 push한다
+                elif tagged and isinstance(value, str):
+                    push(value)
+
+                # 컨테이너 값으로 재귀, 갱신된 태그 상태로 넘긴다
                 if isinstance(value, (dict, list)):
-                    walk(value, depth + 1)
+                    walk(value, depth + 1, new_tagged)
         elif isinstance(node, list):
             for item in node:
-                walk(item, depth + 1)
+                walk(item, depth + 1, tagged)
 
     for payload in payloads:
         walk(payload, 0)
