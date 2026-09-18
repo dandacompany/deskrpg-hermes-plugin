@@ -6,7 +6,8 @@ import types
 import pytest
 
 from deskrpg_plugin import artifacts_store as store
-from deskrpg_plugin import events
+from deskrpg_plugin import artifacts_hook, events
+from deskrpg_plugin.contract_fields import EVENT_KINDS, PLUGIN_EVENT_KEYS, PLUGIN_EVENT_REQUIRED
 from tests.fakes_cron import install_fake_cron
 from tests.fakes_events import events_client, install_fake_events
 
@@ -17,9 +18,9 @@ def api(tmp_path):
     return types.SimpleNamespace(get_hermes_home=lambda: str(home))
 
 
-def _emit(api, kind, ts, **payload):
+def _emit(api, event_kind, ts, **payload):
     with contextlib.closing(store.open_registry(api)) as conn, conn:
-        store._append_event(conn, ts, kind, payload)
+        store._append_event(conn, ts, event_kind, payload)
 
 
 def test_읽기는_after_id_이후를_오름차순으로_주고_모양이_계약대로다(api):
@@ -118,3 +119,33 @@ async def test_include_artifacts_면_a_없는_구커서는_지금_위치에서_�
     body = await (await client.get(f"/deskrpg/events?board=default&include=artifacts&cursor={_cursor()}")).json()
     assert body["events"] == []
     assert events.decode_cursor(body["cursor"])["a"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 계약 — kind 집합과 키 집합(I1), null 키를 내지 않는다
+# ---------------------------------------------------------------------------
+
+
+def test_아티팩트_사건_다섯_kind_가_계약_kind_와_키_집합을_지킨다(api):
+    _emit(api, "artifact.created", 1, artifact_id="x", version=1, kind="document", title="t", profile="sophie",
+          source_kind="kanban", board="default", task_id="t1", captured_via="tool")
+    _emit(api, "artifact.versioned", 2, artifact_id="x", version=2, kind="document", title="t", profile="sophie",
+          source_kind="chat", board=None, task_id=None, captured_via="hook")
+    _emit(api, "artifact.deleted", 3, artifact_id="x", deleted_by="human:u")
+    _emit(api, "artifact.delete_partial", 4, artifact_id="x", failed_paths_count=1)
+    artifacts_hook.record_capture_failure(api, tool_name="write_file", reason="OSError")
+    rows = [events.public_event(r) for r in events.read_artifact_events(api, after_id=0, limit=10)]
+    assert [r["kind"] for r in rows] == [
+        "artifact.created", "artifact.versioned", "artifact.deleted", "artifact.delete_partial",
+        "artifact.capture_failed",
+    ]
+    for ev in rows:
+        assert PLUGIN_EVENT_REQUIRED <= set(ev) <= PLUGIN_EVENT_KEYS, ev
+        assert ev["kind"] in EVENT_KINDS
+
+
+def test_capture_failed_는_artifact_id_를_null_로_내지_않는다(api):
+    artifacts_hook.record_capture_failure(api, tool_name="write_file", reason="OSError")
+    (ev,) = [events.public_event(r) for r in events.read_artifact_events(api, after_id=0, limit=10)]
+    assert "artifact_id" not in ev
+    assert None not in ev.values()

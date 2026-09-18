@@ -650,9 +650,10 @@ def read_artifact_events(api, after_id: int, limit: int) -> list:
         payload = json.loads(row["payload"]) if row["payload"] else {}
         event = {
             "id": f"a:{row['id']}", "ts": int(row["ts"]), "kind": row["kind"], "payload": payload,
-            "artifact_id": payload.get("artifact_id"), "_src": "a", "_pos": (int(row["id"]),),
+            "_src": "a", "_pos": (int(row["id"]),),
         }
-        for key in ("profile", "board", "task_id"):
+        # 값이 있는 선택 키만 싣는다 — capture_failed 처럼 아티팩트가 없는 사건에 null 키를 내지 않는다.
+        for key in ("artifact_id", "profile", "board", "task_id"):
             if payload.get(key) is not None:
                 event[key] = payload[key]
         out.append(event)

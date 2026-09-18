@@ -162,10 +162,16 @@ EVENT_KINDS = frozenset({
     "task.link",
     "cron.run.started",
     "cron.run.finished",
+    # 아티팩트 출처 — `include=artifacts` 로 옵트인했을 때만 실린다(R17).
+    "artifact.created",
+    "artifact.versioned",
+    "artifact.deleted",
+    "artifact.capture_failed",
+    "artifact.delete_partial",
 })
 
 PLUGIN_EVENT_REQUIRED = frozenset({"id", "ts", "kind", "payload"})
-PLUGIN_EVENT_OPTIONAL = frozenset({"board", "task_id", "profile", "job_id", "run_id"})
+PLUGIN_EVENT_OPTIONAL = frozenset({"board", "task_id", "profile", "job_id", "run_id", "artifact_id"})
 PLUGIN_EVENT_KEYS = PLUGIN_EVENT_REQUIRED | PLUGIN_EVENT_OPTIONAL
 
 EVENTS_PAGE_KEYS = frozenset({"events", "cursor", "has_more"})
