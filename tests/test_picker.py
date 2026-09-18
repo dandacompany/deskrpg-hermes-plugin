@@ -123,3 +123,44 @@ async def test_망가진_config_의_비밀_값은_409_본문과_로그에_없다
             assert (await resp.json())["error"] == "config_unreadable"
             assert secret not in text
     assert secret not in caplog.text
+
+
+async def test_구독_기능은_한_번만_계산해_모든_툴셋_판정에_넘긴다(aiohttp_client, fake_api):
+    _seed(fake_api, {})
+    feature_calls, seen = [], []
+    sentinel = object()
+
+    def features(cfg):
+        feature_calls.append(str(fake_api.get_hermes_home()))
+        return sentinel
+
+    def has_keys(name, cfg=None, *, features=None):
+        seen.append(features)
+        return True
+
+    fake_api.get_nous_subscription_features = features
+    fake_api._toolset_has_keys = has_keys
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.get("/p/sophie/deskrpg/toolsets")).status == 200
+    assert feature_calls == [str(fake_api.get_profile_dir("sophie"))]  # 프로필 홈 스코프 안에서 한 번
+    assert seen and all(f is sentinel for f in seen)
+
+
+async def test_구독_기능_계산이_던지면_툴셋별_판정으로_물러선다(aiohttp_client, fake_api):
+    _seed(fake_api, {})
+    seen = []
+
+    def boom(cfg):
+        raise RuntimeError("sk-FEATURES-LEAK")
+
+    def has_keys(name, cfg=None, *, features=None):
+        seen.append(features)
+        return True
+
+    fake_api.get_nous_subscription_features = boom
+    fake_api._toolset_has_keys = has_keys
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.get("/p/sophie/deskrpg/toolsets")
+    assert resp.status == 200
+    assert "sk-FEATURES-LEAK" not in await resp.text()
+    assert seen and all(f is None for f in seen)

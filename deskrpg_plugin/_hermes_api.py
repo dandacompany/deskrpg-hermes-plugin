@@ -174,6 +174,8 @@ OPTIONAL_SPEC = (
             "_get_plugin_toolset_keys",
         ),
     ),
+    # 툴셋 목록이 구독 기능 판정을 한 번만 계산하는 데 쓴다. 없으면 툴셋마다 Hermes 가 다시 계산한다.
+    ("hermes_cli.nous_subscription", ("get_nous_subscription_features",)),
     ("tools.skills_tool", ("_find_all_skills", "_sort_skills")),
     ("agent.skill_utils", ("ESSENTIAL_SKILLS", "parse_config_string_list")),
     # `_plugin_aliases` 는 복제가 설정의 프로바이더 id 를 Hermes 와 같이 정식 id 로 푸는 데 쓴다.

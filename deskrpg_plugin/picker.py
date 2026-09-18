@@ -51,14 +51,32 @@ def _configurable(api):
     ]
 
 
+def _features_kwargs(api, cfg) -> dict:
+    """구독 기능 판정을 **한 번** 계산해 모든 `_toolset_has_keys` 에 넘긴다.
+
+    Hermes 의 `/v1/toolsets`(gateway/platforms/api_server.py:2678-2689)와 같다. 넘기지 않으면 툴셋마다
+    `get_nous_subscription_features` 를 다시 불러(web·tts·x_search·spotify … 10개) 첫 화면이 수 초 걸린다
+    (2026-09-19 실측 2.4초 → 보고서 참조). 계산이 실패하면 예전처럼 툴셋별 판정으로 물러선다.
+    """
+    fn = getattr(api, "get_nous_subscription_features", None)
+    if fn is None:
+        return {}
+    try:
+        return {"features": fn(cfg)}
+    except Exception as exc:  # noqa: BLE001 — 목록 전체를 죽이지 않는다
+        logger.warning("[deskrpg] 구독 기능 판정 실패: %s", type(exc).__name__)
+        return {}
+
+
 def toolset_rows(api, home) -> list[dict]:
     cfg = _load_config(home)
     with _home_scope(api, home):
         enabled = api._get_platform_tools(cfg, PLATFORM, include_default_mcp_servers=False)
+        extra = _features_kwargs(api, cfg)
         rows = []
         for name, label, description in _configurable(api):
             try:
-                configured = bool(api._toolset_has_keys(name, cfg))
+                configured = bool(api._toolset_has_keys(name, cfg, **extra))
             except Exception as exc:  # noqa: BLE001 — 한 툴셋의 판정 실패가 목록을 죽이면 안 된다
                 logger.warning("[deskrpg] 툴셋 키 판정 실패: %s — %s", name, type(exc).__name__)
                 configured = None
