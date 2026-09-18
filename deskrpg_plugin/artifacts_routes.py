@@ -1,0 +1,296 @@
+"""`/deskrpg/artifacts/*` — 조회·바이트·사람 편집·삭제. 전부 소유자 키(호스트 공유 자원).
+
+바이트는 `stored_path` 가 `artifacts_root` 아래인지 **다시** 확인하고 낸다(`kanban_files.py` 와 같은 방어).
+Range 는 단일 범위만 받는다 — 미디어 탐색에 충분하고, 다중 범위는 multipart 응답이 필요해 v1 범위 밖이다.
+
+`content_handler` 의 파일 열기·seek·읽기는 이벤트 루프 스레드에서 돌지 않는다 — sqlite 조회와 마찬가지로
+`run_blocking` 으로 워커 스레드에 보낸다. 스트리밍 자체는 유지한다(파일 전체를 메모리에 올리지 않는다).
+"""
+
+import base64
+import contextlib
+import json
+import time
+import urllib.parse
+
+from aiohttp import web
+
+from . import artifacts_policy as policy
+from . import artifacts_store as store
+from .artifacts_tool import artifact_max_bytes
+from .common import RequestError, guarded, log_event, read_json_object, run_blocking
+from .contract_fields import ARTIFACT_SUMMARY_KEYS, ARTIFACT_VERSION_KEYS
+from .kanban_common import project
+
+USER_HEADER = "X-DeskRPG-User"
+LIMIT_DEFAULT, LIMIT_MAX = 50, 200
+UPLOAD_CHUNK = 1024 * 1024
+_ALLOWED_EDIT_KEYS = {"content", "filename", "note"}
+
+
+def _user(request) -> str:
+    raw = (request.headers.get(USER_HEADER) or "").strip()[:128]
+    return f"human:{raw or 'unknown'}"
+
+
+def _summary(api, row, versions) -> dict:
+    head = versions[-1] if versions else None
+    d = {k: row[k] for k in row.keys() if k not in ("title_norm", "deleted_at", "deleted_by")}
+    if head is not None:
+        d.update(filename=head["filename"], mime=head["mime"], size=head["size"], sha256=head["sha256"])
+        path = store.blob_path_for(api, head)
+        if path is None or not path.is_file():
+            d["missing"] = True
+    return project(d, ARTIFACT_SUMMARY_KEYS)
+
+
+def _version(row) -> dict:
+    return project({k: row[k] for k in row.keys()}, ARTIFACT_VERSION_KEYS)
+
+
+def _live(conn, artifact_id: str):
+    row = store.get_artifact(conn, artifact_id)
+    if row is None:
+        raise RequestError(404, "artifact_not_found", artifact_id)
+    if row["deleted_at"] is not None:
+        raise RequestError(410, "artifact_deleted", artifact_id)
+    return row
+
+
+def _cursor_encode(row) -> str:
+    return base64.urlsafe_b64encode(json.dumps([row["updated_at"], row["id"]]).encode()).decode().rstrip("=")
+
+
+def _cursor_decode(token):
+    if not token:
+        return None
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        value = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+        return (int(value[0]), str(value[1]))
+    except (ValueError, TypeError, IndexError):
+        raise RequestError(400, "unknown_cursor")
+
+
+def list_handler(api):
+    @guarded
+    async def handler(request):
+        q = request.query
+        limit = max(1, min(int(q.get("limit") or LIMIT_DEFAULT), LIMIT_MAX)) if (q.get("limit") or "1").isdigit() else LIMIT_DEFAULT
+        kind, source = q.get("kind") or None, q.get("source") or None
+        if kind and kind not in policy.KINDS:
+            raise RequestError(400, "artifact_bad_kind", kind)
+        if source and source not in ("chat", "kanban", "cron"):
+            raise RequestError(400, "invalid_field", "source")
+        profiles = [p for p in (q.get("profiles") or "").split(",") if p] or None
+        before = _cursor_decode(q.get("cursor"))
+
+        def work():
+            with contextlib.closing(store.open_registry(api)) as conn:
+                rows = store.list_artifacts(conn, profiles=profiles, board=q.get("board") or None, kind=kind,
+                                            source=source, q=q.get("q") or None, before=before, limit=limit + 1)
+                page, has_more = rows[:limit], len(rows) > limit
+                items = [_summary(api, r, store.list_versions(conn, r["id"])) for r in page]
+                cursor = _cursor_encode(page[-1]) if page else (q.get("cursor") or "")
+                return {"artifacts": items, "cursor": cursor, "has_more": has_more}
+
+        return web.json_response(await run_blocking(work))
+
+    return handler
+
+
+def get_handler(api):
+    @guarded
+    async def handler(request):
+        artifact_id = request.match_info["artifact_id"]
+
+        def work():
+            with contextlib.closing(store.open_registry(api)) as conn:
+                row = _live(conn, artifact_id)
+                versions = store.list_versions(conn, artifact_id)
+                return {"artifact": _summary(api, row, versions), "versions": [_version(v) for v in versions]}
+
+        return web.json_response(await run_blocking(work))
+
+    return handler
+
+
+def _disposition(kind: str, filename: str) -> str:
+    ascii_name = filename.encode("ascii", "replace").decode("ascii").replace('"', "_") or "artifact"
+    return f"{kind}; filename=\"{ascii_name}\"; filename*=UTF-8''{urllib.parse.quote(filename, safe='')}"
+
+
+def _parse_range(header: str, size: int):
+    """`bytes=a-b` / `bytes=a-` / `bytes=-n` 단일 범위. 못 만족하면 416."""
+    if not header.startswith("bytes="):
+        raise RequestError(416, "range_not_satisfiable")
+    spec = header[6:]
+    if "," in spec:
+        raise RequestError(416, "range_not_satisfiable", "단일 범위만 받는다")
+    start_s, _, end_s = spec.partition("-")
+    try:
+        if start_s == "":
+            n = int(end_s)
+            start, end = max(size - n, 0), size - 1
+        else:
+            start = int(start_s)
+            end = int(end_s) if end_s else size - 1
+    except ValueError:
+        raise RequestError(416, "range_not_satisfiable")
+    if start >= size or end < start:
+        raise RequestError(416, "range_not_satisfiable")
+    return start, min(end, size - 1)
+
+
+def _open_and_seek(path, start: int):
+    """`path.open("rb")` + `seek` — 워커 스레드에서만 부른다(R14: 이벤트 루프에 블로킹 금지)."""
+    fh = path.open("rb")
+    fh.seek(start)
+    return fh
+
+
+def content_handler(api):
+    @guarded
+    async def handler(request):
+        artifact_id, v = request.match_info["artifact_id"], request.match_info["v"]
+        if not v.isdigit():
+            raise RequestError(400, "invalid_field", "v")
+
+        def work():
+            with contextlib.closing(store.open_registry(api)) as conn:
+                _live(conn, artifact_id)
+                row = conn.execute("SELECT * FROM artifact_versions WHERE artifact_id=? AND version=?",
+                                   (artifact_id, int(v))).fetchone()
+                if row is None:
+                    raise RequestError(404, "artifact_version_not_found", v)
+                path = store.blob_path_for(api, row)
+                if path is None:
+                    raise RequestError(403, "artifact_path_outside_root", artifact_id)
+                if not path.is_file():
+                    raise RequestError(410, "artifact_blob_missing", artifact_id)
+                return row, path, path.stat().st_size
+
+        row, path, size = await run_blocking(work)
+        disposition = "attachment" if request.query.get("download") == "1" else "inline"
+        headers = {"Content-Disposition": _disposition(disposition, row["filename"]), "Accept-Ranges": "bytes"}
+        rng = request.headers.get("Range")
+        start, end, status = 0, size - 1, 200
+        if rng:
+            start, end = _parse_range(rng, size)
+            status = 206
+            headers["Content-Range"] = f"bytes {start}-{end}/{size}"
+        resp = web.StreamResponse(status=status, headers=headers)
+        resp.content_type = row["mime"] or "application/octet-stream"
+        resp.content_length = end - start + 1
+        await resp.prepare(request)
+        fh = await run_blocking(_open_and_seek, path, start)
+        try:
+            remaining = end - start + 1
+            while remaining > 0:
+                chunk = await run_blocking(fh.read, min(UPLOAD_CHUNK, remaining))
+                if not chunk:
+                    break
+                await resp.write(chunk)
+                remaining -= len(chunk)
+        finally:
+            await run_blocking(fh.close)
+        await resp.write_eof()
+        return resp
+
+    return handler
+
+
+async def _read_edit_body(request):
+    """JSON `{content, filename, note}` 또는 multipart `file`+`note` → (data, filename, note)."""
+    if request.content_type.startswith("multipart/"):
+        reader = await request.multipart()
+        data, filename, note = None, None, None
+        async for part in reader:
+            if part.name == "file":
+                filename = part.filename or "artifact"
+                buf = bytearray()
+                while True:
+                    chunk = await part.read_chunk(UPLOAD_CHUNK)
+                    if not chunk:
+                        break
+                    buf.extend(chunk)
+                data = bytes(buf)
+            elif part.name == "note":
+                note = (await part.text())[:400]
+        if data is None:
+            raise RequestError(400, "missing_field", "file")
+        return data, filename, note
+    body = await read_json_object(request)
+    unknown = set(body) - _ALLOWED_EDIT_KEYS
+    if unknown:
+        raise RequestError(400, "unsupported_field", sorted(unknown)[0])
+    content, filename = body.get("content"), body.get("filename")
+    if not isinstance(content, str) or not isinstance(filename, str) or not filename.strip():
+        raise RequestError(400, "missing_field", "content, filename")
+    note = body.get("note")
+    return content.encode("utf-8"), filename.strip(), (note[:400] if isinstance(note, str) else None)
+
+
+def add_version_handler(api):
+    @guarded
+    async def handler(request):
+        artifact_id = request.match_info["artifact_id"]
+        data, filename, note = await _read_edit_body(request)
+        limit = artifact_max_bytes(api)
+        user = _user(request)
+
+        def work():
+            with contextlib.closing(store.open_registry(api)) as conn:
+                row = _live(conn, artifact_id)
+                meta = store.ArtifactMeta(
+                    kind=row["kind"], title=row["title"], summary=row["summary"] or "", filename=filename,
+                    mime=policy.mime_for_filename(filename), profile=row["profile"], source_kind=row["source_kind"],
+                    session_id=row["session_id"], created_by=user, captured_via="edit", board=row["board"],
+                    task_id=row["task_id"], job_id=row["job_id"], run_id=row["run_id"], note=note, supersedes=artifact_id,
+                )
+                try:
+                    out = store.store_artifact_version(api, conn, meta=meta, data=data, max_bytes=limit)
+                except store.ArtifactTooLarge:
+                    raise RequestError(413, "artifact_too_large", str(limit))
+                version = conn.execute("SELECT * FROM artifact_versions WHERE artifact_id=? AND version=?",
+                                       (out.artifact_id, out.version)).fetchone()
+                return _version(version)
+
+        version = await run_blocking(work)
+        log_event("artifact.edit", artifact_id=artifact_id, version=version["version"])
+        return web.json_response({"version": version}, status=201)
+
+    return handler
+
+
+def rework_handler(api):
+    @guarded
+    async def handler(request):
+        # 3번 스펙(수정 루프)에서 구현한다. 라우트는 계약 자리를 잡아 두기 위해 지금 둔다(결정 0005 의 견적 501 과 같은 이유).
+        raise RequestError(501, "not_implemented", "rework 는 아직 구현되지 않았다")
+
+    return handler
+
+
+def delete_handler(api):
+    @guarded
+    async def handler(request):
+        artifact_id = request.match_info["artifact_id"]
+        user = _user(request)
+
+        def work():
+            with contextlib.closing(store.open_registry(api)) as conn:
+                _live(conn, artifact_id)
+                return store.soft_delete(api, conn, artifact_id, deleted_by=user, now=int(time.time()))
+
+        failed = await run_blocking(work)
+        log_event("artifact.delete", artifact_id=artifact_id, failed_paths=len(failed))
+        if failed:
+            def note():
+                with contextlib.closing(store.open_registry(api)) as conn, conn:
+                    store._append_event(conn, int(time.time()), "artifact.delete_partial",
+                                        {"artifact_id": artifact_id, "failed_paths_count": len(failed)})
+            await run_blocking(note)
+        return web.json_response({"ok": True})
+
+    return handler

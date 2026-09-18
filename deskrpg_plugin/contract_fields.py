@@ -12,12 +12,14 @@ TS 타입을 파이썬 쪽에 그대로 베낀 것이다 — 핸들러가 응답
 # 공통 — /deskrpg/info
 # ---------------------------------------------------------------------------
 
-PLUGIN_INFO_REQUIRED = frozenset({"plugin", "version", "capabilities", "timezone", "kanban", "dashboard_url"})
+PLUGIN_INFO_REQUIRED = frozenset({
+    "plugin", "version", "capabilities", "timezone", "kanban", "dashboard_url", "artifact_max_bytes",
+})
 # `routes` 는 0.1.0 부터 내던 필드라 유지한다. 계약 타입에는 없지만 해가 없다.
 PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | frozenset({"routes"})
 PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attachment_max_bytes"})
 # 항상 있는 것. 스웜처럼 Hermes 빌드에 따라 갈리는 것은 `capabilities()` 가 붙인다.
-CAPABILITIES = ("kanban", "cron", "events")
+CAPABILITIES = ("kanban", "cron", "events", "artifacts")
 
 
 def capabilities(api) -> tuple[str, ...]:
@@ -243,3 +245,18 @@ ENVELOPES = {
     "accepted": frozenset({"accepted"}),
     "error": frozenset({"error", "detail"}),
 }
+
+# ---------------------------------------------------------------------------
+# 아티팩트 (0.8.0)
+# ---------------------------------------------------------------------------
+ARTIFACT_KINDS = ("document", "image", "media", "web", "react", "data", "file")
+ARTIFACT_SOURCES = ("chat", "kanban", "cron")
+ARTIFACT_SUMMARY_REQUIRED = frozenset({
+    "id", "kind", "title", "profile", "source_kind", "session_id", "current_version",
+    "filename", "mime", "size", "sha256", "created_at", "updated_at",
+})
+ARTIFACT_SUMMARY_OPTIONAL = frozenset({"summary", "board", "task_id", "job_id", "run_id", "missing"})
+ARTIFACT_SUMMARY_KEYS = ARTIFACT_SUMMARY_REQUIRED | ARTIFACT_SUMMARY_OPTIONAL
+ARTIFACT_VERSION_REQUIRED = frozenset({"version", "filename", "mime", "size", "sha256", "created_by", "captured_via", "created_at"})
+ARTIFACT_VERSION_OPTIONAL = frozenset({"origin_path", "note"})
+ARTIFACT_VERSION_KEYS = ARTIFACT_VERSION_REQUIRED | ARTIFACT_VERSION_OPTIONAL

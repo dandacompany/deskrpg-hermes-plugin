@@ -29,7 +29,8 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
     assert body["plugin"] == "deskrpg"
     assert body["version"] == routes.PLUGIN_VERSION
     # fake_api 는 스웜 심볼을 갖춘 빌드를 흉내 낸다 — capability 에 "swarm" 이 붙는다.
-    assert body["capabilities"] == ["kanban", "cron", "events", "swarm"]
+    assert body["capabilities"] == ["kanban", "cron", "events", "artifacts", "swarm"]
+    assert "artifacts" in body["capabilities"] and isinstance(body["artifact_max_bytes"], int)
     assert body["timezone"] == "Asia/Seoul"
     assert set(body["kanban"]) == PLUGIN_INFO_KANBAN_KEYS
     assert body["kanban"] == {

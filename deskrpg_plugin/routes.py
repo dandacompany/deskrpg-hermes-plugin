@@ -20,6 +20,8 @@ from . import kanban_ops as _kanban_ops
 from . import kanban_swarm as _kanban_swarm
 from . import cron as _cron
 from . import events as _events
+from . import artifacts_routes as _artifacts_routes
+from .artifacts_tool import artifact_max_bytes as _artifact_max_bytes
 
 
 def _read_plugin_version() -> str:
@@ -102,6 +104,13 @@ ROUTES = [
     ("GET", "/p/{profile}/deskrpg/cron/delivery-targets", "cron_delivery_targets", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/cron/blueprints", "cron_blueprints", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/cron/blueprints/instantiate", "cron_instantiate_blueprint", Scope.PROFILE),
+    # ---- 0.8.0 아티팩트 (소유자 키 — 호스트 공유 저장소) --------------------------------
+    ("GET", "/deskrpg/artifacts", "artifacts_list", Scope.DEFAULT),
+    ("GET", "/deskrpg/artifacts/{artifact_id}", "artifacts_get", Scope.DEFAULT),
+    ("GET", "/deskrpg/artifacts/{artifact_id}/versions/{v}/content", "artifacts_content", Scope.DEFAULT),
+    ("POST", "/deskrpg/artifacts/{artifact_id}/versions", "artifacts_add_version", Scope.DEFAULT),
+    ("POST", "/deskrpg/artifacts/{artifact_id}/rework", "artifacts_rework", Scope.DEFAULT),
+    ("DELETE", "/deskrpg/artifacts/{artifact_id}", "artifacts_delete", Scope.DEFAULT),
 ]
 
 # Hermes 의 프로필 프리픽스 미들웨어는 `request.match_info.get("profile")` 로
@@ -180,6 +189,13 @@ _HANDLERS = {
     "cron_delivery_targets": lambda api: _cron.delivery_targets_handler(api),
     "cron_blueprints": lambda api: _cron.blueprints_handler(api),
     "cron_instantiate_blueprint": lambda api: _cron.instantiate_blueprint_handler(api),
+    # 아티팩트
+    "artifacts_list": lambda api: _artifacts_routes.list_handler(api),
+    "artifacts_get": lambda api: _artifacts_routes.get_handler(api),
+    "artifacts_content": lambda api: _artifacts_routes.content_handler(api),
+    "artifacts_add_version": lambda api: _artifacts_routes.add_version_handler(api),
+    "artifacts_rework": lambda api: _artifacts_routes.rework_handler(api),
+    "artifacts_delete": lambda api: _artifacts_routes.delete_handler(api),
 }
 
 
@@ -319,6 +335,7 @@ def _make_info(api):
                 "capabilities": list(capabilities(api)),
                 "timezone": _info_timezone(api),
                 "dashboard_url": _info_dashboard_url(api),
+                "artifact_max_bytes": _artifact_max_bytes(api),
                 "kanban": {
                     "dispatcher_present": _info_dispatcher_present(api),
                     "attachments": True,

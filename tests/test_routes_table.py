@@ -67,21 +67,28 @@ EXPECTED_ROUTES = {
     ("GET", "/p/{profile}/deskrpg/cron/delivery-targets", _PROFILE),
     ("GET", "/p/{profile}/deskrpg/cron/blueprints", _PROFILE),
     ("POST", "/p/{profile}/deskrpg/cron/blueprints/instantiate", _PROFILE),
+    # §8 아티팩트 (소유자 키)
+    ("GET", "/deskrpg/artifacts", _OWNER),
+    ("GET", "/deskrpg/artifacts/{artifact_id}", _OWNER),
+    ("GET", "/deskrpg/artifacts/{artifact_id}/versions/{v}/content", _OWNER),
+    ("POST", "/deskrpg/artifacts/{artifact_id}/versions", _OWNER),
+    ("POST", "/deskrpg/artifacts/{artifact_id}/rework", _OWNER),
+    ("DELETE", "/deskrpg/artifacts/{artifact_id}", _OWNER),
 }
 
 
-def test_라우트_테이블이_스펙의_마흔다섯_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 45
-    assert len(routes.ROUTES) == 45, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+def test_라우트_테이블이_스펙의_쉰한_개와_스코프까지_정확히_같다():
+    assert len(EXPECTED_ROUTES) == 51
+    assert len(routes.ROUTES) == 51, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
-def test_소유자_라우트는_28_개_프로필_라우트는_17_개다():
+def test_소유자_라우트는_34_개_프로필_라우트는_17_개다():
     by_scope = {}
     for _m, _p, _h, scope in routes.ROUTES:
         by_scope[scope] = by_scope.get(scope, 0) + 1
-    # 소유자: 기존 4 + 칸반 21 + 스웜 2 + 사건 1 = 28 · 프로필: 기존 5 + 크론 12 = 17. 계산을 테스트 안에 남긴다.
-    assert by_scope == {routes.Scope.DEFAULT: 4 + 21 + 2 + 1, routes.Scope.PROFILE: 5 + 12}
+    # 소유자: 기존 4 + 칸반 21 + 스웜 2 + 사건 1 + 아티팩트 6 = 34 · 프로필: 기존 5 + 크론 12 = 17.
+    assert by_scope == {routes.Scope.DEFAULT: 4 + 21 + 2 + 1 + 6, routes.Scope.PROFILE: 5 + 12}
 
 
 def test_고정_세그먼트_카드_라우트가_action_와일드카드보다_앞에_있다():
