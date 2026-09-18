@@ -204,6 +204,7 @@ class ArtifactMeta:
     origin_path: str | None = None
     note: str | None = None
     supersedes: str | None = None
+    identity: str | None = None  # 있으면 정체성 키(제목 대신). 링크는 정리한 URL 을 넣는다(0.8.3)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -212,6 +213,10 @@ class StoreResult:
     version: int
     deduped: bool
     created: bool
+
+
+def _identity_key(meta: ArtifactMeta) -> str:
+    return meta.identity if meta.identity else normalize_title(meta.title)
 
 
 def _safe_filename(name: str) -> str:
@@ -245,7 +250,7 @@ def _resolve_target(conn, meta: ArtifactMeta) -> str | None:
     row = conn.execute(
         "SELECT id FROM artifacts WHERE session_id=? AND kind=? AND title_norm=? AND deleted_at IS NULL "
         "ORDER BY updated_at DESC LIMIT 1",
-        (meta.session_id, meta.kind, normalize_title(meta.title)),
+        (meta.session_id, meta.kind, _identity_key(meta)),
     ).fetchone()
     return row["id"] if row else None
 
@@ -290,7 +295,7 @@ def store_artifact_version(api, conn, *, meta: ArtifactMeta, data: bytes, max_by
                     "INSERT INTO artifacts (id, kind, title, title_norm, summary, profile, source_kind, session_id,"
                     " board, task_id, job_id, run_id, current_version, created_at, updated_at)"
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                    (artifact_id, meta.kind, meta.title, normalize_title(meta.title), meta.summary, meta.profile,
+                    (artifact_id, meta.kind, meta.title, _identity_key(meta), meta.summary, meta.profile,
                      meta.source_kind, meta.session_id, meta.board, meta.task_id, meta.job_id, meta.run_id,
                      version, now, now),
                 )

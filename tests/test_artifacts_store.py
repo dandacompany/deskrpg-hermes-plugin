@@ -357,3 +357,35 @@ def test_스키마_1_레지스트리는_열면_pruned_at_열이_더해지고_데
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
         rows = store.list_versions(conn, "a1")
         assert len(rows) == 1 and rows[0]["pruned_at"] is None
+
+
+# ---------------------------------------------------------------------------
+# 링크 정체성 (0.8.3)
+# ---------------------------------------------------------------------------
+
+
+def _link(url, title="a", session_id="s1"):
+    return _meta(kind="link", title=title, summary=url, filename=f"{title}.url", mime="text/uri-list",
+                 session_id=session_id, identity=url)
+
+
+def test_링크는_제목이_아니라_URL_로_같은지_판정한다(api):
+    with contextlib.closing(store.open_registry(api)) as conn:
+        a = store.store_artifact_version(api, conn, meta=_link("https://x.io/a/index.html", "index.html"),
+                                         data=b"https://x.io/a/index.html\n", max_bytes=100)
+        b = store.store_artifact_version(api, conn, meta=_link("https://x.io/b/index.html", "index.html"),
+                                         data=b"https://x.io/b/index.html\n", max_bytes=100)
+        again = store.store_artifact_version(api, conn, meta=_link("https://x.io/a/index.html", "다른 제목"),
+                                             data=b"https://x.io/a/index.html\n", max_bytes=100)
+        other = store.store_artifact_version(api, conn, meta=_link("https://x.io/a/index.html", session_id="s2"),
+                                             data=b"https://x.io/a/index.html\n", max_bytes=100)
+    assert a.artifact_id != b.artifact_id
+    assert again.artifact_id == a.artifact_id and again.deduped and again.version == 1
+    assert other.artifact_id not in (a.artifact_id, b.artifact_id)
+
+
+def test_identity_가_없으면_기존대로_제목으로_판정한다(api):
+    with contextlib.closing(store.open_registry(api)) as conn:
+        a = store.store_artifact_version(api, conn, meta=_meta(), data=b"1", max_bytes=100)
+        b = store.store_artifact_version(api, conn, meta=_meta(title="주간  보고서!"), data=b"2", max_bytes=100)
+    assert a.artifact_id == b.artifact_id and b.version == 2

@@ -16,7 +16,7 @@ from pathlib import Path
 
 from . import artifacts_store as store
 
-KINDS = ("document", "image", "media", "web", "react", "data", "file")
+KINDS = ("document", "image", "media", "web", "react", "data", "file", "link")
 
 _SENSITIVE_BASENAMES = frozenset({
     "auth.json", "auth.lock", "credentials", "config.yaml", ".anthropic_oauth.json",
@@ -35,7 +35,7 @@ _KIND_BY_EXT = {
     **dict.fromkeys((".csv", ".json", ".jsonl"), "data"),
 }
 HOOK_EXTENSIONS = frozenset(_KIND_BY_EXT) | {".zip", ".tar", ".gz"}
-_TEXT_MIME = {".md": "text/markdown", ".tsx": "text/plain", ".jsx": "text/plain", ".jsonl": "application/x-ndjson"}
+_TEXT_MIME = {".md": "text/markdown", ".tsx": "text/plain", ".jsx": "text/plain", ".jsonl": "application/x-ndjson", ".url": "text/uri-list"}
 
 
 class PolicyError(Exception):
@@ -137,6 +137,8 @@ def mime_for_filename(name: str) -> str:
 def validate_completeness(kind: str, *, filename: str, text, from_path: bool) -> None:
     if kind not in KINDS:
         raise PolicyError("artifact_bad_kind", f"kind 는 {', '.join(KINDS)} 중 하나다")
+    if kind == "link":
+        raise PolicyError("artifact_incomplete", "link 는 path·content 가 아니라 url 인자로 저장한다")
     suffix = Path(filename).suffix.lower()
     body = (text or "").lower()
     if kind == "web" and "<html" not in body and "<!doctype html" not in body:
