@@ -70,7 +70,10 @@ def _summary(api, row, versions) -> dict:
 
 
 def _version(row) -> dict:
-    return project({k: row[k] for k in row.keys()}, ARTIFACT_VERSION_KEYS)
+    d = {k: row[k] for k in row.keys()}
+    if d.get("pruned_at") is None:
+        d.pop("pruned_at", None)  # 정리된 버전에만 싣는다
+    return project(d, ARTIFACT_VERSION_KEYS)
 
 
 def _live(conn, artifact_id: str):
@@ -207,6 +210,8 @@ def content_handler(api):
                                    (artifact_id, int(v))).fetchone()
                 if row is None:
                     raise RequestError(404, "artifact_version_not_found", v)
+                if row["pruned_at"] is not None:
+                    raise RequestError(404, "artifact_version_pruned", v)
                 path = store.blob_path_for(api, row)
                 if path is None:
                     raise RequestError(403, "artifact_path_outside_root", artifact_id)

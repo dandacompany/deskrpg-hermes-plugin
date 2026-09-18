@@ -326,3 +326,20 @@ async def test_열기를_기다리다_취소되면_늦게_열린_핸들도_닫�
             break
         await asyncio.sleep(0.01)
     assert opened and opened[0].closed
+
+
+async def test_정리된_버전의_content_는_404_artifact_version_pruned_이고_상세에_pruned_at_이_보인다(client, api, monkeypatch):
+    monkeypatch.setenv("HERMES_DESKRPG_ARTIFACT_MAX_VERSIONS", "1")
+    with contextlib.closing(store.open_registry(api)) as conn:
+        meta = store.ArtifactMeta(kind="document", title="보고서", summary="", filename="r.md", mime="text/markdown",
+                                  profile="sophie", source_kind="chat", session_id="s1", created_by="agent:sophie",
+                                  captured_via="tool")
+        store.store_artifact_version(api, conn, meta=meta, data=b"one", max_bytes=100)
+        out = store.store_artifact_version(api, conn, meta=meta, data=b"two", max_bytes=100)
+    resp = await client.get(f"/deskrpg/artifacts/{out.artifact_id}/versions/1/content")
+    assert resp.status == 404 and (await resp.json())["error"] == "artifact_version_pruned"
+    assert (await client.get(f"/deskrpg/artifacts/{out.artifact_id}/versions/2/content")).status == 200
+    body = await (await client.get(f"/deskrpg/artifacts/{out.artifact_id}")).json()
+    v1, v2 = body["versions"]
+    assert isinstance(v1["pruned_at"], int) and "pruned_at" not in v2
+    assert set(v1) <= cf.ARTIFACT_VERSION_KEYS

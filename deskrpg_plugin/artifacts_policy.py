@@ -89,6 +89,40 @@ def resolve_source_path(api, raw: str) -> Path:
     return target
 
 
+# 프로젝트·도구 설정 파일 — 결과물이 아니라 작업 도구의 부산물이다. 훅만 거르고, 명시 저장은 막지 않는다.
+_CONFIG_BASENAMES = frozenset({
+    "package.json", "package-lock.json", "composer.json", "deno.json", "deno.jsonc", "biome.json",
+    "turbo.json", "renovate.json", "lerna.json", "nx.json", "vercel.json", "netlify.json",
+    "firebase.json", "angular.json", "manifest.json", "components.json", "pyrightconfig.json",
+})
+_CONFIG_PREFIXES = ("tsconfig", "jsconfig", ".eslintrc", ".prettierrc", ".babelrc", ".swcrc", ".stylelintrc")
+
+
+def is_config_file(path: Path) -> bool:
+    name = path.name.lower()
+    return name in _CONFIG_BASENAMES or name.startswith(_CONFIG_PREFIXES) or ".config." in name
+
+
+def is_workspace_file(path: Path, roots) -> bool:
+    """관리 루트(`roots`) **아래에 있는** git 저장소(워크트리 포함 — `.git` 이 파일일 수 있다) 안의 파일인가.
+
+    루트 자신과 그 위는 보지 않는다 — Hermes 홈이 dotfiles 저장소 안에 있으면 모든 산출물이
+    "저장소 안" 으로 판정돼 자동 승격이 통째로 꺼진다."""
+    path = Path(path)
+    root = next((r for r in roots if r in path.parents), None)
+    if root is None:
+        return False
+    for parent in path.parents:
+        if parent == root:
+            return False
+        try:
+            if (parent / ".git").exists():
+                return True
+        except OSError:
+            return False
+    return False
+
+
 def kind_for_filename(name: str) -> str:
     return _KIND_BY_EXT.get(Path(name).suffix.lower(), "file")
 
