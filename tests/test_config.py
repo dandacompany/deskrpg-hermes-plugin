@@ -401,3 +401,19 @@ async def test_피커_심볼이_없는_빌드는_두_키를_거절한다(aiohttp
     fake_api._get_platform_tools = None
     client = await _client(aiohttp_client, fake_api)
     assert (await client.put("/p/sophie/deskrpg/config", json={"enabledToolsets": ["web"]})).status == 400
+
+
+@pytest.mark.parametrize("key,value,symbol", [
+    *[("enabledToolsets", ["web"], s) for s in (
+        "_get_effective_configurable_toolsets", "_get_platform_tools", "_toolset_has_keys",
+        "_toolset_allowed_for_platform")],
+    *[("disabledSkills", ["pdf"], s) for s in ("_find_all_skills", "_sort_skills")],
+])
+async def test_capability_와_같은_심볼_집합이_하나라도_없으면_400(aiohttp_client, fake_api, key, value, symbol):
+    path = _seed(fake_api, {"model": {"default": "m"}})
+    before = path.read_text(encoding="utf-8")
+    setattr(fake_api, symbol, None)
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/sophie/deskrpg/config", json={key: value})
+    assert resp.status == 400
+    assert path.read_text(encoding="utf-8") == before

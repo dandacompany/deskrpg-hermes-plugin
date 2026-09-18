@@ -33,6 +33,16 @@ def _has(api, names) -> bool:
     return all(getattr(api, n, None) is not None for n in names)
 
 
+def has_toolset_symbols(api) -> bool:
+    """`profile_toolsets` capability 와 config PUT `enabledToolsets` 가 같은 판정을 쓴다."""
+    return _has(api, _TOOLSET_SYMBOLS)
+
+
+def has_skill_symbols(api) -> bool:
+    """`profile_skills` capability 와 config PUT `disabledSkills` 가 같은 판정을 쓴다."""
+    return _has(api, _SKILL_SYMBOLS)
+
+
 def capabilities(api) -> tuple[str, ...]:
     """이 Hermes 빌드에서 **실제로 되는** 것만 돌려준다.
 
@@ -42,9 +52,9 @@ def capabilities(api) -> tuple[str, ...]:
     extra = []
     if getattr(api, "create_swarm", None) is not None:
         extra.append("swarm")
-    if _has(api, _TOOLSET_SYMBOLS):
+    if has_toolset_symbols(api):
         extra.append("profile_toolsets")
-    if _has(api, _SKILL_SYMBOLS):
+    if has_skill_symbols(api):
         extra.append("profile_skills")
     if _has(api, ("PROVIDER_REGISTRY",)):
         extra.append("profile_clone")

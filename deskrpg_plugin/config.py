@@ -10,6 +10,7 @@ import time
 import yaml
 from aiohttp import web
 
+from . import contract_fields
 from .catalog import REASONING_EFFORTS
 from .common import run_blocking
 
@@ -226,7 +227,7 @@ def put_handler(api):
 
         home = path.parent
         if "enabledToolsets" in payload:
-            if getattr(api, "_get_platform_tools", None) is None:
+            if not contract_fields.has_toolset_symbols(api):
                 raise web.HTTPBadRequest(reason="enabledToolsets is not supported by this Hermes build")
             if data.get("platform_toolsets") is not None and not isinstance(data["platform_toolsets"], dict):
                 return web.json_response(
@@ -238,7 +239,7 @@ def put_handler(api):
             if unknown_names:
                 raise web.HTTPBadRequest(reason=f"unknown toolsets: {', '.join(unknown_names)}")
         if "disabledSkills" in payload:
-            if getattr(api, "_find_all_skills", None) is None:
+            if not contract_fields.has_skill_symbols(api):
                 raise web.HTTPBadRequest(reason="disabledSkills is not supported by this Hermes build")
             if data.get("skills") is not None and not isinstance(data["skills"], dict):
                 return web.json_response(
