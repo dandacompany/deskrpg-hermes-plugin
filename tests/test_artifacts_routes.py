@@ -343,3 +343,28 @@ async def test_정리된_버전의_content_는_404_artifact_version_pruned_이�
     v1, v2 = body["versions"]
     assert isinstance(v1["pruned_at"], int) and "pruned_at" not in v2
     assert set(v1) <= cf.ARTIFACT_VERSION_KEYS
+
+
+def _seed_link(api, url="https://x.io/a"):
+    with contextlib.closing(store.open_registry(api)) as conn:
+        meta = store.ArtifactMeta(kind="link", title="a", summary=url, filename="a.url", mime="text/uri-list",
+                                  profile="sophie", source_kind="chat", session_id="s1", created_by="agent:sophie",
+                                  captured_via="tool", identity=url)
+        return store.store_artifact_version(api, conn, meta=meta, data=(url + "\n").encode(), max_bytes=100)
+
+
+async def test_링크_편집은_http_s_URL_한_줄만_받고_정리해서_저장한다(client, api):
+    r = _seed_link(api)
+    headers = {"X-DeskRPG-User": "u1"}
+    bad = await client.post(f"/deskrpg/artifacts/{r.artifact_id}/versions", headers=headers,
+                            json={"content": "javascript:alert(1)", "filename": "a.url"})
+    assert bad.status == 422 and (await bad.json())["error"] == "artifact_incomplete"
+    ok = await client.post(f"/deskrpg/artifacts/{r.artifact_id}/versions", headers=headers,
+                           json={"content": "  https://X.io/b).\n", "filename": "whatever.txt"})
+    assert ok.status == 201
+    v = (await ok.json())["version"]
+    assert (v["version"], v["mime"], v["filename"]) == (2, "text/uri-list", "a.url")
+    resp = await client.get(f"/deskrpg/artifacts/{r.artifact_id}/versions/2/content")
+    assert await resp.read() == b"https://x.io/b\n"
+    assert resp.headers["Content-Type"].startswith("text/uri-list")
+    assert resp.headers["Content-Security-Policy"] == "sandbox"

@@ -16,6 +16,7 @@ import urllib.parse
 
 from aiohttp import web
 
+from . import artifacts_links as links
 from . import artifacts_policy as policy
 from . import artifacts_store as store
 from .artifacts_tool import artifact_upload_max_bytes
@@ -335,14 +336,22 @@ def add_version_handler(api):
         def work():
             with contextlib.closing(store.open_registry(api)) as conn:
                 row = _live(conn, artifact_id)
+                body, name, mime = data, filename, policy.mime_for_filename(filename)
+                if row["kind"] == "link":
+                    # 링크 편집은 URL 한 줄만 받는다 — 저장본은 정리한 URL. 파일명은 기존 버전 것을 잇는다.
+                    url = links.canonical_url(data.decode("utf-8", "replace").strip())
+                    if url is None:
+                        raise RequestError(422, "artifact_incomplete", "link 는 http(s) 주소 한 줄이어야 한다")
+                    head = store.list_versions(conn, artifact_id)[-1]
+                    body, name, mime = links.url_blob(url), head["filename"], links.LINK_MIME
                 meta = store.ArtifactMeta(
-                    kind=row["kind"], title=row["title"], summary=row["summary"] or "", filename=filename,
-                    mime=policy.mime_for_filename(filename), profile=row["profile"], source_kind=row["source_kind"],
+                    kind=row["kind"], title=row["title"], summary=row["summary"] or "", filename=name,
+                    mime=mime, profile=row["profile"], source_kind=row["source_kind"],
                     session_id=row["session_id"], created_by=user, captured_via="edit", board=row["board"],
                     task_id=row["task_id"], job_id=row["job_id"], run_id=row["run_id"], note=note, supersedes=artifact_id,
                 )
                 try:
-                    out = store.store_artifact_version(api, conn, meta=meta, data=data, max_bytes=limit)
+                    out = store.store_artifact_version(api, conn, meta=meta, data=body, max_bytes=limit)
                 except store.ArtifactTooLarge:
                     raise _TooLarge()
                 version = conn.execute("SELECT * FROM artifact_versions WHERE artifact_id=? AND version=?",
