@@ -1,5 +1,6 @@
 import contextlib
 import re
+import threading
 import types
 from pathlib import Path
 
@@ -206,6 +207,15 @@ def fake_api(tmp_path):
             "openai-codex": types.SimpleNamespace(id="openai-codex", name="Codex", auth_type="oauth_external",
                                                   api_key_env_vars=(), base_url_env_var=""),
         },
+        # 계획 B — 디바이스 코드 로그인 (OPTIONAL_SPEC). task-4 가 채우는 가짜는 여기서는 None.
+        _DEVICE_CODE_STARTERS={"openai-codex": object()},
+        _start_device_code_flow=None,
+        poll_oauth_session=None,
+        _OAUTH_PROVIDER_CATALOG=(),
+        _oauth_sessions={},
+        _oauth_sessions_lock=threading.Lock(),
+        _oauth_profile_name=lambda p: None if not p or p == "current" else p,
+        clear_provider_auth=lambda pid=None: True,
     )
     _add_automation_fakes(api, tmp_path)
     return api

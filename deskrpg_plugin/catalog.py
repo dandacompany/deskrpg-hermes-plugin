@@ -40,7 +40,26 @@ logger = logging.getLogger(__name__)
 REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
 
 
-def _provider_rows(api) -> list[dict]:
+def _auth_fields(api, pid: str, cfg, profile: str) -> dict:
+    """프로바이더의 인증 방식 — 화면이 로그인 버튼·키 입력·CLI 안내 중 무엇을 보일지 정한다."""
+    starters = getattr(api, "_DEVICE_CODE_STARTERS", None) or {}
+    auth_type = getattr(cfg, "auth_type", None)
+    env_vars = [str(n) for n in (getattr(cfg, "api_key_env_vars", None) or ()) if n]
+    if api is not None and auth_type == "api_key" and env_vars:
+        return {"authType": "api_key", "envVars": env_vars, "cliCommand": None}
+    if pid in starters:
+        return {"authType": "oauth_device", "envVars": [], "cliCommand": None}
+    command = None
+    for entry in getattr(api, "_OAUTH_PROVIDER_CATALOG", None) or ():
+        if isinstance(entry, dict) and entry.get("id") == pid and entry.get("cli_command"):
+            command = str(entry["cli_command"])
+            if command.startswith("hermes ") and profile != "default":
+                command = f"hermes -p {profile} " + command[len("hermes "):]
+            break
+    return {"authType": "external", "envVars": [], "cliCommand": command}
+
+
+def _provider_rows(api, profile: str) -> list[dict]:
     """프로바이더 목록 + 이 프로필의 인증 상태."""
     from hermes_cli.auth import PROVIDER_REGISTRY, get_auth_status
 
@@ -61,6 +80,7 @@ def _provider_rows(api) -> list[dict]:
                 "id": pid,
                 "name": getattr(cfg, "name", pid) or pid,
                 "authenticated": authed,
+                **_auth_fields(api, pid, cfg, profile),
             }
         )
     rows.sort(key=lambda r: (not r["authenticated"], r["id"]))
@@ -94,14 +114,14 @@ def _models_for(provider_id: str) -> list[str]:
     return curated
 
 
-def _catalog_for_home(api, home) -> dict:
+def _catalog_for_home(api, home, profile: str) -> dict:
     """요청 프로필의 홈으로 HERMES_HOME 을 갈아 끼운 채 목록을 만든다.
 
     오버라이드는 컨텍스트 변수라 이 워커 스레드에만 걸리고, 블록을 나가면 원상복구한다.
     """
     token = api.set_hermes_home_override(str(home))
     try:
-        providers = _provider_rows(api)
+        providers = _provider_rows(api, profile=profile)
         models: dict[str, list[str]] = {}
         for row in providers:
             # 인증된 프로바이더만 모델을 채운다. 79개 전부를 채우면 응답이 거대해지고
@@ -118,7 +138,8 @@ def get_handler(api):
 
     @guarded
     async def handler(request):
-        home = resolve_profile_home(api, request.match_info["profile"])
-        return web.json_response(await run_blocking(_catalog_for_home, api, home))
+        profile = api.normalize_profile_name(request.match_info["profile"])
+        home = resolve_profile_home(api, profile)
+        return web.json_response(await run_blocking(_catalog_for_home, api, home, profile))
 
     return handler
