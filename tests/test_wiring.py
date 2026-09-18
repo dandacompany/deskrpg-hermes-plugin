@@ -47,14 +47,14 @@ async def client(aiohttp_client, fake_api, kanban, cron_store):
     return await aiohttp_client(app)
 
 
-async def test_info_가_쉰세_라우트와_capability_전부를_보고한다(client):
+async def test_info_가_쉰다섯_라우트와_capability_전부를_보고한다(client):
     body = await (await client.get("/deskrpg/info")).json()
     assert body["version"] == "0.9.0"
-    assert len(body["routes"]) == 53
+    assert len(body["routes"]) == 55
     # fake_api 는 스웜·피커 심볼을 모두 갖춘 빌드를 흉내 낸다 — capability 에 다 붙는다.
     assert body["capabilities"] == [
         "kanban", "cron", "events", "artifacts", "swarm",
-        "profile_toolsets", "profile_skills", "profile_clone",
+        "profile_toolsets", "profile_skills", "profile_clone", "profile_provider_keys",
     ]
     assert "GET /deskrpg/events" in body["routes"]
     assert "POST /p/{profile}/deskrpg/cron/jobs" in body["routes"]

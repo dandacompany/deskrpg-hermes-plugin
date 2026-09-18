@@ -33,6 +33,12 @@ def test_지우면_지운_이름을_돌려준다(tmp_path):
     assert p.read_text(encoding="utf-8") == "B=2\n"
 
 
+def test_없는_파일에서_지우면_빈_목록이고_파일을_만들지_않는다(tmp_path):
+    p = tmp_path / ".env"
+    assert envfile.remove_keys(p, ["A", "Z"]) == []
+    assert not p.exists()
+
+
 def test_write_text_atomic_은_0600_으로_갈아_끼운다(tmp_path):
     import os
     import stat

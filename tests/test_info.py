@@ -37,7 +37,7 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
     # fake_api 는 스웜·피커 심볼을 모두 갖춘 빌드를 흉내 낸다 — capability 에 다 붙는다.
     assert body["capabilities"] == [
         "kanban", "cron", "events", "artifacts", "swarm",
-        "profile_toolsets", "profile_skills", "profile_clone",
+        "profile_toolsets", "profile_skills", "profile_clone", "profile_provider_keys",
     ]
     assert "artifacts" in body["capabilities"] and isinstance(body["artifact_max_bytes"], int)
     assert body["timezone"] == "Asia/Seoul"

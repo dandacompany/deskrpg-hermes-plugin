@@ -60,6 +60,7 @@ def capabilities(api) -> tuple[str, ...]:
         extra.append("profile_skills")
     if _has(api, ("PROVIDER_REGISTRY",)):
         extra.append("profile_clone")
+        extra.append("profile_provider_keys")
     return CAPABILITIES + tuple(extra)
 
 # ---------------------------------------------------------------------------
