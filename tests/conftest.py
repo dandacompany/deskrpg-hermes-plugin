@@ -1,6 +1,8 @@
 import contextlib
 import re
 import types
+from pathlib import Path
+
 import pytest
 from aiohttp import web
 
@@ -212,6 +214,19 @@ def _add_automation_fakes(api, tmp_path):
     kanban_root.mkdir(exist_ok=True)
     api.kanban = install_fake_kanban(api, kanban_root)
 
+    # 홈 오버라이드를 실제처럼 기억한다 — 스택(리스트)이라 중첩 호출도 재현한다.
+    _override = []
+
+    def set_hermes_home_override(path):
+        _override.append(Path(path))
+        return len(_override)
+
+    def reset_hermes_home_override(token):
+        del _override[token - 1:]
+
+    def get_hermes_home():
+        return _override[-1] if _override else hermes_home
+
     class _Config(dict):
         pass
 
@@ -243,9 +258,9 @@ def _add_automation_fakes(api, tmp_path):
         load_config=lambda *a, **k: config,
         save_config=lambda cfg, *a, **k: None,
         # hermes_constants / hermes_time
-        set_hermes_home_override=lambda path: object(),
-        reset_hermes_home_override=lambda token: None,
-        get_hermes_home=lambda: hermes_home,
+        set_hermes_home_override=set_hermes_home_override,
+        reset_hermes_home_override=reset_hermes_home_override,
+        get_hermes_home=get_hermes_home,
         get_timezone=lambda: ZoneInfo("Asia/Seoul"),
         # cron.jobs
         use_cron_store=lambda home: _noop_context(),

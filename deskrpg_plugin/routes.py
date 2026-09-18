@@ -13,6 +13,7 @@ from . import identity as _identity
 from . import profiles as _profiles
 from . import config as _config
 from . import catalog as _catalog
+from . import picker as _picker
 from . import kanban_board as _kanban_board
 from . import kanban_actions as _kanban_actions
 from . import kanban_files as _kanban_files
@@ -59,6 +60,8 @@ ROUTES = [
     ("PUT", "/p/{profile}/deskrpg/identity", "put_identity", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/config", "get_config", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/catalog", "get_catalog", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/toolsets", "get_toolsets", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/skills", "get_skills", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/config", "put_config", Scope.PROFILE),
     # ---- 0.6.0 칸반 (소유자 키, spec §5) ------------------------------------------------
     # 칸반은 프로필과 무관한 호스트 공유 저장소(HERMES_KANBAN_HOME)라 전부 소유자 키다(C7).
@@ -150,6 +153,8 @@ _HANDLERS = {
     "get_config": lambda api: _config.get_handler(api),
     "put_config": lambda api: _config.put_handler(api),
     "get_catalog": lambda api: _catalog.get_handler(api),
+    "get_toolsets": lambda api: _picker.toolsets_handler(api),
+    "get_skills": lambda api: _picker.skills_handler(api),
     # 칸반
     "kanban_list_boards": lambda api: _kanban_board.list_boards_handler(api),
     "kanban_create_board": lambda api: _kanban_board.create_board_handler(api),
@@ -360,6 +365,8 @@ def handler_for(name, api):
 _OPTIONAL_ROUTES = {
     "kanban_create_swarm": "create_swarm",
     "kanban_blackboard": "latest_blackboard",
+    "get_toolsets": "_get_platform_tools",
+    "get_skills": "_find_all_skills",
 }
 
 
