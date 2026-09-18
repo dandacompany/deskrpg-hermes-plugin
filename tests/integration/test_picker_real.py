@@ -51,7 +51,7 @@ async def test_끈_스킬이_Hermes_의_꺼짐_목록에_들어간다(client, ma
 async def test_복제된_프로필이_default_의_모델과_키_이름을_물려받는다(client, hermes_home):
     secret = "sk-it-SECRET-0123456789abcdef"
     (hermes_home / "config.yaml").write_text(
-        yaml.safe_dump({"model": {"default": "gpt-x", "provider": "openai"}}), encoding="utf-8")
+        yaml.safe_dump({"model": {"default": "gpt-x", "provider": "openai-api"}}), encoding="utf-8")
     (hermes_home / ".env").write_text(f"OPENAI_API_KEY={secret}\nTELEGRAM_BOT_TOKEN=bot-secret\n", encoding="utf-8")
     resp = await client.post("/deskrpg/profiles", json={"name": "cloned", "cloneFrom": "default"})
     assert resp.status == 201
@@ -60,7 +60,7 @@ async def test_복제된_프로필이_default_의_모델과_키_이름을_물려
     body = await resp.json()
     assert body["cloned"]["envKeys"] == ["OPENAI_API_KEY"]
     got = await (await client.get("/p/cloned/deskrpg/config")).json()
-    assert got["model"] == "gpt-x" and got["provider"] == "openai"
+    assert got["model"] == "gpt-x" and got["provider"] == "openai-api"
 
 
 async def test_저장은_MCP_항목을_남기고_disabled_toolsets_의_막힌_툴셋을_푼다(client, make_profile):

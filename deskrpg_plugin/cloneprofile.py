@@ -56,14 +56,27 @@ def _is_token_class(name: str) -> bool:
     return name in _TOKEN_CLASS_NAMES or name.endswith("_OAUTH_TOKEN")
 
 
-def _provider_id(value) -> str | None:
+def _aliases(api) -> dict:
+    fn = getattr(api, "_plugin_aliases", None)
+    if fn is None:
+        return {}
+    try:
+        return dict(fn() or {})
+    except Exception as exc:  # noqa: BLE001 — 별칭을 못 읽으면 소문자 맞춤만 한다
+        logger.warning("[deskrpg] 프로바이더 별칭 읽기 실패: %s", type(exc).__name__)
+        return {}
+
+
+def _provider_id(value, aliases: dict) -> str | None:
+    """Hermes `resolve_provider`(hermes_cli/auth.py:1339-1340)처럼 소문자·별칭을 풀어 정식 id 로."""
     if not isinstance(value, str):
         return None
-    value = value.strip()
+    value = value.strip().lower()
+    value = aliases.get(value, value)
     return value if value and value != "auto" else None
 
 
-def _referenced_providers(cfg: dict) -> set[str]:
+def _referenced_providers(cfg: dict, aliases: dict) -> set[str]:
     """복제한 설정이 실제로 부르는 프로바이더 id.
 
     - `model.provider`
@@ -75,16 +88,16 @@ def _referenced_providers(cfg: dict) -> set[str]:
     ids: set[str] = set()
     model = cfg.get("model")
     if isinstance(model, dict):
-        ids.add(_provider_id(model.get("provider")))
+        ids.add(_provider_id(model.get("provider"), aliases))
     fallbacks = cfg.get("fallback_providers")
     for entry in [fallbacks] if isinstance(fallbacks, dict) else fallbacks if isinstance(fallbacks, list) else []:
         if isinstance(entry, dict):
-            ids.add(_provider_id(entry.get("provider")))
+            ids.add(_provider_id(entry.get("provider"), aliases))
     aux = cfg.get("auxiliary")
     if isinstance(aux, dict):
         for task in aux.values():
             if isinstance(task, dict):
-                ids.add(_provider_id(task.get("provider")))
+                ids.add(_provider_id(task.get("provider"), aliases))
     ids.discard(None)
     return ids
 
@@ -93,7 +106,7 @@ def _wanted_env_names(api, cfg: dict, key_scope: str) -> set[str]:
     """복사할 환경변수 **이름**. 레지스트리에 없는 프로바이더 id 는 건너뛴다."""
     registry = getattr(api, "PROVIDER_REGISTRY", None) or {}
     names: set[str] = set()
-    for pid in _referenced_providers(cfg):
+    for pid in _referenced_providers(cfg, _aliases(api)):
         if pid in registry:
             names |= _env_names_of(registry[pid])
     if key_scope == "api_keys":
@@ -104,8 +117,9 @@ def _wanted_env_names(api, cfg: dict, key_scope: str) -> set[str]:
 
 
 def _needs_login(api, model_block) -> list[str]:
-    provider = model_block.get("provider") if isinstance(model_block, dict) else None
-    if not isinstance(provider, str) or not provider:
+    raw = model_block.get("provider") if isinstance(model_block, dict) else None
+    provider = _provider_id(raw, _aliases(api))
+    if not provider:
         return []
     cfg = (getattr(api, "PROVIDER_REGISTRY", None) or {}).get(provider)
     if cfg is None or getattr(cfg, "auth_type", "api_key") == "api_key":

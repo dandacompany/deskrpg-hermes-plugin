@@ -163,3 +163,19 @@ def test_모르는_key_scope_는_거절한다(fake_api, wide):
     fake_api.create_profile("noah")
     with pytest.raises(ValueError):
         cloneprofile.clone_from_default(fake_api, "noah", key_scope="all")
+
+
+def test_referenced_는_Hermes_와_같이_별칭과_대소문자를_풀어_찾는다(fake_api, wide):
+    fake_api._plugin_aliases = lambda: {"claude": "anthropic", "hf": "huggingface"}
+    _write_cfg(wide, {"model": {"default": "c", "provider": " Claude "},
+                      "auxiliary": {"vision": {"provider": "HF"}}})
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah")
+    assert got["envKeys"] == ["ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "HF_TOKEN"]
+
+
+def test_별칭_심볼이_없는_빌드는_소문자만_맞춘다(fake_api, wide):
+    fake_api._plugin_aliases = None
+    _write_cfg(wide, {"model": {"default": "c", "provider": "OpenAI"}})
+    fake_api.create_profile("noah")
+    assert cloneprofile.clone_from_default(fake_api, "noah")["envKeys"] == ["OPENAI_API_KEY", "OPENAI_BASE_URL"]
