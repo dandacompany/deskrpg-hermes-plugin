@@ -79,9 +79,12 @@ def _save(api, args: dict, kwargs: dict) -> str:
     path, content = _str(args, "path", 4096), args.get("content")
     if bool(path) == isinstance(content, str):
         return _err("artifact_incomplete", "path 또는 content 중 정확히 하나를 넘긴다")
+    limit = artifact_max_bytes(api)
     try:
         if path:
             source = policy.resolve_source_path(api, path)
+            if source.stat().st_size > limit:
+                return _err("artifact_too_large", f"{limit} 바이트를 넘는다", max_bytes=limit)
             filename, data, origin = source.name, source.read_bytes(), str(source)
             text = data.decode("utf-8", "ignore") if policy.kind_for_filename(filename) in ("web", "react", "data", "document") else None
             policy.validate_completeness(kind, filename=filename, text=text, from_path=True)
@@ -91,6 +94,8 @@ def _save(api, args: dict, kwargs: dict) -> str:
                 return _err("artifact_incomplete", "content 로 저장할 때는 filename 이 필요하다")
             policy.validate_completeness(kind, filename=filename, text=content, from_path=False)
             data, origin = content.encode("utf-8"), None
+            if len(data) > limit:
+                return _err("artifact_too_large", f"{limit} 바이트를 넘는다", max_bytes=limit)
     except policy.PolicyError as exc:
         return _err(exc.code, exc.detail)
 
@@ -101,7 +106,6 @@ def _save(api, args: dict, kwargs: dict) -> str:
         captured_via="tool", board=ctx.board, task_id=ctx.task_id, job_id=ctx.job_id, run_id=ctx.run_id,
         origin_path=origin, note=_str(args, "note", 400) or None, supersedes=_str(args, "supersedes", 64) or None,
     )
-    limit = artifact_max_bytes(api)
     try:
         with contextlib.closing(store.open_registry(api)) as conn:
             result = store.store_artifact_version(api, conn, meta=meta, data=data, max_bytes=limit)

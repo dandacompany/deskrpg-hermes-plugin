@@ -82,6 +82,18 @@ def test_path_는_허용_루트_아래_실제_파일이어야_한다(api, tmp_pa
         assert store.list_versions(conn, out["artifact_id"])[0]["origin_path"] == str(inside.resolve())
 
 
+def test_path_파일이_상한을_넘으면_읽지_않고_too_large_를_돌려준다(api, tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_DESKRPG_ARTIFACT_MAX_BYTES", "4")
+    big = tmp_path / "kanban" / "big.md"; big.write_bytes(b"0123456789")
+
+    def _forbidden(self, *a, **k):
+        raise AssertionError("읽으면 안 된다")
+
+    monkeypatch.setattr("pathlib.Path.read_bytes", _forbidden)
+    out = _call(api, kind="document", title="t", summary="s", path=str(big))
+    assert out["error"] == "artifact_too_large" and out["max_bytes"] == 4
+
+
 def test_kind_완결성_실패는_모델에게_고칠_말을_돌려준다(api):
     out = _call(api, kind="web", title="t", summary="s", content="<div/>", filename="a.html")
     assert out["error"] == "artifact_incomplete" and "html" in out["detail"].lower()
