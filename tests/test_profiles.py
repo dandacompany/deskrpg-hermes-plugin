@@ -267,3 +267,51 @@ def test_유닛_이름은_프로필별로_갈리고_공용_게이트웨이와_�
     # 공용 게이트웨이의 유닛 이름과 절대 같아지지 않는다 — 같아지는 순간
     # 우리가 지금 도는 게이트웨이를 지우게 된다.
     assert safedelete.service_unit_name("noah") != safedelete.SERVICE_BASE
+
+
+async def test_cloneFrom_default_면_복제_결과의_이름만_싣는다(aiohttp_client, fake_api, tmp_path):
+    import yaml
+    home = tmp_path / "default-home"
+    home.mkdir()
+    orig = fake_api.get_profile_dir
+    fake_api.get_profile_dir = lambda name: home if name == "default" else orig(name)
+    (home / "config.yaml").write_text(yaml.safe_dump({"model": {"default": "m", "provider": "openai"}}), encoding="utf-8")
+    (home / ".env").write_text("OPENAI_API_KEY=sk-SECRET-abcdefgh12345678\n", encoding="utf-8")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post("/deskrpg/profiles", json={"name": "noah", "cloneFrom": "default"})
+    assert resp.status == 201
+    text = await resp.text()
+    assert "sk-SECRET" not in text
+    body = await resp.json()
+    assert body["cloned"] == {"configKeys": ["model"], "envKeys": ["OPENAI_API_KEY"]}
+    assert body["needsLogin"] == []
+    assert body["keyIssued"] is True
+    env = (orig("noah") / ".env").read_text(encoding="utf-8")
+    assert "OPENAI_API_KEY=sk-SECRET" in env and "API_SERVER_KEY=" in env
+
+
+async def test_cloneFrom_은_default_만_받는다(aiohttp_client, fake_api):
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post("/deskrpg/profiles", json={"name": "noah", "cloneFrom": "mia"})
+    assert resp.status == 400
+    assert not fake_api.profile_exists("noah")
+
+
+async def test_복제가_실패해도_프로필은_만들어졌다고_말한다(aiohttp_client, fake_api, tmp_path):
+    home = tmp_path / "default-home"
+    home.mkdir()
+    orig = fake_api.get_profile_dir
+    fake_api.get_profile_dir = lambda name: home if name == "default" else orig(name)
+    (home / "config.yaml").write_text("a: [", encoding="utf-8")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post("/deskrpg/profiles", json={"name": "noah", "cloneFrom": "default"})
+    assert resp.status == 201
+    body = await resp.json()
+    assert "cloned" not in body and isinstance(body["cloneError"], str)
+    assert body["keyIssued"] is True
+
+
+async def test_cloneFrom_이_없으면_예전과_같다(aiohttp_client, fake_api):
+    client = await _client(aiohttp_client, fake_api)
+    body = await (await client.post("/deskrpg/profiles", json={"name": "noah"})).json()
+    assert "cloned" not in body and "needsLogin" not in body and "cloneError" not in body
