@@ -143,3 +143,51 @@ def test_훅은_요청_본문_상한에_묶이지_않고_저장소_상한을_쓴
     p = tmp_path / "kanban" / "big.md"; p.write_bytes(b"0" * 20)
     _fire(api, "write_file", json.dumps({"output_path": str(p)}))
     assert [r["title"] for r in _rows(api)] == ["big.md"]
+
+
+# ---------------------------------------------------------------------------
+# 작업 공간 밖 산출물만 (0.8.2)
+# ---------------------------------------------------------------------------
+
+
+def test_git_저장소_안의_파일은_자동_승격하지_않는다(api, tmp_path):
+    repo = tmp_path / "kanban" / "workspaces" / "t1"; (repo / ".git").mkdir(parents=True)
+    p = repo / "docs" / "README.md"; p.parent.mkdir(); p.write_text("# r")
+    _fire(api, "write_file", json.dumps({"path": str(p)}))
+    assert _rows(api) == []
+
+
+def test_git_파일로_표시된_워크트리도_저장소로_본다(api, tmp_path):
+    repo = tmp_path / "kanban" / "wt"; repo.mkdir(parents=True); (repo / ".git").write_text("gitdir: /x")
+    p = repo / "notes.md"; p.write_text("n")
+    _fire(api, "write_file", json.dumps({"path": str(p)}))
+    assert _rows(api) == []
+
+
+@pytest.mark.parametrize("name", ["package.json", "package-lock.json", "tsconfig.json", "tsconfig.build.json",
+                                  "jsconfig.json", "composer.json", "deno.json", ".eslintrc.json",
+                                  ".prettierrc.json", "biome.json", "turbo.json", "renovate.json", "app.config.json"])
+def test_저장소_밖이라도_설정_파일은_자동_승격하지_않는다(api, tmp_path, name):
+    p = tmp_path / "kanban" / name; p.write_text("{}")
+    _fire(api, "write_file", json.dumps({"path": str(p)}))
+    assert _rows(api) == []
+
+
+def test_저장소_밖의_일반_산출물은_그대로_승격한다(api, tmp_path):
+    p = tmp_path / "kanban" / "sales.json"; p.write_text("[]")
+    _fire(api, "write_file", json.dumps({"path": str(p)}))
+    assert [r["title"] for r in _rows(api)] == ["sales.json"]
+
+
+def test_관리_루트_자체가_git_저장소여도_산출물은_승격한다(api, tmp_path):
+    (tmp_path / "kanban" / ".git").mkdir()  # 예: Hermes 홈이 dotfiles 저장소 안에 있는 경우
+    p = tmp_path / "kanban" / "report.md"; p.write_text("# r")
+    _fire(api, "write_file", json.dumps({"path": str(p)}))
+    assert [r["title"] for r in _rows(api)] == ["report.md"]
+
+
+def test_is_workspace_file_은_루트_아래_저장소만_본다(tmp_path):
+    root = tmp_path.resolve(); (root / "r" / ".git").mkdir(parents=True)
+    assert policy.is_workspace_file(root / "r" / "a" / "b.md", [root]) is True
+    assert policy.is_workspace_file(root / "loose.md", [root]) is False
+    assert policy.is_workspace_file(root / "r" / "x.md", []) is False  # 루트 밖은 판정하지 않는다

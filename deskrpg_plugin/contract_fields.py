@@ -264,5 +264,5 @@ ARTIFACT_SUMMARY_REQUIRED = frozenset({
 ARTIFACT_SUMMARY_OPTIONAL = frozenset({"summary", "board", "task_id", "job_id", "run_id", "missing"})
 ARTIFACT_SUMMARY_KEYS = ARTIFACT_SUMMARY_REQUIRED | ARTIFACT_SUMMARY_OPTIONAL
 ARTIFACT_VERSION_REQUIRED = frozenset({"version", "filename", "mime", "size", "sha256", "created_by", "captured_via", "created_at"})
-ARTIFACT_VERSION_OPTIONAL = frozenset({"origin_path", "note"})
+ARTIFACT_VERSION_OPTIONAL = frozenset({"origin_path", "note", "pruned_at"})
 ARTIFACT_VERSION_KEYS = ARTIFACT_VERSION_REQUIRED | ARTIFACT_VERSION_OPTIONAL

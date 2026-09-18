@@ -27,7 +27,9 @@ import time
 import unicodedata
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+MAX_VERSIONS_ENV = "HERMES_DESKRPG_ARTIFACT_MAX_VERSIONS"
+DEFAULT_MAX_VERSIONS = 20
 
 _TITLE_WS = re.compile(r"\s+")
 _TITLE_PUNCT = re.compile(r"[!\"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~]+")
@@ -83,7 +85,7 @@ def open_registry(api) -> sqlite3.Connection:
     return conn
 
 
-_SCHEMA_STATEMENTS = (
+_SCHEMA_STATEMENTS_V1 = (
     """CREATE TABLE IF NOT EXISTS artifacts (
   id TEXT PRIMARY KEY, kind TEXT NOT NULL, title TEXT NOT NULL, title_norm TEXT NOT NULL, summary TEXT,
   profile TEXT NOT NULL, source_kind TEXT NOT NULL, session_id TEXT NOT NULL,
@@ -106,8 +108,16 @@ _SCHEMA_STATEMENTS = (
 )
 
 
+# 번호 순 마이그레이션. 1 → 2 (0.8.2): 버전 수 상한으로 blob 을 지운 버전에 시각을 남긴다 — 행은 지우지
+# 않는다(버전 번호를 다시 쓰지 않게, 그리고 "그런 버전이 있었다" 는 이력을 남기려고).
+_MIGRATIONS = {
+    1: _SCHEMA_STATEMENTS_V1,
+    2: ("ALTER TABLE artifact_versions ADD COLUMN pruned_at INTEGER",),
+}
+
+
 def init_registry(conn: sqlite3.Connection) -> None:
-    """멱등. `user_version` 이 0 이면 만들고 1 로 올린다. 앞으로의 마이그레이션은 여기 번호로 잇는다.
+    """멱등. `user_version` 보다 큰 번호의 마이그레이션을 차례로 적용하고 `SCHEMA_VERSION` 으로 올린다.
 
     스키마 생성은 명시적 쓰기 잠금(`BEGIN IMMEDIATE`) 안에서 한다 — busy 타임아웃은 잠금을
     잡을 때는 적용되므로, 여러 스레드가 같은 새 `registry.db` 를 동시에 처음 열어도(칸반 워커의
@@ -122,8 +132,9 @@ def init_registry(conn: sqlite3.Connection) -> None:
         version = conn.execute("PRAGMA user_version").fetchone()[0]  # 잠금 안에서 재확인 — 먼저 온
         if version >= SCHEMA_VERSION:                                # 커넥션이 이미 마이그레이션했을 수 있다
             return
-        for statement in _SCHEMA_STATEMENTS:
-            conn.execute(statement)
+        for number in range(version + 1, SCHEMA_VERSION + 1):
+            for statement in _MIGRATIONS[number]:
+                conn.execute(statement)
         conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 
 
@@ -157,6 +168,17 @@ def new_artifact_id() -> str:
         head = _ID_ALPHABET[rem] + head
     tail = "".join(secrets.choice(_ID_ALPHABET) for _ in range(16))
     return head + tail
+
+
+def artifact_max_versions() -> int:
+    """아티팩트당 blob 을 남길 최근 버전 수. `HERMES_DESKRPG_ARTIFACT_MAX_VERSIONS` — 0 은 무제한,
+    없거나 음수·숫자가 아니면 기본값 20."""
+    raw = os.environ.get(MAX_VERSIONS_ENV, "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_VERSIONS
+    return value if value >= 0 else DEFAULT_MAX_VERSIONS
 
 
 class ArtifactTooLarge(ValueError):
@@ -238,8 +260,10 @@ def store_artifact_version(api, conn, *, meta: ArtifactMeta, data: bytes, max_by
         raise ArtifactTooLarge(f"artifact exceeds {max_bytes} bytes")
     digest = hashlib.sha256(data).hexdigest()
     now = int(time.time())
+    keep = artifact_max_versions()
     dest = None
     dest_dir = None
+    pruned: list = []
     try:
         with conn:
             conn.execute("BEGIN IMMEDIATE")
@@ -281,6 +305,17 @@ def store_artifact_version(api, conn, *, meta: ArtifactMeta, data: bytes, max_by
                 (artifact_id, version, dest.name, meta.mime, len(data), digest, str(dest.resolve()),
                  meta.origin_path, meta.created_by, meta.captured_via, meta.note, now),
             )
+            if keep and version > keep:
+                # 상한 밖 버전은 같은 트랜잭션에서 표시만 하고, blob 은 커밋한 뒤에 지운다 — 커밋이 실패하면
+                # 표시도 되돌아가므로 "살아 있다고 적힌 버전의 파일이 없는" 상태가 생기지 않는다.
+                pruned = conn.execute(
+                    "SELECT * FROM artifact_versions WHERE artifact_id=? AND version<=? AND pruned_at IS NULL",
+                    (artifact_id, version - keep),
+                ).fetchall()
+                conn.execute(
+                    "UPDATE artifact_versions SET pruned_at=? WHERE artifact_id=? AND version<=? AND pruned_at IS NULL",
+                    (now, artifact_id, version - keep),
+                )
             _append_event(conn, now, "artifact.created" if created else "artifact.versioned", {
                 "artifact_id": artifact_id, "version": version, "kind": meta.kind, "title": meta.title,
                 "profile": meta.profile, "source_kind": meta.source_kind, "board": meta.board,
@@ -295,7 +330,20 @@ def store_artifact_version(api, conn, *, meta: ArtifactMeta, data: bytes, max_by
             with contextlib.suppress(OSError):
                 dest_dir.rmdir()
         raise
+    _remove_blobs(api, pruned)
     return StoreResult(artifact_id, version, deduped=False, created=created)
+
+
+def _remove_blobs(api, rows) -> None:
+    """정리된 버전의 파일과 빈 버전 폴더를 지운다. 실패해도 저장은 이미 끝났으므로 조용히 넘어간다."""
+    for row in rows:
+        path = blob_path_for(api, row)
+        if path is None:
+            continue
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+        with contextlib.suppress(OSError):
+            path.parent.rmdir()
 
 
 def _append_event(conn, ts: int, kind: str, payload: dict) -> None:

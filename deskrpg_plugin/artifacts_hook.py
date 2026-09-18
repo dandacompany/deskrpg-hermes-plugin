@@ -71,6 +71,7 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
         return
     ctx = None
     limit = artifact_storage_max_bytes()
+    roots = policy.allowed_source_roots(api)
     saved = 0
     for raw in candidates:
         if saved >= MAX_FILES_PER_CALL:
@@ -80,6 +81,10 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
         except policy.PolicyError:
             continue  # 루트 밖·민감 파일·비경로 문자열은 조용히 넘어간다 — 저장 슬롯을 쓰지 않는다
         if source.suffix.lower() not in policy.HOOK_EXTENSIONS:
+            continue
+        # 작업 공간(git 저장소) 안의 파일과 설정 파일은 결과물이 아니라 작업 중간물이다(0.8.2 결정).
+        # 저장소 안의 보고서가 필요하면 NPC 가 artifact_save 로 명시 저장한다.
+        if policy.is_config_file(source) or policy.is_workspace_file(source, roots):
             continue
         try:
             size = source.stat().st_size

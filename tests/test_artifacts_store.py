@@ -49,11 +49,11 @@ def test_루트는_프로필_세션_홈이어도_게이트웨이_기본_홈_아�
 
 def test_open_registry_는_디렉터리와_스키마를_만들고_멱등이다(api):
     with contextlib.closing(store.open_registry(api)) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION == 2
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"artifacts", "artifact_versions", "artifact_events"} <= tables
     with contextlib.closing(store.open_registry(api)) as conn:  # 두 번째도 예외 없이
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION == 2
 
 
 def test_제목_정규화는_NFC_소문자_공백_구두점을_접는다():
@@ -281,7 +281,7 @@ def test_새_레지스트리를_여러_스레드가_동시에_처음_열어도_�
 
         assert not errors, f"trial {trial}: {errors}"
         with contextlib.closing(store.open_registry(trial_api)) as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 1, f"trial {trial}"
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION == 2, f"trial {trial}"
 
 
 def test_blob_path_for_는_루트_밖을_가리키는_행에_None_이다(api, tmp_path):
@@ -300,3 +300,60 @@ def test_soft_delete_를_두_번_해도_deleted_사건은_한_번만_남는다(a
         kinds = [row["kind"] for row in conn.execute("SELECT kind FROM artifact_events ORDER BY id")]
         assert kinds.count("artifact.deleted") == 1
         assert store.get_artifact(conn, r.artifact_id)["deleted_by"] == "human:u1"
+
+
+# ---------------------------------------------------------------------------
+# 버전 수 상한 (0.8.2)
+# ---------------------------------------------------------------------------
+
+
+def _store_n(api, conn, n, **over):
+    return [store.store_artifact_version(api, conn, meta=_meta(**over), data=f"v{i}".encode(), max_bytes=100)
+            for i in range(1, n + 1)]
+
+
+def test_버전이_상한을_넘으면_오래된_버전의_blob_을_지우고_pruned_at_을_남긴다(api, monkeypatch):
+    monkeypatch.setenv("HERMES_DESKRPG_ARTIFACT_MAX_VERSIONS", "3")
+    with contextlib.closing(store.open_registry(api)) as conn:
+        out = _store_n(api, conn, 5)
+        rows = store.list_versions(conn, out[-1].artifact_id)
+    assert [r["version"] for r in rows] == [1, 2, 3, 4, 5]  # 번호는 재사용하지 않도록 행은 남는다
+    assert [r["pruned_at"] is not None for r in rows] == [True, True, False, False, False]
+    assert [store.blob_path_for(api, r).is_file() for r in rows] == [False, False, True, True, True]
+    assert not (store.artifacts_root(api) / "blobs" / out[-1].artifact_id / "1").exists()
+
+
+def test_버전_상한_기본값은_20이고_0이면_무제한이다(api, monkeypatch):
+    monkeypatch.delenv("HERMES_DESKRPG_ARTIFACT_MAX_VERSIONS", raising=False)
+    assert store.artifact_max_versions() == 20
+    for bad in ("abc", "-1", ""):
+        monkeypatch.setenv("HERMES_DESKRPG_ARTIFACT_MAX_VERSIONS", bad)
+        assert store.artifact_max_versions() == 20, bad
+    monkeypatch.setenv("HERMES_DESKRPG_ARTIFACT_MAX_VERSIONS", "0")
+    with contextlib.closing(store.open_registry(api)) as conn:
+        out = _store_n(api, conn, 4)
+        assert all(r["pruned_at"] is None for r in store.list_versions(conn, out[-1].artifact_id))
+
+
+def test_같은_내용이면_정리도_일어나지_않는다(api, monkeypatch):
+    monkeypatch.setenv("HERMES_DESKRPG_ARTIFACT_MAX_VERSIONS", "1")
+    with contextlib.closing(store.open_registry(api)) as conn:
+        a = store.store_artifact_version(api, conn, meta=_meta(), data=b"same", max_bytes=100)
+        b = store.store_artifact_version(api, conn, meta=_meta(), data=b"same", max_bytes=100)
+        assert b.deduped and store.list_versions(conn, a.artifact_id)[0]["pruned_at"] is None
+
+
+def test_스키마_1_레지스트리는_열면_pruned_at_열이_더해지고_데이터가_남는다(api):
+    root = store.artifacts_root(api); (root / "blobs").mkdir(parents=True)
+    conn = sqlite3.connect(store.registry_path(api))
+    for statement in store._SCHEMA_STATEMENTS_V1:
+        conn.execute(statement)
+    conn.execute("INSERT INTO artifacts (id, kind, title, title_norm, profile, source_kind, session_id,"
+                 " current_version, created_at, updated_at) VALUES ('a1','document','t','t','p','chat','s',1,1,1)")
+    conn.execute("INSERT INTO artifact_versions (artifact_id, version, filename, mime, size, sha256, stored_path,"
+                 " created_by, captured_via, created_at) VALUES ('a1',1,'r.md','text/markdown',1,'x','/x','u','tool',1)")
+    conn.execute("PRAGMA user_version=1"); conn.commit(); conn.close()
+    with contextlib.closing(store.open_registry(api)) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 2
+        rows = store.list_versions(conn, "a1")
+        assert len(rows) == 1 and rows[0]["pruned_at"] is None
