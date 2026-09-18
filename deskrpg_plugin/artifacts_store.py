@@ -385,7 +385,7 @@ def list_versions(conn, artifact_id: str) -> list:
     ).fetchall()
 
 
-def list_artifacts(conn, *, profiles=None, board=None, kind=None, source=None, q=None, before=None, limit=50) -> list:
+def list_artifacts(conn, *, profiles=None, board=None, kind=None, source=None, task_id=None, q=None, before=None, limit=50) -> list:
     """살아 있는 것만, `updated_at DESC, id DESC`. `profiles` 와 `board` 는 OR."""
     where, params = ["deleted_at IS NULL"], []
     scope = []
@@ -401,6 +401,8 @@ def list_artifacts(conn, *, profiles=None, board=None, kind=None, source=None, q
         where.append("kind=?"); params.append(kind)
     if source:
         where.append("source_kind=?"); params.append(source)
+    if task_id:
+        where.append("task_id=?"); params.append(task_id)
     if q:
         like = f"%{q}%"
         where.append("(title LIKE ? OR summary LIKE ? OR id IN (SELECT artifact_id FROM artifact_versions WHERE filename LIKE ?))")

@@ -385,3 +385,16 @@ async def test_링크_편집은_정체성과_요약을_새_URL_로_바꾸고_제
     assert old.created and old.artifact_id != r.artifact_id
     found = await (await client.get("/deskrpg/artifacts?q=new.io")).json()
     assert [a["id"] for a in found["artifacts"]] == [r.artifact_id]
+
+
+# ---------------------------------------------------------------------------
+# task_id 필터 (0.8.4)
+# ---------------------------------------------------------------------------
+
+
+async def test_목록_task_id_필터는_범위와_AND_이고_너무_길면_400(client, api):
+    _seed(api, title="A", source_kind="kanban", board="dev", task_id="t1")
+    _seed(api, title="B", source_kind="kanban", board="dev", task_id="t2", session_id="s2")
+    body = await (await client.get("/deskrpg/artifacts?board=dev&task_id=t1")).json()
+    assert [a["title"] for a in body["artifacts"]] == ["A"]
+    assert (await client.get("/deskrpg/artifacts?task_id=" + "x" * 129)).status == 400

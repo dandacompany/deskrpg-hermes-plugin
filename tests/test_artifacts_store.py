@@ -389,3 +389,18 @@ def test_identity_가_없으면_기존대로_제목으로_판정한다(api):
         a = store.store_artifact_version(api, conn, meta=_meta(), data=b"1", max_bytes=100)
         b = store.store_artifact_version(api, conn, meta=_meta(title="주간  보고서!"), data=b"2", max_bytes=100)
     assert a.artifact_id == b.artifact_id and b.version == 2
+
+
+# ---------------------------------------------------------------------------
+# task_id 필터 (0.8.4)
+# ---------------------------------------------------------------------------
+
+
+def test_목록은_task_id_로_좁힌다(api):
+    with contextlib.closing(store.open_registry(api)) as conn:
+        store.store_artifact_version(api, conn, meta=_meta(title="A", source_kind="kanban", board="dev", task_id="t1"),
+                                     data=b"a", max_bytes=100)
+        store.store_artifact_version(api, conn, meta=_meta(title="B", source_kind="kanban", board="dev", task_id="t2"),
+                                     data=b"b", max_bytes=100)
+        rows = store.list_artifacts(conn, board="dev", task_id="t1")
+    assert [r["title"] for r in rows] == ["A"]

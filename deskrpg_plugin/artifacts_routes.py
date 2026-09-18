@@ -116,11 +116,14 @@ def list_handler(api):
             raise RequestError(400, "invalid_field", "source")
         profiles = [p for p in (q.get("profiles") or "").split(",") if p] or None
         before = _cursor_decode(q.get("cursor"))
+        task_id = q.get("task_id") or None
+        if task_id is not None and len(task_id) > 128:
+            raise RequestError(400, "invalid_field", "task_id")
 
         def work():
             with contextlib.closing(store.open_registry(api)) as conn:
                 rows = store.list_artifacts(conn, profiles=profiles, board=q.get("board") or None, kind=kind,
-                                            source=source, q=q.get("q") or None, before=before, limit=limit + 1)
+                                            source=source, task_id=task_id, q=q.get("q") or None, before=before, limit=limit + 1)
                 page, has_more = rows[:limit], len(rows) > limit
                 items = [_summary(api, r, store.list_versions(conn, r["id"])) for r in page]
                 cursor = _cursor_encode(page[-1]) if page else (q.get("cursor") or "")
