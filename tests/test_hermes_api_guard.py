@@ -100,7 +100,11 @@ def test_선택_심볼이_빠져도_로드된다(monkeypatch):
 
 
 def test_선택_모듈이_통째로_없어도_로드된다(monkeypatch):
-    _install(monkeypatch, skip_modules=tuple(module for module, _names in _hermes_api.OPTIONAL_SPEC))
+    # 필수 모듈(hermes_constants)에 붙은 선택 심볼은 모듈째 빠질 수 없다 — 그 심볼만 뺀다.
+    required_modules = {module for module, _names in _hermes_api.SPEC}
+    optional_only = tuple(m for m, _n in _hermes_api.OPTIONAL_SPEC if m not in required_modules)
+    optional_names = tuple(n for m, names in _hermes_api.OPTIONAL_SPEC if m in required_modules for n in names)
+    _install(monkeypatch, skip_modules=optional_only, missing=optional_names)
     api = _hermes_api.load()
     for name in _hermes_api.OPTIONAL:
         assert getattr(api, name) is None
