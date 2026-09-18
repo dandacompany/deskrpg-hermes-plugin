@@ -27,9 +27,18 @@ _DETAIL_MAX = 200
 
 
 def _hermes_profile(api, raw_name: str):
-    """Hermes 의 `profile` 인자 — default 는 None(`_oauth_profile_name` 규칙)."""
+    """Hermes 의 `profile` 인자 — default 는 None(`_oauth_profile_name` 규칙).
+
+    `_oauth_profile_name` 은 `current` 도 None(=default)으로 바꾸는데, `current` 는 Hermes 에서 만들 수 있는
+    프로필 이름이다. 그대로 넘기면 `current` 프로필이 default 의 세션을 폴링·취소하고, 로그인 토큰이
+    default 의 auth.json 에 저장된다. 이름이 그대로 돌아오지 않는 프로필은 거절한다.
+    """
     name = api.normalize_profile_name(raw_name)
-    return api._oauth_profile_name(None if name == "default" else name)
+    if name == "default":
+        return api._oauth_profile_name(None)
+    if api._oauth_profile_name(name) != name:
+        raise RequestError(400, "invalid_profile", "this profile name cannot be used for OAuth login")
+    return name
 
 
 def _http_error(exc):
@@ -49,6 +58,7 @@ def start_handler(api):
     @guarded
     async def handler(request):
         resolve_profile_home(api, request.match_info["profile"])  # 404·400 검증
+        profile = _hermes_profile(api, request.match_info["profile"])
         provider_id = request.match_info["provider"]
         _require_device(api, provider_id)
         # Hermes 의 시작 라우트와 같은 순서 — 만료 세션(15분)을 먼저 치운다. 대시보드는 다른 프로세스라
@@ -57,15 +67,15 @@ def start_handler(api):
         if gc is not None:
             gc()
         try:
-            out = await api._start_device_code_flow(
-                provider_id, profile=_hermes_profile(api, request.match_info["profile"]),
-            )
+            out = await api._start_device_code_flow(provider_id, profile=profile)
         except Exception as exc:  # noqa: BLE001 — Hermes 의 HTTPException 류
             status, detail = _http_error(exc)
             if status == 504:
                 raise RequestError(504, "oauth_start_timeout", detail) from None
             if status == 400:
-                raise RequestError(400, "oauth_flow_unsupported", detail) from None
+                # 디바이스 로그인 지원은 위에서 확인했다 — 여기의 400 은 Hermes 가 이 시작을 거절한 것이다
+                # (예: Nous "이미 로그인됨"·무료 등급 불가).
+                raise RequestError(400, "oauth_start_rejected", detail) from None
             logger.warning("[deskrpg] OAuth 시작 실패: %s — %s", provider_id, type(exc).__name__)
             raise RequestError(502, "oauth_start_failed", detail or type(exc).__name__) from None
         url = str(out.get("verification_url") or "")
@@ -86,12 +96,10 @@ def poll_handler(api):
     @guarded
     async def handler(request):
         resolve_profile_home(api, request.match_info["profile"])
+        profile = _hermes_profile(api, request.match_info["profile"])
         provider_id = request.match_info["provider"]
         try:
-            out = await api.poll_oauth_session(
-                provider_id, request.match_info["session_id"],
-                profile=_hermes_profile(api, request.match_info["profile"]),
-            )
+            out = await api.poll_oauth_session(provider_id, request.match_info["session_id"], profile=profile)
         except Exception as exc:  # noqa: BLE001
             status, _detail = _http_error(exc)
             if status == 404:

@@ -115,7 +115,9 @@ async def test_다른_프로필의_세션은_취소할_수_없다(aiohttp_client
     await client.post("/p/noah/deskrpg/oauth/openai-codex/start")
     resp = await client.delete("/p/mia/deskrpg/oauth/sessions/sid-1")
     assert resp.status == 400
+    assert (await resp.json())["error"] == "oauth_session_mismatch"
     assert "sid-1" in oauth_api._oauth_sessions
+    assert "cancelled" not in oauth_api._oauth_sessions["sid-1"]
 
 
 async def test_디바이스_로그인이_없는_프로바이더는_400(aiohttp_client, oauth_api):
@@ -209,3 +211,70 @@ async def test_시작_타임아웃은_504(aiohttp_client, oauth_api):
     resp = await client.post("/p/noah/deskrpg/oauth/openai-codex/start")
     assert resp.status == 504
     assert (await resp.json())["error"] == "oauth_start_timeout"
+
+
+async def _assert_cross_profile_rejected(client, api, path_profile):
+    poll = await client.get(f"/p/{path_profile}/deskrpg/oauth/openai-codex/sessions/sid-1")
+    assert poll.status == 400
+    assert (await poll.json())["error"] == "oauth_session_mismatch"
+    cancel = await client.delete(f"/p/{path_profile}/deskrpg/oauth/sessions/sid-1")
+    assert cancel.status == 400
+    assert (await cancel.json())["error"] == "oauth_session_mismatch"
+    assert "sid-1" in api._oauth_sessions and "cancelled" not in api._oauth_sessions["sid-1"]
+
+
+async def test_default_세션은_이름있는_프로필에서_폴링도_취소도_못한다(aiohttp_client, oauth_api):
+    oauth_api.create_profile("default")
+    client = await _client(aiohttp_client, oauth_api)
+    assert (await client.post("/p/default/deskrpg/oauth/openai-codex/start")).status == 200
+    await _assert_cross_profile_rejected(client, oauth_api, "noah")
+
+
+async def test_이름있는_세션은_default_경로에서_폴링도_취소도_못한다(aiohttp_client, oauth_api):
+    oauth_api.create_profile("default")
+    client = await _client(aiohttp_client, oauth_api)
+    assert (await client.post("/p/noah/deskrpg/oauth/openai-codex/start")).status == 200
+    await _assert_cross_profile_rejected(client, oauth_api, "default")
+
+
+async def test_다른_프로바이더로_폴링하면_불일치다(aiohttp_client, oauth_api):
+    client = await _client(aiohttp_client, oauth_api)
+    await client.post("/p/noah/deskrpg/oauth/openai-codex/start")
+    resp = await client.get("/p/noah/deskrpg/oauth/nous/sessions/sid-1")
+    assert resp.status == 400
+    assert (await resp.json())["error"] == "oauth_session_mismatch"
+
+
+# `current` 는 Hermes 에서 유효한 프로필 이름이지만 `_oauth_profile_name` 은 그것을 None(=default)으로 바꾼다.
+# 그대로 넘기면 `current` 프로필이 default 의 세션을 보고, Codex 토큰이 default 의 auth.json 에 저장된다.
+async def test_current_프로필은_시작을_거절한다(aiohttp_client, oauth_api):
+    oauth_api.create_profile("current")
+    client = await _client(aiohttp_client, oauth_api)
+    resp = await client.post("/p/current/deskrpg/oauth/openai-codex/start")
+    assert resp.status == 400
+    assert (await resp.json())["error"] == "invalid_profile"
+    assert "start" not in oauth_api._calls and oauth_api._oauth_sessions == {}
+
+
+async def test_current_프로필은_default_세션을_폴링도_취소도_못한다(aiohttp_client, oauth_api):
+    oauth_api.create_profile("default")
+    oauth_api.create_profile("current")
+    client = await _client(aiohttp_client, oauth_api)
+    assert (await client.post("/p/default/deskrpg/oauth/openai-codex/start")).status == 200
+    poll = await client.get("/p/current/deskrpg/oauth/openai-codex/sessions/sid-1")
+    assert poll.status == 400 and (await poll.json())["error"] == "invalid_profile"
+    cancel = await client.delete("/p/current/deskrpg/oauth/sessions/sid-1")
+    assert cancel.status == 400 and (await cancel.json())["error"] == "invalid_profile"
+    assert "sid-1" in oauth_api._oauth_sessions and "cancelled" not in oauth_api._oauth_sessions["sid-1"]
+
+
+async def test_디바이스_지원_프로바이더의_Hermes_400_은_거절로_구분한다(aiohttp_client, oauth_api):
+    async def refuse(provider_id, profile=None):
+        raise FakeHTTPException(400, "Already signed in to Nous Portal. " + "y" * 400)
+    oauth_api._start_device_code_flow = refuse
+    client = await _client(aiohttp_client, oauth_api)
+    resp = await client.post("/p/noah/deskrpg/oauth/openai-codex/start")
+    assert resp.status == 400
+    body = await resp.json()
+    assert body["error"] == "oauth_start_rejected"
+    assert body["detail"].startswith("Already signed in") and len(body["detail"]) <= 200
