@@ -19,7 +19,7 @@ from . import artifacts_context as context
 from . import artifacts_detect as detect
 from . import artifacts_policy as policy
 from . import artifacts_store as store
-from .artifacts_tool import TOOL_NAME, artifact_max_bytes
+from .artifacts_tool import TOOL_NAME, artifact_storage_max_bytes
 from .common import log_event
 
 logger = logging.getLogger("deskrpg_plugin")
@@ -58,7 +58,7 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
     if not candidates:
         return
     ctx = None
-    limit = artifact_max_bytes(api)
+    limit = artifact_storage_max_bytes()
     saved = 0
     for raw in candidates:
         if saved >= MAX_FILES_PER_CALL:

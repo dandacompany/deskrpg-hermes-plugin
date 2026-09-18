@@ -17,7 +17,7 @@ from aiohttp import web
 
 from . import artifacts_policy as policy
 from . import artifacts_store as store
-from .artifacts_tool import artifact_max_bytes
+from .artifacts_tool import artifact_upload_max_bytes
 from .common import RequestError, guarded, json_error, log_event, read_json_object, run_blocking
 from .contract_fields import ARTIFACT_SUMMARY_KEYS, ARTIFACT_VERSION_KEYS
 from .kanban_common import project
@@ -278,7 +278,7 @@ def add_version_handler(api):
     @guarded
     async def handler(request):
         artifact_id = request.match_info["artifact_id"]
-        limit = artifact_max_bytes(api)  # 본문을 읽기 전에 상한부터 구한다 — 끊을 기준이 먼저다.
+        limit = artifact_upload_max_bytes(api)  # 본문을 읽기 전에 상한부터 구한다 — 끊을 기준이 먼저다.
         try:
             data, filename, note = await _read_edit_body(request, limit)
         except _TooLarge:

@@ -169,3 +169,10 @@ async def test_주소_해석이_던져도_info_는_200_이고_null(aiohttp_clien
     fake_api.resolve_public_url = boom
     body = await _info(aiohttp_client, fake_api)
     assert body["dashboard_url"] is None
+
+
+async def test_info_의_artifact_max_bytes_는_업로드_상한이라_요청_본문_상한에_묶인다(aiohttp_client, fake_api, monkeypatch):
+    monkeypatch.delenv("HERMES_DESKRPG_ARTIFACT_MAX_BYTES", raising=False)
+    fake_api.MAX_REQUEST_BYTES = 10
+    body = await _info(aiohttp_client, fake_api)
+    assert body["artifact_max_bytes"] == 10

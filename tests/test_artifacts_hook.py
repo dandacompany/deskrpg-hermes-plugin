@@ -134,3 +134,12 @@ def test_중간에_사라진_파일은_건너뛰고_다음_후보는_잡는다(a
     with contextlib.closing(store.open_registry(api)) as conn:
         kinds = [r["kind"] for r in conn.execute("SELECT kind FROM artifact_events")]
         assert "artifact.capture_failed" not in kinds
+
+
+def test_훅은_요청_본문_상한에_묶이지_않고_저장소_상한을_쓴다(api, tmp_path, monkeypatch):
+    """훅도 HTTP 를 거치지 않는다 — MAX_REQUEST_BYTES 가 작아도 20 바이트 산출 파일을 승격한다(I2)."""
+    monkeypatch.delenv("HERMES_DESKRPG_ARTIFACT_MAX_BYTES", raising=False)
+    api.MAX_REQUEST_BYTES = 10
+    p = tmp_path / "kanban" / "big.md"; p.write_bytes(b"0" * 20)
+    _fire(api, "write_file", json.dumps({"output_path": str(p)}))
+    assert [r["title"] for r in _rows(api)] == ["big.md"]

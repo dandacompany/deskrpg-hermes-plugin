@@ -118,3 +118,12 @@ def test_예상_못_한_예외도_JSON_오류로_돌아온다(api, monkeypatch):
     monkeypatch.setattr(tool.store, "open_registry", lambda api: (_ for _ in ()).throw(RuntimeError("disk")))
     out = _call(api, kind="document", title="t", summary="s", content="x", filename="a.md")
     assert out["error"] == "internal_error" and out["detail"] == "RuntimeError"
+
+
+def test_도구는_요청_본문_상한에_묶이지_않고_저장소_상한을_쓴다(api, monkeypatch):
+    """도구는 HTTP 를 거치지 않는다 — MAX_REQUEST_BYTES 가 작아도 저장소 상한(기본 100 MiB)까지 저장한다(I2)."""
+    monkeypatch.delenv("HERMES_DESKRPG_ARTIFACT_MAX_BYTES", raising=False)
+    api.MAX_REQUEST_BYTES = 10
+    out = _call(api, kind="document", title="t", summary="s", content="0" * 20, filename="big.md")
+    assert "error" not in out and out["version"] == 1
+    assert tool.artifact_storage_max_bytes() == 100 * 1024 * 1024

@@ -196,3 +196,15 @@ async def test_content_는_sandbox_CSP_와_nosniff_를_200_과_206_에_모두_�
     assert resp.status == 206
     assert resp.headers["Content-Security-Policy"] == "sandbox"
     assert resp.headers["X-Content-Type-Options"] == "nosniff"
+
+
+async def test_사람_편집은_요청_본문_상한으로_묶여_413_의_max_bytes_가_그것이다(client, api, monkeypatch):
+    """사람 편집은 HTTP 로 오므로 min(MAX_REQUEST_BYTES, 저장소 상한) 이 실효 상한이다(I2)."""
+    monkeypatch.delenv("HERMES_DESKRPG_ARTIFACT_MAX_BYTES", raising=False)
+    api.MAX_REQUEST_BYTES = 10
+    r = _seed(api)
+    resp = await client.post(f"/deskrpg/artifacts/{r.artifact_id}/versions",
+                             json={"content": "0" * 20, "filename": "r.md"})
+    assert resp.status == 413
+    body = await resp.json()
+    assert body["error"] == "artifact_too_large" and body["max_bytes"] == 10

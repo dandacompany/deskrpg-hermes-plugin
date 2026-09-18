@@ -21,7 +21,7 @@ from . import kanban_swarm as _kanban_swarm
 from . import cron as _cron
 from . import events as _events
 from . import artifacts_routes as _artifacts_routes
-from .artifacts_tool import artifact_max_bytes as _artifact_max_bytes
+from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
 def _read_plugin_version() -> str:
@@ -335,7 +335,7 @@ def _make_info(api):
                 "capabilities": list(capabilities(api)),
                 "timezone": _info_timezone(api),
                 "dashboard_url": _info_dashboard_url(api),
-                "artifact_max_bytes": _artifact_max_bytes(api),
+                "artifact_max_bytes": _artifact_upload_max_bytes(api),
                 "kanban": {
                     "dispatcher_present": _info_dispatcher_present(api),
                     "attachments": True,

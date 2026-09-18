@@ -46,10 +46,21 @@ TOOL_SCHEMA = {
 }
 
 
-def artifact_max_bytes(api) -> int:
+def artifact_storage_max_bytes() -> int:
+    """저장소 상한 — `HERMES_DESKRPG_ARTIFACT_MAX_BYTES` 또는 100 MiB.
+
+    도구와 훅은 HTTP 를 거치지 않으므로 이 값만 쓴다. 요청 본문 상한(`MAX_REQUEST_BYTES`)으로 깎지 않는다(I2).
+    """
     raw = os.environ.get("HERMES_DESKRPG_ARTIFACT_MAX_BYTES")
-    limit = int(raw) if raw and raw.isdigit() else DEFAULT_MAX_BYTES
-    return min(int(api.MAX_REQUEST_BYTES), limit)
+    return int(raw) if raw and raw.isascii() and raw.isdigit() else DEFAULT_MAX_BYTES
+
+
+def artifact_upload_max_bytes(api) -> int:
+    """HTTP 로 들어오는 사람 편집의 실효 상한 — 게이트웨이 요청 본문 상한과 저장소 상한 중 작은 쪽.
+
+    `/deskrpg/info.artifact_max_bytes` 도 이 값이다(DeskRPG 가 업로드 전에 거르는 기준).
+    """
+    return min(int(api.MAX_REQUEST_BYTES), artifact_storage_max_bytes())
 
 
 def _err(code: str, detail: str, **extra) -> str:
@@ -79,7 +90,7 @@ def _save(api, args: dict, kwargs: dict) -> str:
     path, content = _str(args, "path", 4096), args.get("content")
     if bool(path) == isinstance(content, str):
         return _err("artifact_incomplete", "path 또는 content 중 정확히 하나를 넘긴다")
-    limit = artifact_max_bytes(api)
+    limit = artifact_storage_max_bytes()
     try:
         if path:
             source = policy.resolve_source_path(api, path)
