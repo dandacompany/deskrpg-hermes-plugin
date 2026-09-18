@@ -41,7 +41,7 @@ def test_모델_설정과_모델_키만_복사한다(fake_api, default_home):
     assert f"OPENAI_API_KEY={SECRET}" in env and "OPENAI_BASE_URL=https://x" in env
     assert "TELEGRAM" not in env and "API_SERVER_KEY" not in env
     assert got == {"configKeys": ["auxiliary", "model", "reasoning_effort"],
-                   "envKeys": ["OPENAI_API_KEY", "OPENAI_BASE_URL"], "needsLogin": []}
+                   "envKeys": ["OPENAI_API_KEY", "OPENAI_BASE_URL"], "needsLogin": [], "keyScope": "referenced"}
 
 
 def test_기본_프로바이더가_OAuth_면_needsLogin_에_싣는다(fake_api, default_home):
@@ -88,3 +88,78 @@ def test_복제한_config_는_0600_으로_원자적으로_쓴다(fake_api, defau
     cloneprofile.clone_from_default(fake_api, "noah")
     assert stat.S_IMODE(os.stat(target / "config.yaml").st_mode) == 0o600
     assert not [p.name for p in target.iterdir() if p.name.startswith(".config.yaml.")]
+
+
+def _prov(auth_type, *names, base=""):
+    import types
+    return types.SimpleNamespace(auth_type=auth_type, api_key_env_vars=names, base_url_env_var=base)
+
+
+ALL_ENV = {
+    "OPENAI_API_KEY": "sk-openai-111", "OPENAI_BASE_URL": "https://o",
+    "OPENROUTER_API_KEY": "sk-or-222",
+    "ANTHROPIC_API_KEY": "sk-ant-333", "ANTHROPIC_TOKEN": "ant-tok-444", "CLAUDE_CODE_OAUTH_TOKEN": "cc-oauth-555",
+    "COPILOT_GITHUB_TOKEN": "gho-666", "GH_TOKEN": "gh-777", "GITHUB_TOKEN": "ghp-888",
+    "HF_TOKEN": "hf-999", "NOUS_API_KEY": "nous-000", "TELEGRAM_BOT_TOKEN": "bot-aaa",
+}
+
+
+@pytest.fixture
+def wide(fake_api, default_home):
+    fake_api.PROVIDER_REGISTRY = {
+        "openai": _prov("api_key", "OPENAI_API_KEY", base="OPENAI_BASE_URL"),
+        "openrouter": _prov("api_key", "OPENROUTER_API_KEY"),
+        "anthropic": _prov("api_key", "ANTHROPIC_API_KEY", "ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"),
+        "copilot": _prov("api_key", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"),
+        "huggingface": _prov("api_key", "HF_TOKEN"),
+        "nous": _prov("oauth_device_code", "NOUS_API_KEY"),
+    }
+    (default_home / ".env").write_text("".join(f"{k}={v}\n" for k, v in ALL_ENV.items()), encoding="utf-8")
+    return default_home
+
+
+def _write_cfg(home, cfg):
+    (home / "config.yaml").write_text(yaml.safe_dump(cfg), encoding="utf-8")
+
+
+REFERENCING = {
+    "model": {"default": "gpt-x", "provider": "openai"},
+    "fallback_providers": [{"provider": "copilot", "model": "gpt-4o"}, {"provider": "ghost", "model": "x"}, "junk"],
+    "auxiliary": {"vision": {"provider": "huggingface"}, "compression": {"provider": "auto"}, "free_only": False},
+}
+
+
+def test_referenced_는_설정이_가리키는_프로바이더의_키만_복사한다(fake_api, wide):
+    _write_cfg(wide, REFERENCING)
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah")
+    assert got["keyScope"] == "referenced"
+    assert got["envKeys"] == ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "HF_TOKEN",
+                              "OPENAI_API_KEY", "OPENAI_BASE_URL"]
+
+
+def test_api_keys_는_api_key_프로바이더_전부_토큰류는_빼고_참조분은_더한다(fake_api, wide):
+    _write_cfg(wide, REFERENCING)
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah", key_scope="api_keys")
+    assert got["keyScope"] == "api_keys"
+    assert got["envKeys"] == ["ANTHROPIC_API_KEY", "COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "HF_TOKEN",
+                              "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENROUTER_API_KEY"]
+
+
+def test_api_keys_는_참조되지_않은_토큰류_이름을_복사하지_않는다(fake_api, wide):
+    _write_cfg(wide, {"model": {"default": "gpt-x", "provider": "openai"}})
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah", key_scope="api_keys")
+    for name in ("GH_TOKEN", "GITHUB_TOKEN", "HF_TOKEN", "ANTHROPIC_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
+                 "NOUS_API_KEY", "TELEGRAM_BOT_TOKEN"):
+        assert name not in got["envKeys"]
+    assert "COPILOT_GITHUB_TOKEN" in got["envKeys"] and "OPENROUTER_API_KEY" in got["envKeys"]
+    env = (fake_api.get_profile_dir("noah") / ".env").read_text(encoding="utf-8")
+    assert "ghp-888" not in env and "nous-000" not in env
+
+
+def test_모르는_key_scope_는_거절한다(fake_api, wide):
+    fake_api.create_profile("noah")
+    with pytest.raises(ValueError):
+        cloneprofile.clone_from_default(fake_api, "noah", key_scope="all")

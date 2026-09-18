@@ -283,7 +283,7 @@ async def test_cloneFrom_default_면_복제_결과의_이름만_싣는다(aiohtt
     text = await resp.text()
     assert "sk-SECRET" not in text
     body = await resp.json()
-    assert body["cloned"] == {"configKeys": ["model"], "envKeys": ["OPENAI_API_KEY"]}
+    assert body["cloned"] == {"configKeys": ["model"], "envKeys": ["OPENAI_API_KEY"], "keyScope": "referenced"}
     assert body["needsLogin"] == []
     assert body["keyIssued"] is True
     env = (orig("noah") / ".env").read_text(encoding="utf-8")
@@ -315,3 +315,41 @@ async def test_cloneFrom_이_없으면_예전과_같다(aiohttp_client, fake_api
     client = await _client(aiohttp_client, fake_api)
     body = await (await client.post("/deskrpg/profiles", json={"name": "noah"})).json()
     assert "cloned" not in body and "needsLogin" not in body and "cloneError" not in body
+
+
+def _default_home(fake_api, tmp_path):
+    import yaml
+    home = tmp_path / "default-home"
+    home.mkdir()
+    orig = fake_api.get_profile_dir
+    fake_api.get_profile_dir = lambda name: home if name == "default" else orig(name)
+    (home / "config.yaml").write_text(yaml.safe_dump({"model": {"default": "m", "provider": "openai"}}), encoding="utf-8")
+    (home / ".env").write_text("OPENAI_API_KEY=sk-SECRET-abcdefgh12345678\n", encoding="utf-8")
+    return home
+
+
+@pytest.mark.parametrize("scope", [None, "referenced", "api_keys"])
+async def test_cloneKeys_는_keyScope_로_돌아온다(aiohttp_client, fake_api, tmp_path, scope):
+    _default_home(fake_api, tmp_path)
+    client = await _client(aiohttp_client, fake_api)
+    payload = {"name": "noah", "cloneFrom": "default"}
+    if scope:
+        payload["cloneKeys"] = scope
+    resp = await client.post("/deskrpg/profiles", json=payload)
+    assert resp.status == 201
+    body = await resp.json()
+    assert body["cloned"]["keyScope"] == (scope or "referenced")
+    assert "sk-SECRET" not in await resp.text()
+
+
+@pytest.mark.parametrize("payload", [
+    {"name": "noah", "cloneFrom": "default", "cloneKeys": "all"},
+    {"name": "noah", "cloneFrom": "default", "cloneKeys": ["api_keys"]},
+    {"name": "noah", "cloneKeys": "api_keys"},
+])
+async def test_잘못된_cloneKeys_는_만들기_전에_400(aiohttp_client, fake_api, tmp_path, payload):
+    _default_home(fake_api, tmp_path)
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post("/deskrpg/profiles", json=payload)
+    assert resp.status == 400
+    assert not fake_api.profile_exists("noah")

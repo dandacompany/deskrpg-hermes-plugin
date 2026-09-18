@@ -83,6 +83,12 @@ def create_handler(api):
             raise web.HTTPBadRequest(reason="cloneFrom must be 'default'")
         if clone_from and getattr(api, "PROVIDER_REGISTRY", None) is None:
             raise web.HTTPBadRequest(reason="cloneFrom is not supported by this Hermes build")
+        clone_keys = payload.get("cloneKeys")
+        if clone_keys is not None:
+            if not clone_from:
+                raise web.HTTPBadRequest(reason="cloneKeys requires cloneFrom")
+            if clone_keys not in cloneprofile.KEY_SCOPES:
+                raise web.HTTPBadRequest(reason=f"cloneKeys must be one of: {', '.join(cloneprofile.KEY_SCOPES)}")
         if api.profile_exists(name):
             return web.json_response({"error": "already_exists", "name": name}, status=409)
         api.create_profile(name)
@@ -94,8 +100,10 @@ def create_handler(api):
         # 말하고 cloneError 에 (값 없는) 사유를 싣는다. 응답에는 키 **이름**만 나간다.
         if clone_from:
             try:
-                cloned = await asyncio.to_thread(cloneprofile.clone_from_default, api, name)
-                body["cloned"] = {"configKeys": cloned["configKeys"], "envKeys": cloned["envKeys"]}
+                cloned = await asyncio.to_thread(cloneprofile.clone_from_default, api, name,
+                                                 key_scope=clone_keys or "referenced")
+                body["cloned"] = {"configKeys": cloned["configKeys"], "envKeys": cloned["envKeys"],
+                                  "keyScope": cloned["keyScope"]}
                 body["needsLogin"] = cloned["needsLogin"]
             except cloneprofile.CloneFailed as exc:
                 body["cloneError"] = exc.reason
