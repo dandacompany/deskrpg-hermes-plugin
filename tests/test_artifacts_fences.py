@@ -160,3 +160,56 @@ def test_응답에서_조건을_넘는_블록만_순서대로_고른다():
 
 def test_응답이_비었거나_문자열이_아니면_빈_목록이다():
     assert fences.detect_in_response("") == [] and fences.detect_in_response(None) == []
+
+
+# ---------------------------------------------------------------------------
+# 리뷰 수정 (0.8.1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("title,expected", [
+    ("Example.com", "Example.com.html"),
+    ("My App v2.0", "My-App-v2.0.html"),
+    ("report.PDF", "report.PDF.html"),
+    ("..", "artifact.html"),
+])
+def test_HTML_파일명은_제목과_무관하게_항상_html_로_끝난다(title, expected):
+    got = fences.detect("html", _doc(title))
+    assert got.filename == expected and got.filename.endswith(".html")
+
+
+def test_SVG_파일명은_항상_svg_로_끝난다():
+    head = '<svg xmlns="http://www.w3.org/2000/svg"><title>logo.png</title><path d="'
+    body = head + "M" * 2100 + '"/></svg>'
+    assert fences.detect("svg", body).filename == "logo.png.svg"
+
+
+def test_코드의_파일명_주석_확장자가_언어와_다르면_주석을_무시한다():
+    got = fences.detect("python", _lines(48, "# App.tsx"))
+    assert got.kind == "file" and got.filename.endswith(".py")
+
+
+def test_ts_와_tsx_js_와_jsx_는_서로_호환되는_확장자로_본다():
+    assert fences.detect("typescript", _lines(48, "// src/App.tsx")).filename == "App.tsx"
+    assert fences.detect("javascript", _lines(48, "// Widget.jsx")).filename == "Widget.jsx"
+
+
+def test_head_나_body_만_있는_HTML_은_문서_틀로_감싼다():
+    body_only = "<body><h1>보고</h1>" + "b" * 200 + "</body>"
+    got = fences.detect("html", body_only)
+    assert got.kind == "web" and got.content.lower().startswith("<!doctype html>")
+
+
+def test_제목의_HTML_엔티티를_되돌린다():
+    got = fences.detect("html", _doc("Tom &amp; Jerry"))
+    assert got.title == "Tom & Jerry"
+
+
+def test_닫히지_않은_태그가_반복돼도_선형_시간에_끝난다():
+    import time
+
+    evil = "<x " * 40_000  # 120 KB, '>' 없음
+    started = time.perf_counter()
+    assert fences.detect("html", evil) is None
+    assert fences.detect("html", "<title" * 20_000 + "<html>" + "y" * 200) is not None
+    assert time.perf_counter() - started < 1.0

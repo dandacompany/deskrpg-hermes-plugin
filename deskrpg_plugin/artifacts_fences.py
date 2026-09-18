@@ -12,6 +12,7 @@
 """
 
 import dataclasses
+import html
 import re
 from pathlib import Path
 
@@ -40,7 +41,10 @@ EXTENSION_BY_LANGUAGE = {
 _OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _LANG_TOKEN_RE = re.compile(r"[^a-z0-9+#._-]")
 HTML_DOC_RE = re.compile(r"<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]", re.I)
-HTML_TAG_RE = re.compile(r"<[a-z][a-z0-9-]*(\s[^>]*)?>", re.I)
+# 속성 구간을 `[^<>]*` 로 막는다 — 옛 `(\s[^>]*)?>` 는 `>` 없는 입력에서 시도마다 끝까지 훑어 제곱 시간이
+# 걸렸다(리뷰 실측 39초). 이제 각 시도는 다음 `<` 에서 끊긴다.
+HTML_TAG_RE = re.compile(r"<[a-z][a-z0-9-]*(?:\s[^<>]*)?/?>", re.I)
+TITLE_SCAN_CHARS = 65536
 _SVG_RE = re.compile(r"<svg[\s>]", re.I)
 _TAGS_RE = re.compile(r"<[^>]*>")
 _WS_RE = re.compile(r"\s+")
@@ -100,17 +104,33 @@ def _strip_tags(value: str) -> str:
 
 
 def _title_from_tag(content: str, tag: str) -> str:
-    match = re.search(rf"<{tag}[^>]*>([\s\S]*?)</{tag}>", content, re.I)
-    return _strip_tags(match.group(1))[:80] if match else ""
+    """앞부분(64 KB)에서 첫 `<tag …>…</tag>` 의 텍스트. 정규식 대신 find 로 훑어 선형 시간을 지킨다."""
+    head = content[:TITLE_SCAN_CHARS]
+    low = head.lower()
+    opener = "<" + tag
+    i = low.find(opener)
+    while i != -1:
+        after = low[i + len(opener):i + len(opener) + 1]
+        if after and (after == ">" or after.isspace()):
+            start = low.find(">", i)
+            if start == -1:
+                return ""
+            end = low.find("</" + tag, start)
+            if end == -1:
+                return ""
+            return html.unescape(_strip_tags(head[start + 1:end]))[:80]
+        i = low.find(opener, i + 1)
+    return ""
 
 
 def _safe_base(title: str) -> str:
-    return _WS_RE.sub("-", _UNSAFE_NAME_RE.sub("", title).strip())[:60] or "artifact"
+    base = _WS_RE.sub("-", _UNSAFE_NAME_RE.sub("", title).strip())[:60].strip(".")
+    return base or "artifact"
 
 
-def _filename(title: str, ext: str) -> str:
-    base = _safe_base(title)
-    return base if re.search(r"\.[a-z0-9]{1,8}$", base, re.I) else base + ext
+def _compatible_extensions(ext: str) -> set:
+    """언어의 확장자와 함께 받아 주는 확장자 — TS 코드가 .tsx 에, JS 코드가 .jsx 에 있는 건 정상이다."""
+    return {ext} | ({".tsx"} if ext == ".ts" else set()) | ({".jsx"} if ext == ".js" else set())
 
 
 def compose_html(fragment: str) -> str:
@@ -123,15 +143,19 @@ def compose_html(fragment: str) -> str:
     )
 
 
-def _code_title(language: str, content: str) -> str:
+def _code_title_and_filename(language: str, content: str) -> tuple:
+    """(제목, 파일명). 파일명 주석은 확장자가 언어와 맞을 때만 믿는다 — `# App.tsx` 로 시작하는 파이썬을
+    react 로 저장하지 않게."""
+    ext = EXTENSION_BY_LANGUAGE[language]
     head = content[:2000]
     named = FILENAME_COMMENT_RE.search(head)
     if named:
-        return Path(named.group(1)).name
+        name = Path(named.group(1)).name
+        if Path(name).suffix.lower() in _compatible_extensions(ext):
+            return name, name
     declared = DECLARATION_RE.search(head)
-    if declared:
-        return declared.group(1)
-    return language
+    title = declared.group(1) if declared else language
+    return title, _safe_base(title) + ext
 
 
 def detect(language, code) -> Detection | None:
@@ -142,25 +166,32 @@ def detect(language, code) -> Detection | None:
     if lang in HTML_LANGUAGES:
         is_doc = bool(HTML_DOC_RE.search(trimmed))
         if is_doc and len(trimmed) >= HTML_DOC_MIN_CHARS:
-            content = trimmed
+            low = trimmed[:TITLE_SCAN_CHARS].lower()
+            # `<head>`·`<body>` 만 있는 블록은 문서 틀로 감싼다 — `web` 은 완전한 문서라는 계약(도구와 같게).
+            content = trimmed if ("<html" in low or "<!doctype" in low) else compose_html(trimmed)
         elif not is_doc and len(trimmed) >= HTML_FRAGMENT_MIN_CHARS and HTML_TAG_RE.search(trimmed):
             content = compose_html(trimmed)
         else:
             return None
         title = _title_from_tag(trimmed, "title") or _title_from_tag(trimmed, "h1") or "HTML"
-        return Detection("web", lang, title, _filename(title, ".html"), content)
+        return Detection("web", lang, title, _safe_base(title) + ".html", content)
     if lang == "svg":
         if len(trimmed) < SVG_MIN_CHARS or not _SVG_RE.search(trimmed):
             return None
         title = _title_from_tag(trimmed, "title") or "SVG"
-        return Detection("image", lang, title, _filename(title, ".svg"), trimmed)
+        return Detection("image", lang, title, _safe_base(title) + ".svg", trimmed)
     if lang in NON_ARTIFACT_LANGUAGES or lang not in EXTENSION_BY_LANGUAGE:
         return None
     if len(trimmed) < CODE_MIN_CHARS and trimmed.count("\n") + 1 < CODE_MIN_LINES:
         return None
-    title = _code_title(lang, trimmed)
-    filename = _filename(title, EXTENSION_BY_LANGUAGE[lang])
+    title, filename = _code_title_and_filename(lang, trimmed)
     return Detection(policy.kind_for_filename(filename), lang, title, filename, trimmed)
+
+
+def is_candidate_language(language: str) -> bool:
+    """감지 대상이 될 수 있는 언어 표기인가 — 상한을 넘는 블록을 정규식에 넣기 전에 가르는 데 쓴다."""
+    lang = _language(language or "")
+    return lang in HTML_LANGUAGES or lang == "svg" or lang in EXTENSION_BY_LANGUAGE
 
 
 def detect_in_response(text) -> list:

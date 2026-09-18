@@ -19,6 +19,7 @@ duration_ms, status, error_type, error_message, middleware_trace (`model_tools.p
 import contextlib
 import logging
 import os
+import sqlite3
 import time
 
 from . import artifacts_context as context
@@ -136,33 +137,55 @@ def make_response_hook(api):
 
 
 def _capture_response(api, response, session_id: str, task_id) -> None:
+    """턴 하나의 비용을 묶는다: 시도는 `MAX_RESPONSE_BLOCKS` 번까지, 레지스트리 연결은 하나,
+    capture_failed 사건은 이유를 합쳐 한 번. 레지스트리가 잠기면(`OperationalError`) 그 자리에서 멈춘다 —
+    남은 블록마다 잠금 대기를 되풀이하면 턴 마무리가 그만큼 늦어진다."""
     if not responses_enabled():
         return
-    detections = fences.detect_in_response(response)
-    if not detections:
+    blocks = fences.extract_blocks(response)
+    if not blocks:
         return
-    ctx = context.resolve_context(api, session_id=session_id, task_id=task_id)
     limit = artifact_storage_max_bytes()
-    saved = 0
-    for found in detections:
-        if saved >= MAX_RESPONSE_BLOCKS:
-            break
-        data = found.content.encode("utf-8")
-        if len(data) > limit:
-            record_capture_failure(api, tool_name=RESPONSE_SOURCE, reason="too_large")
-            continue
-        meta = store.ArtifactMeta(
-            kind=found.kind, title=found.title, summary=f"응답 속 {found.language} 코드 블록",
-            filename=found.filename, mime=policy.mime_for_filename(found.filename), profile=ctx.profile,
-            source_kind=ctx.source_kind, session_id=ctx.session_id, created_by=f"agent:{ctx.profile}",
-            captured_via="response", board=ctx.board, task_id=ctx.task_id,
-        )
-        try:
-            with contextlib.closing(store.open_registry(api)) as conn:
-                out = store.store_artifact_version(api, conn, meta=meta, data=data, max_bytes=limit)
-            log_event("artifact.capture_response", artifact_id=out.artifact_id, version=out.version,
-                      kind=meta.kind, deduped=out.deduped)
-            saved += 1
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("[deskrpg] 응답 아티팩트 저장 실패: %s", type(exc).__name__)
-            record_capture_failure(api, tool_name=RESPONSE_SOURCE, reason=type(exc).__name__)
+    ctx = conn = None
+    attempts = 0
+    reasons: list = []
+    try:
+        for block in blocks:
+            if attempts >= MAX_RESPONSE_BLOCKS:
+                break
+            if len(block.content.encode("utf-8")) > limit:
+                # 정규식 감지 전에 거른다 — 상한을 넘는 블록은 어차피 저장하지 못한다.
+                if fences.is_candidate_language(block.language):
+                    reasons.append("too_large")
+                continue
+            found = fences.detect(block.language, block.content)
+            if found is None:
+                continue
+            if ctx is None:
+                ctx = context.resolve_context(api, session_id=session_id, task_id=task_id)
+            meta = store.ArtifactMeta(
+                kind=found.kind, title=found.title, summary=f"응답 속 {found.language} 코드 블록",
+                filename=found.filename, mime=policy.mime_for_filename(found.filename), profile=ctx.profile,
+                source_kind=ctx.source_kind, session_id=ctx.session_id, created_by=f"agent:{ctx.profile}",
+                captured_via="response", board=ctx.board, task_id=ctx.task_id,
+            )
+            attempts += 1
+            try:
+                if conn is None:
+                    conn = store.open_registry(api)
+                out = store.store_artifact_version(api, conn, meta=meta, data=found.content.encode("utf-8"),
+                                                   max_bytes=limit)
+                log_event("artifact.capture_response", artifact_id=out.artifact_id, version=out.version,
+                          kind=meta.kind, deduped=out.deduped)
+            except sqlite3.OperationalError as exc:
+                logger.warning("[deskrpg] 응답 아티팩트 저장 중단(레지스트리): %s", type(exc).__name__)
+                reasons.append(type(exc).__name__)
+                break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[deskrpg] 응답 아티팩트 저장 실패: %s", type(exc).__name__)
+                reasons.append(type(exc).__name__)
+    finally:
+        if conn is not None:
+            conn.close()
+    if reasons:
+        record_capture_failure(api, tool_name=RESPONSE_SOURCE, reason=",".join(dict.fromkeys(reasons)))

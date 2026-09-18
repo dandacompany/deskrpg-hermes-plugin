@@ -120,3 +120,47 @@ def test_저장_중_예외는_삼키고_capture_failed_를_남긴다(api, monkey
 def test_응답이_문자열이_아니어도_던지지_않는다(api, response):
     _fire(api, response)
     assert not store.registry_path(api).exists()
+
+
+def test_상한을_넘는_블록은_감지_전에_건너뛰고_capture_failed_는_턴당_한_번이다(api, monkeypatch):
+    monkeypatch.setenv("HERMES_DESKRPG_ARTIFACT_MAX_BYTES", "100")
+    calls = []
+    real_detect = hook.fences.detect
+    monkeypatch.setattr(hook.fences, "detect", lambda *a, **k: calls.append(a) or real_detect(*a, **k))
+    answer = "\n\n".join(f"```html\n{_doc(f'큰{i}', 500)}\n```" for i in range(3))
+    _fire(api, answer)
+    assert calls == []  # 상한을 넘는 블록은 정규식 감지를 거치지 않는다
+    with contextlib.closing(store.open_registry(api)) as conn:
+        events = [r["kind"] for r in conn.execute("SELECT kind FROM artifact_events")]
+    assert events == ["artifact.capture_failed"]
+
+
+def test_레지스트리가_잠기면_첫_실패에서_멈추고_실패_사건은_한_번이다(api, monkeypatch):
+    import sqlite3
+
+    attempts = []
+
+    def locked(*a, **k):
+        attempts.append(1)
+        raise sqlite3.OperationalError("database is locked")
+
+    real = store.store_artifact_version
+    monkeypatch.setattr(store, "store_artifact_version", locked)
+    answer = "\n\n".join(f"```html\n{_doc(f'페이지{i}')}\n```" for i in range(5))
+    _fire(api, answer)
+    monkeypatch.setattr(store, "store_artifact_version", real)
+    assert attempts == [1]
+    with contextlib.closing(store.open_registry(api)) as conn:
+        events = [r["kind"] for r in conn.execute("SELECT kind FROM artifact_events")]
+    assert events == ["artifact.capture_failed"]
+
+
+def test_시도_자체를_턴당_여덟_번으로_묶는다(api, monkeypatch):
+    attempts = []
+    real = store.store_artifact_version
+    monkeypatch.setattr(store, "store_artifact_version",
+                        lambda *a, **k: attempts.append(1) or (_ for _ in ()).throw(ValueError("bad")))
+    answer = "\n\n".join(f"```html\n{_doc(f'페이지{i}')}\n```" for i in range(12))
+    _fire(api, answer)
+    monkeypatch.setattr(store, "store_artifact_version", real)
+    assert len(attempts) == hook.MAX_RESPONSE_BLOCKS
