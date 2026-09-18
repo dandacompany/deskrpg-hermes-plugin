@@ -43,6 +43,11 @@ KEY_SCOPES = ("referenced", "api_keys")
 # **가리키면** `referenced` 몫으로는 옮긴다 — 그래야 복제한 copilot 모델이 실제로 돈다.
 _TOKEN_CLASS_NAMES = frozenset({"GITHUB_TOKEN", "GH_TOKEN", "HF_TOKEN", "ANTHROPIC_TOKEN"})
 
+# `openrouter`/`custom` 은 Hermes `PROVIDER_REGISTRY` 에 없다(hermes_cli/auth.py:1339-1340 —
+# `resolve_provider` 가 둘을 레지스트리 밖에서 특별 취급한다). 레지스트리 순회로는 절대
+# 못 찾으므로 명시적으로 보충한다(2026-09-19 사용자 결정, F1).
+OPENROUTER_ENV_NAMES = frozenset({"OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"})
+
 
 def _env_names_of(pcfg) -> set[str]:
     names = {str(n) for n in (getattr(pcfg, "api_key_env_vars", None) or ()) if n}
@@ -103,13 +108,40 @@ def _referenced_providers(cfg: dict, aliases: dict) -> set[str]:
     return ids
 
 
+def _custom_provider_env_names(cfg: dict, referenced: set[str], key_scope: str) -> set[str]:
+    """참조된(또는 `api_keys` 범위의) `custom_providers` 항목의 `key_env` 이름.
+
+    항목 필드는 `hermes_cli/config.py:_VALID_CUSTOM_PROVIDER_FIELDS`(`name`·`key_env`, 레거시
+    `api_key_env`) 를 따른다. `name` 이 없는 항목은 임시 엔드포인트라 참조 id 가 리터럴
+    `"custom"` 이다. `key_env` 가 없는 항목은 (Hermes 에 그런 필드가 없다는 뜻이 아니라 이
+    항목이 그냥 안 쓴다는 뜻이라) 조용히 건너뛴다.
+    """
+    entries = cfg.get("custom_providers")
+    entries = entries if isinstance(entries, list) else []
+    names: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        key_env = str(entry.get("key_env") or entry.get("api_key_env") or "").strip()
+        if not key_env:
+            continue
+        entry_id = str(entry.get("name") or "").strip().lower() or "custom"
+        if key_scope == "api_keys" or entry_id in referenced:
+            names.add(key_env)
+    return names
+
+
 def _wanted_env_names(api, cfg: dict, key_scope: str) -> set[str]:
     """복사할 환경변수 **이름**. 레지스트리에 없는 프로바이더 id 는 건너뛴다."""
     registry = getattr(api, "PROVIDER_REGISTRY", None) or {}
+    referenced = _referenced_providers(cfg, _aliases(api))
     names: set[str] = set()
-    for pid in _referenced_providers(cfg, _aliases(api)):
+    for pid in referenced:
         if pid in registry:
             names |= _env_names_of(registry[pid])
+    if key_scope == "api_keys" or "openrouter" in referenced:
+        names |= OPENROUTER_ENV_NAMES
+    names |= _custom_provider_env_names(cfg, referenced, key_scope)
     if key_scope == "api_keys":
         for pcfg in registry.values():
             if getattr(pcfg, "auth_type", "api_key") == "api_key":

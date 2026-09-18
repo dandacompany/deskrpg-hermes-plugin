@@ -181,6 +181,89 @@ def test_별칭_심볼이_없는_빌드는_소문자만_맞춘다(fake_api, wide
     assert cloneprofile.clone_from_default(fake_api, "noah")["envKeys"] == ["OPENAI_API_KEY", "OPENAI_BASE_URL"]
 
 
+# F1 — openrouter/custom 은 실제 Hermes PROVIDER_REGISTRY 에 없다(hermes_cli/auth.py:1339).
+# `wide` 의 PROVIDER_REGISTRY 에서 openrouter 항목을 지워 그 현실을 재현한다.
+
+
+def test_referenced_는_레지스트리에_없는_openrouter_키도_명시적으로_복사한다(fake_api, wide):
+    del fake_api.PROVIDER_REGISTRY["openrouter"]
+    _write_cfg(wide, {"model": {"default": "m", "provider": "openrouter"}})
+    (wide / ".env").write_text(
+        "OPENROUTER_API_KEY=sk-or-222\nOPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n", encoding="utf-8")
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah")
+    assert got["envKeys"] == ["OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"]
+
+
+def test_referenced_는_openrouter_가_참조되지_않으면_복사하지_않는다(fake_api, wide):
+    del fake_api.PROVIDER_REGISTRY["openrouter"]
+    _write_cfg(wide, {"model": {"default": "m", "provider": "openai"}})
+    (wide / ".env").write_text(
+        "OPENAI_API_KEY=sk-openai-111\nOPENROUTER_API_KEY=sk-or-222\n", encoding="utf-8")
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah")
+    assert "OPENROUTER_API_KEY" not in got["envKeys"]
+
+
+def test_api_keys_모드는_openrouter_가_참조되지_않아도_늘_복사한다(fake_api, wide):
+    del fake_api.PROVIDER_REGISTRY["openrouter"]
+    _write_cfg(wide, {"model": {"default": "m", "provider": "openai"}})
+    (wide / ".env").write_text(
+        "OPENAI_API_KEY=sk-openai-111\nOPENROUTER_API_KEY=sk-or-222\nOPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n",
+        encoding="utf-8")
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah", key_scope="api_keys")
+    assert "OPENROUTER_API_KEY" in got["envKeys"] and "OPENROUTER_BASE_URL" in got["envKeys"]
+
+
+def test_referenced_는_참조된_이름있는_custom_provider의_key_env를_복사한다(fake_api, wide):
+    _write_cfg(wide, {
+        "model": {"default": "m", "provider": "my-lmstudio"},
+        "custom_providers": [{"name": "my-lmstudio", "base_url": "http://localhost:1234/v1",
+                               "key_env": "HERMES_CUSTOM_LMSTUDIO_API_KEY"}],
+    })
+    (wide / ".env").write_text("HERMES_CUSTOM_LMSTUDIO_API_KEY=sk-custom-333\n", encoding="utf-8")
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah")
+    assert got["envKeys"] == ["HERMES_CUSTOM_LMSTUDIO_API_KEY"]
+
+
+def test_referenced_는_참조되지_않은_custom_provider의_key_env는_건너뛴다(fake_api, wide):
+    _write_cfg(wide, {
+        "model": {"default": "m", "provider": "openai"},
+        "custom_providers": [{"name": "my-lmstudio", "base_url": "http://localhost:1234/v1",
+                               "key_env": "HERMES_CUSTOM_LMSTUDIO_API_KEY"}],
+    })
+    (wide / ".env").write_text(
+        "OPENAI_API_KEY=sk-openai-111\nHERMES_CUSTOM_LMSTUDIO_API_KEY=sk-custom-333\n", encoding="utf-8")
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah")
+    assert "HERMES_CUSTOM_LMSTUDIO_API_KEY" not in got["envKeys"]
+
+
+def test_api_keys_모드는_custom_provider의_key_env를_참조_없이도_복사한다(fake_api, wide):
+    _write_cfg(wide, {
+        "model": {"default": "m", "provider": "openai"},
+        "custom_providers": [{"name": "my-lmstudio", "base_url": "http://localhost:1234/v1",
+                               "key_env": "HERMES_CUSTOM_LMSTUDIO_API_KEY"}],
+    })
+    (wide / ".env").write_text(
+        "OPENAI_API_KEY=sk-openai-111\nHERMES_CUSTOM_LMSTUDIO_API_KEY=sk-custom-333\n", encoding="utf-8")
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah", key_scope="api_keys")
+    assert "HERMES_CUSTOM_LMSTUDIO_API_KEY" in got["envKeys"]
+
+
+def test_referenced_는_key_env_없는_custom_provider는_그냥_건너뛴다(fake_api, wide):
+    _write_cfg(wide, {
+        "model": {"default": "m", "provider": "my-lmstudio"},
+        "custom_providers": [{"name": "my-lmstudio", "base_url": "http://localhost:1234/v1"}],
+    })
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah")
+    assert got["envKeys"] == []
+
+
 # F2 — `_iter_fallback_entries`(hermes_cli/fallback_config.py:63-78) 는 provider·model 둘 다
 # 없으면 그 항목을 버린다. cloneprofile 도 model 없는 항목의 provider 키는 복사하면 안 된다.
 

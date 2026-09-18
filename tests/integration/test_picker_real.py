@@ -63,6 +63,22 @@ async def test_복제된_프로필이_default_의_모델과_키_이름을_물려
     assert got["model"] == "gpt-x" and got["provider"] == "openai-api"
 
 
+async def test_복제는_실제_레지스트리에_없는_openrouter_키도_복사한다(client, hermes_home):
+    """openrouter/custom 은 실제 Hermes PROVIDER_REGISTRY 에 없다(hermes_cli/auth.py:1339) — 그래도
+    복사돼야 한다(F1, 2026-09-19 결정)."""
+    secret = "sk-it-OR-SECRET-0123456789abcdef"
+    (hermes_home / "config.yaml").write_text(
+        yaml.safe_dump({"model": {"default": "m", "provider": "openrouter"}}), encoding="utf-8")
+    (hermes_home / ".env").write_text(
+        f"OPENROUTER_API_KEY={secret}\nOPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n", encoding="utf-8")
+    resp = await client.post("/deskrpg/profiles", json={"name": "cloned-or", "cloneFrom": "default"})
+    assert resp.status == 201
+    text = await resp.text()
+    assert secret not in text
+    body = await resp.json()
+    assert body["cloned"]["envKeys"] == ["OPENROUTER_API_KEY", "OPENROUTER_BASE_URL"]
+
+
 async def test_저장은_MCP_항목을_남기고_disabled_toolsets_의_막힌_툴셋을_푼다(client, make_profile):
     home = make_profile("noah")
     (home / "config.yaml").write_text(yaml.safe_dump({
