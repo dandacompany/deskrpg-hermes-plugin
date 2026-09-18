@@ -179,3 +179,18 @@ def test_별칭_심볼이_없는_빌드는_소문자만_맞춘다(fake_api, wide
     _write_cfg(wide, {"model": {"default": "c", "provider": "OpenAI"}})
     fake_api.create_profile("noah")
     assert cloneprofile.clone_from_default(fake_api, "noah")["envKeys"] == ["OPENAI_API_KEY", "OPENAI_BASE_URL"]
+
+
+# F2 — `_iter_fallback_entries`(hermes_cli/fallback_config.py:63-78) 는 provider·model 둘 다
+# 없으면 그 항목을 버린다. cloneprofile 도 model 없는 항목의 provider 키는 복사하면 안 된다.
+
+
+def test_referenced_는_model_없는_fallback_항목을_Hermes_처럼_건너뛴다(fake_api, wide):
+    _write_cfg(wide, {
+        "model": {"default": "gpt-x", "provider": "openai"},
+        "fallback_providers": [{"provider": "copilot"}],  # model 없음 — Hermes 도 버린다
+    })
+    fake_api.create_profile("noah")
+    got = cloneprofile.clone_from_default(fake_api, "noah")
+    assert "COPILOT_GITHUB_TOKEN" not in got["envKeys"]
+    assert "GH_TOKEN" not in got["envKeys"] and "GITHUB_TOKEN" not in got["envKeys"]

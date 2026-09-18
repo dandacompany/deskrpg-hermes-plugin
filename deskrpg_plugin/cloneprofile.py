@@ -80,8 +80,9 @@ def _referenced_providers(cfg: dict, aliases: dict) -> set[str]:
     """복제한 설정이 실제로 부르는 프로바이더 id.
 
     - `model.provider`
-    - `fallback_providers` — dict 하나 또는 dict 목록의 `provider`. 문자열 항목은 Hermes 도 버린다
-      (`hermes_cli/fallback_config.py:_iter_fallback_entries`).
+    - `fallback_providers` — dict 하나 또는 dict 목록의 `provider`. 문자열 항목이나 `model` 이
+      없는 항목은 Hermes 도 버린다(`hermes_cli/fallback_config.py:_iter_fallback_entries`,
+      provider·model 둘 다 있어야 살아남는다).
     - `auxiliary.<task>.provider` — `"auto"` 는 "주 모델을 따른다" 라 따로 세지 않는다
       (`hermes_cli/config_defaults.py` 의 `_aux`).
     """
@@ -91,7 +92,7 @@ def _referenced_providers(cfg: dict, aliases: dict) -> set[str]:
         ids.add(_provider_id(model.get("provider"), aliases))
     fallbacks = cfg.get("fallback_providers")
     for entry in [fallbacks] if isinstance(fallbacks, dict) else fallbacks if isinstance(fallbacks, list) else []:
-        if isinstance(entry, dict):
+        if isinstance(entry, dict) and str(entry.get("model") or "").strip():
             ids.add(_provider_id(entry.get("provider"), aliases))
     aux = cfg.get("auxiliary")
     if isinstance(aux, dict):
