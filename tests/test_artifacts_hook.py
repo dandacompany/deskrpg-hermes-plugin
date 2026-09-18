@@ -11,7 +11,8 @@ from deskrpg_plugin import artifacts_store as store
 
 
 @pytest.fixture
-def api(tmp_path):
+def api(tmp_path, monkeypatch):
+    monkeypatch.delenv("HERMES_DESKRPG_CAPTURE_LINKS", raising=False)
     home = tmp_path / "profiles" / "sophie"; home.mkdir(parents=True)
     kanban = tmp_path / "kanban"; kanban.mkdir()
 
@@ -191,3 +192,45 @@ def test_is_workspace_file_은_루트_아래_저장소만_본다(tmp_path):
     assert policy.is_workspace_file(root / "r" / "a" / "b.md", [root]) is True
     assert policy.is_workspace_file(root / "loose.md", [root]) is False
     assert policy.is_workspace_file(root / "r" / "x.md", []) is False  # 루트 밖은 판정하지 않는다
+
+
+# ---------------------------------------------------------------------------
+# 도구 결과의 링크 (0.8.3)
+# ---------------------------------------------------------------------------
+
+
+def _links(api):
+    with contextlib.closing(store.open_registry(api)) as conn:
+        return store.list_artifacts(conn, kind="link")
+
+
+def test_강한_키의_URL_은_산출_도구가_아니어도_hook_출처의_link_가_된다(api):
+    _fire(api, "deploy_status", json.dumps({"output_url": "https://app.io/v2", "url": "https://docs.io"}))
+    rows = _links(api)
+    assert [(r["title"], r["summary"]) for r in rows] == [("v2", "https://app.io/v2")]
+    with contextlib.closing(store.open_registry(api)) as conn:
+        assert store.list_versions(conn, rows[0]["id"])[0]["captured_via"] == "hook"
+
+
+def test_약한_키의_URL_은_산출_도구에서만_잡는다(api):
+    _fire(api, "fetch_page", json.dumps({"download_url": "https://cdn.io/a.zip"}))
+    assert _links(api) == []
+    _fire(api, "export_report", json.dumps({"download_url": "https://cdn.io/a.zip"}))
+    assert [r["summary"] for r in _links(api)] == ["https://cdn.io/a.zip"]
+
+
+def test_web_search_결과의_url_은_잡지_않는다(api):
+    _fire(api, "web_search", json.dumps({"results": [{"url": "https://a.io", "title": "A"}]}))
+    assert not store.registry_path(api).exists()
+
+
+def test_도구_호출당_링크는_8개까지다(api):
+    _fire(api, "export_all", json.dumps({"output_url": [f"https://cdn.io/{i}" for i in range(12)]}))
+    assert len(_links(api)) == hook.MAX_LINKS_PER_CALL == 8
+
+
+def test_링크_스위치가_꺼지면_도구_결과의_링크도_잡지_않는다(api, monkeypatch, tmp_path):
+    monkeypatch.setenv("HERMES_DESKRPG_CAPTURE_LINKS", "0")
+    p = tmp_path / "kanban" / "r.md"; p.write_text("# r")
+    _fire(api, "write_file", json.dumps({"path": str(p), "output_url": "https://app.io"}))
+    assert [r["kind"] for r in _rows(api)] == ["document"]

@@ -62,3 +62,12 @@ def test_약한_키는_producer일_때만_하위_트리를_태그한다():
 def test_태그는_리스트를_통해서도_전파된다():
     # "files_created" 강한 키가 태그되면, 리스트 내 객체의 문자열 값도 후보가 됨
     assert detect.candidate_paths([{"files_created": [{"name": "/w/n.md"}]}], producer=False) == ["/w/n.md"]
+
+
+def test_강한_키_사전_검사는_JSON_키로_나올_때만_참이다():
+    from deskrpg_plugin import artifacts_detect as detect
+    assert detect.mentions_strong_key('{"output_url": "https://x.io"}') is True
+    assert detect.mentions_strong_key('{"Result_URL" : 1}') is True
+    assert detect.mentions_strong_key('{"url": "https://x.io", "text": "output_url 설명"}') is False
+    assert detect.mentions_strong_key({"output_url": "x"}) is True
+    assert detect.mentions_strong_key(None) is False

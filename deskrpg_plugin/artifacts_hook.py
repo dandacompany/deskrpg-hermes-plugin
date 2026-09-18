@@ -1,6 +1,7 @@
 """자동 승격 훅 둘 — 사용자가 말하지 않아도 산출물을 아티팩트로 남긴다.
 
-- `post_tool_call`(`make_hook`): 산출 도구가 만든 **파일**.
+- `post_tool_call`(`make_hook`): 산출 도구가 만든 **파일**과, 도구 결과 키 규칙에 걸린 **링크**(0.8.3 — 강한 키는
+  모든 도구, 약한 키는 산출 도구).
 - `post_llm_call`(`make_response_hook`, 0.8.1·0.8.3): 턴의 최종 응답 속 **큰 코드 블록**(artifacts_fences)과 **링크**(artifacts_links).
 
 아래는 `post_tool_call` 훅의 설명이다.
@@ -65,10 +66,18 @@ def make_hook(api):
 
 
 def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None:
-    if tool_name == TOOL_NAME or not detect.is_producer_tool(tool_name):
+    if tool_name == TOOL_NAME:
+        return
+    producer = detect.is_producer_tool(tool_name)
+    want_links = links_enabled() and (producer or detect.mentions_strong_key(result))
+    if not producer and not want_links:
         return
     payloads = detect.parse_tool_result(result)
     if not payloads:
+        return
+    if want_links:
+        _capture_tool_links(api, tool_name, payloads, producer, session_id, task_id)
+    if not producer:
         return
     candidates = detect.candidate_paths(payloads, producer=True)[:MAX_CANDIDATES_SCANNED]
     if not candidates:
@@ -114,6 +123,21 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
         except Exception as exc:  # noqa: BLE001
             logger.warning("[deskrpg] 아티팩트 승격 실패: %s", type(exc).__name__)
             record_capture_failure(api, tool_name=tool_name, reason=type(exc).__name__)
+
+
+def _capture_tool_links(api, tool_name: str, payloads: list, producer: bool, session_id: str, task_id: str) -> None:
+    found = links.links_in_payload(payloads, producer=producer)[:MAX_LINKS_PER_CALL]
+    if not found:
+        return
+    limit = artifact_storage_max_bytes()
+    writer = _TurnWriter(api, session_id, task_id or None)
+    try:
+        for link in found:
+            if writer.stopped:
+                break
+            writer.save(_link_meta(writer.context(), link, "hook"), links.url_blob(link.url), limit, "artifact.capture")
+    finally:
+        writer.close(tool_name)
 
 
 # ---------------------------------------------------------------------------
