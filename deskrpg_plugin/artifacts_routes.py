@@ -109,18 +109,26 @@ def list_handler(api):
         q = request.query
         raw_limit = q.get("limit")
         limit = max(1, min(int(raw_limit), LIMIT_MAX)) if _is_ascii_digits(raw_limit) else LIMIT_DEFAULT
-        kind, source = q.get("kind") or None, q.get("source") or None
-        if kind and kind not in policy.KINDS:
-            raise RequestError(400, "artifact_bad_kind", kind)
+        kind_raw, source = q.get("kind") or None, q.get("source") or None
+        kind = None
+        if kind_raw:
+            tokens = [t for t in kind_raw.split(",") if t]
+            for token in tokens:
+                if token not in policy.KINDS:
+                    raise RequestError(400, "artifact_bad_kind", token)
+            kind = tokens[0] if len(tokens) == 1 else tokens
         if source and source not in ("chat", "kanban", "cron"):
             raise RequestError(400, "invalid_field", "source")
         profiles = [p for p in (q.get("profiles") or "").split(",") if p] or None
         before = _cursor_decode(q.get("cursor"))
+        task_id = q.get("task_id") or None
+        if task_id is not None and len(task_id) > 128:
+            raise RequestError(400, "invalid_field", "task_id")
 
         def work():
             with contextlib.closing(store.open_registry(api)) as conn:
                 rows = store.list_artifacts(conn, profiles=profiles, board=q.get("board") or None, kind=kind,
-                                            source=source, q=q.get("q") or None, before=before, limit=limit + 1)
+                                            source=source, task_id=task_id, q=q.get("q") or None, before=before, limit=limit + 1)
                 page, has_more = rows[:limit], len(rows) > limit
                 items = [_summary(api, r, store.list_versions(conn, r["id"])) for r in page]
                 cursor = _cursor_encode(page[-1]) if page else (q.get("cursor") or "")

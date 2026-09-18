@@ -385,8 +385,10 @@ def list_versions(conn, artifact_id: str) -> list:
     ).fetchall()
 
 
-def list_artifacts(conn, *, profiles=None, board=None, kind=None, source=None, q=None, before=None, limit=50) -> list:
-    """살아 있는 것만, `updated_at DESC, id DESC`. `profiles` 와 `board` 는 OR."""
+def list_artifacts(conn, *, profiles=None, board=None, kind=None, source=None, task_id=None, q=None, before=None, limit=50) -> list:
+    """살아 있는 것만, `updated_at DESC, id DESC`. `profiles` 와 `board` 는 OR.
+
+    `kind` 는 문자열 하나(`kind=?`) 또는 리스트/튜플(`kind IN (...)`)을 받는다."""
     where, params = ["deleted_at IS NULL"], []
     scope = []
     if profiles:
@@ -398,9 +400,15 @@ def list_artifacts(conn, *, profiles=None, board=None, kind=None, source=None, q
     if scope:
         where.append("(" + " OR ".join(scope) + ")")
     if kind:
-        where.append("kind=?"); params.append(kind)
+        if isinstance(kind, (list, tuple)):
+            where.append(f"kind IN ({','.join('?' * len(kind))})")
+            params.extend(kind)
+        else:
+            where.append("kind=?"); params.append(kind)
     if source:
         where.append("source_kind=?"); params.append(source)
+    if task_id:
+        where.append("task_id=?"); params.append(task_id)
     if q:
         like = f"%{q}%"
         where.append("(title LIKE ? OR summary LIKE ? OR id IN (SELECT artifact_id FROM artifact_versions WHERE filename LIKE ?))")

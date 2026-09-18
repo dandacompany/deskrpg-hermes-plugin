@@ -385,3 +385,36 @@ async def test_링크_편집은_정체성과_요약을_새_URL_로_바꾸고_제
     assert old.created and old.artifact_id != r.artifact_id
     found = await (await client.get("/deskrpg/artifacts?q=new.io")).json()
     assert [a["id"] for a in found["artifacts"]] == [r.artifact_id]
+
+
+# ---------------------------------------------------------------------------
+# task_id 필터 (0.8.4)
+# ---------------------------------------------------------------------------
+
+
+async def test_목록_task_id_필터는_범위와_AND_이고_너무_길면_400(client, api):
+    _seed(api, title="A", source_kind="kanban", board="dev", task_id="t1")
+    _seed(api, title="B", source_kind="kanban", board="dev", task_id="t2", session_id="s2")
+    body = await (await client.get("/deskrpg/artifacts?board=dev&task_id=t1")).json()
+    assert [a["title"] for a in body["artifacts"]] == ["A"]
+    assert (await client.get("/deskrpg/artifacts?task_id=" + "x" * 129)).status == 400
+
+
+# ---------------------------------------------------------------------------
+# kind 쉼표 목록 (0.8.4)
+# ---------------------------------------------------------------------------
+
+
+async def test_목록_kind_는_쉼표_목록을_받아_둘_다_돌려주고_나머지는_뺀다(client, api):
+    _seed(api, title="A", kind="image", session_id="s1")
+    _seed(api, title="B", kind="media", session_id="s2")
+    _seed(api, title="C", kind="link", session_id="s3")
+    body = await (await client.get("/deskrpg/artifacts?kind=image,media")).json()
+    assert {a["title"] for a in body["artifacts"]} == {"A", "B"}
+
+
+async def test_목록_kind_쉼표_목록에_틀린_토큰이_있으면_400(client, api):
+    resp = await client.get("/deskrpg/artifacts?kind=image,bogus")
+    assert resp.status == 400
+    body = await resp.json()
+    assert body["error"] == "artifact_bad_kind" and body["detail"] == "bogus"
