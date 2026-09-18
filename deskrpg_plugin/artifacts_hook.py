@@ -1,4 +1,9 @@
-"""`post_tool_call` 훅 — 산출 도구가 만든 파일을 사용자가 말하지 않아도 아티팩트로 승격한다.
+"""자동 승격 훅 둘 — 사용자가 말하지 않아도 산출물을 아티팩트로 남긴다.
+
+- `post_tool_call`(`make_hook`): 산출 도구가 만든 **파일**.
+- `post_llm_call`(`make_response_hook`, 0.8.1): 턴의 최종 응답 속 **큰 코드 블록**(`artifacts_fences`).
+
+아래는 `post_tool_call` 훅의 설명이다.
 
 Hermes 가 부르는 kwargs: tool_name, args, result, task_id, session_id, tool_call_id, turn_id, api_request_id,
 duration_ms, status, error_type, error_message, middleware_trace (`model_tools.py:_emit_post_tool_call_hook`,
@@ -13,10 +18,13 @@ duration_ms, status, error_type, error_message, middleware_trace (`model_tools.p
 
 import contextlib
 import logging
+import os
+import sqlite3
 import time
 
 from . import artifacts_context as context
 from . import artifacts_detect as detect
+from . import artifacts_fences as fences
 from . import artifacts_policy as policy
 from . import artifacts_store as store
 from .artifacts_tool import TOOL_NAME, artifact_storage_max_bytes
@@ -26,6 +34,10 @@ logger = logging.getLogger("deskrpg_plugin")
 
 MAX_FILES_PER_CALL = 8
 MAX_CANDIDATES_SCANNED = 64
+MAX_RESPONSE_BLOCKS = 8
+RESPONSE_SWITCH_ENV = "HERMES_DESKRPG_CAPTURE_RESPONSES"
+RESPONSE_SOURCE = "assistant_response"  # capture_failed 의 tool_name 자리에 쓰는 출처 이름
+_OFF_VALUES = frozenset({"0", "false", "no", "off"})
 
 
 def record_capture_failure(api, *, tool_name: str, reason: str) -> None:
@@ -93,3 +105,87 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
         except Exception as exc:  # noqa: BLE001
             logger.warning("[deskrpg] 아티팩트 승격 실패: %s", type(exc).__name__)
             record_capture_failure(api, tool_name=tool_name, reason=type(exc).__name__)
+
+
+# ---------------------------------------------------------------------------
+# post_llm_call — 응답 속 큰 코드 블록 (0.8.1)
+# ---------------------------------------------------------------------------
+
+
+def responses_enabled() -> bool:
+    """`HERMES_DESKRPG_CAPTURE_RESPONSES` 가 0/false/no/off 면 끈다. 없거나 그 밖의 값이면 켠다."""
+    return os.environ.get(RESPONSE_SWITCH_ENV, "").strip().lower() not in _OFF_VALUES
+
+
+def make_response_hook(api):
+    """턴의 최종 응답에서 데스크톱 기준을 넘는 코드 블록을 아티팩트로 승격하는 `post_llm_call` 콜백.
+
+    Hermes 가 부르는 kwargs: session_id, task_id, turn_id, user_message, assistant_response,
+    conversation_history, model, platform (`agent/turn_finalizer.py:_apply_output_hooks`, 0.21.x).
+    턴 중간의 어시스턴트 메시지는 보지 않는다 — 사용자가 실제로 받는 답이 기준이다.
+    절대 던지지 않는다. 비용은 스위치와 블록 감지(순수 문자열 처리)에서 끊는다.
+    """
+
+    def hook(*, assistant_response=None, session_id="", task_id=None, **_rest) -> None:
+        try:
+            _capture_response(api, assistant_response, session_id or "", task_id or None)
+        except Exception as exc:  # noqa: BLE001 — 마지막 방어선
+            logger.exception("[deskrpg] 응답 아티팩트 훅 예외: %s", type(exc).__name__)
+            record_capture_failure(api, tool_name=RESPONSE_SOURCE, reason=type(exc).__name__)
+
+    return hook
+
+
+def _capture_response(api, response, session_id: str, task_id) -> None:
+    """턴 하나의 비용을 묶는다: 시도는 `MAX_RESPONSE_BLOCKS` 번까지, 레지스트리 연결은 하나,
+    capture_failed 사건은 이유를 합쳐 한 번. 레지스트리가 잠기면(`OperationalError`) 그 자리에서 멈춘다 —
+    남은 블록마다 잠금 대기를 되풀이하면 턴 마무리가 그만큼 늦어진다."""
+    if not responses_enabled():
+        return
+    blocks = fences.extract_blocks(response)
+    if not blocks:
+        return
+    limit = artifact_storage_max_bytes()
+    ctx = conn = None
+    attempts = 0
+    reasons: list = []
+    try:
+        for block in blocks:
+            if attempts >= MAX_RESPONSE_BLOCKS:
+                break
+            if len(block.content.encode("utf-8")) > limit:
+                # 정규식 감지 전에 거른다 — 상한을 넘는 블록은 어차피 저장하지 못한다.
+                if fences.is_candidate_language(block.language):
+                    reasons.append("too_large")
+                continue
+            found = fences.detect(block.language, block.content)
+            if found is None:
+                continue
+            if ctx is None:
+                ctx = context.resolve_context(api, session_id=session_id, task_id=task_id)
+            meta = store.ArtifactMeta(
+                kind=found.kind, title=found.title, summary=f"응답 속 {found.language} 코드 블록",
+                filename=found.filename, mime=policy.mime_for_filename(found.filename), profile=ctx.profile,
+                source_kind=ctx.source_kind, session_id=ctx.session_id, created_by=f"agent:{ctx.profile}",
+                captured_via="response", board=ctx.board, task_id=ctx.task_id,
+            )
+            attempts += 1
+            try:
+                if conn is None:
+                    conn = store.open_registry(api)
+                out = store.store_artifact_version(api, conn, meta=meta, data=found.content.encode("utf-8"),
+                                                   max_bytes=limit)
+                log_event("artifact.capture_response", artifact_id=out.artifact_id, version=out.version,
+                          kind=meta.kind, deduped=out.deduped)
+            except sqlite3.OperationalError as exc:
+                logger.warning("[deskrpg] 응답 아티팩트 저장 중단(레지스트리): %s", type(exc).__name__)
+                reasons.append(type(exc).__name__)
+                break
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[deskrpg] 응답 아티팩트 저장 실패: %s", type(exc).__name__)
+                reasons.append(type(exc).__name__)
+    finally:
+        if conn is not None:
+            conn.close()
+    if reasons:
+        record_capture_failure(api, tool_name=RESPONSE_SOURCE, reason=",".join(dict.fromkeys(reasons)))

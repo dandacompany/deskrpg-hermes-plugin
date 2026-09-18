@@ -93,3 +93,29 @@ async def test_프로필_오버라이드_안에서_도구를_부르면_레지스
         assert store.artifacts_root(api).resolve() == root.resolve()
         row = store.get_artifact(conn, out["artifact_id"])
         assert row["profile"] == "sophie"
+
+
+def test_실제_Hermes_가_post_llm_call_에_assistant_response_를_넘긴다():
+    """응답 훅이 기대는 계약의 걸쇠 — 고정 커밋 Hermes 의 턴 마무리 코드가 이 이름으로 넘기는지 확인한다."""
+    import inspect
+
+    from agent import turn_finalizer
+
+    source = inspect.getsource(turn_finalizer._apply_output_hooks)
+    assert '"post_llm_call"' in source and "assistant_response=" in source and "session_id=" in source
+
+
+async def test_응답_훅이_실제_Hermes_위에서_큰_HTML_블록을_저장하고_라우트가_낸다(client, api, hermes_env):
+    page = "<!doctype html><html><head><title>통합 페이지</title></head><body>" + "x" * 300 + "</body></html>"
+    artifacts_hook.make_response_hook(api)(
+        session_id="int-resp", task_id=None, turn_id="t1", user_message="만들어 줘",
+        assistant_response=f"여기 있습니다.\n\n```html\n{page}\n```\n", conversation_history=[],
+        model="m", platform="cli",
+    )
+    body = await (await client.get("/deskrpg/artifacts?kind=web")).json()
+    got = [a for a in body["artifacts"] if a["title"] == "통합 페이지"]
+    assert len(got) == 1 and got[0]["session_id"] == "int-resp"
+    detail = await (await client.get(f"/deskrpg/artifacts/{got[0]['id']}")).json()
+    assert detail["versions"][0]["captured_via"] == "response"
+    resp = await client.get(f"/deskrpg/artifacts/{got[0]['id']}/versions/1/content")
+    assert (await resp.read()).decode("utf-8") == page
