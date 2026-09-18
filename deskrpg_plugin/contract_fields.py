@@ -54,6 +54,22 @@ def has_oauth_symbols(api) -> bool:
     return _has(api, _OAUTH_SYMBOLS)
 
 
+# 앱 안 디바이스 로그인을 허용하는 프로바이더. Hermes 의 `_DEVICE_CODE_STARTERS` 에 있어도 여기 없으면
+# 카탈로그는 CLI 안내(external)를 주고 OAuth 라우트는 400 `oauth_flow_unsupported` 로 거절한다.
+# - xAI·MiniMax 폴러는 저장 직전 `_profile_scope(_oauth_session_profile(session_id))` 로 프로필을 다시 풀고
+#   `cancelled` 를 보지 않는다(hermes_cli/web_server_oauth.py:397, :424). 취소(또는 `_gc_oauth_sessions`)로
+#   세션이 사라지면 프로필이 None 이 되어 토큰이 **default 프로필**에 저장된다.
+# - Nous 는 저장 전에 `cancelled` 를 보지만 15초 네트워크 갱신 동안 프로세스 전역 `_profile_scope` 를 쥔다(:343).
+# Codex 워커는 세션 프로필을 시작 때 잡아 두고 저장 직전 락 안에서 `cancelled` 를 본다(web_routers/oauth.py:279-292).
+IN_APP_DEVICE_LOGIN = frozenset({"openai-codex"})
+
+
+def in_app_device_login(api, provider_id: str) -> bool:
+    """카탈로그의 로그인 버튼과 OAuth 라우트가 같은 판정을 쓴다."""
+    starters = getattr(api, "_DEVICE_CODE_STARTERS", None) or {}
+    return provider_id in IN_APP_DEVICE_LOGIN and provider_id in starters and has_oauth_symbols(api)
+
+
 def capabilities(api) -> tuple[str, ...]:
     """이 Hermes 빌드에서 **실제로 되는** 것만 돌려준다.
 

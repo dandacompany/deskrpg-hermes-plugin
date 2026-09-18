@@ -60,3 +60,18 @@ async def test_current_이라는_이름의_프로필은_OAuth_시작에서_400_i
     assert resp.status == 400
     body = await resp.json()
     assert body["error"] == "invalid_profile"
+
+
+async def test_xAI_디바이스_로그인은_400_이고_Hermes_세션을_만들지_않는다(client, make_profile):
+    # xAI 폴러는 취소 뒤 세션이 사라지면 default 프로필에 토큰을 저장한다(hermes_cli/web_server_oauth.py:424).
+    make_profile("noah")
+    from hermes_cli import web_server_oauth as wso
+
+    before = set(wso._oauth_sessions)
+    resp = await client.post("/p/noah/deskrpg/oauth/xai-oauth/start")
+    assert resp.status == 400 and (await resp.json())["error"] == "oauth_flow_unsupported"
+    assert set(wso._oauth_sessions) == before
+    rows = {r["id"]: r for r in (await (await client.get("/p/noah/deskrpg/catalog")).json())["providers"]}
+    for pid in ("nous", "xai-oauth", "minimax-oauth"):
+        assert rows[pid]["authType"] == "external"
+        assert rows[pid]["cliCommand"] == f"hermes -p noah auth add {pid}"

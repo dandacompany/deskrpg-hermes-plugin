@@ -217,7 +217,6 @@ def fake_api(tmp_path):
         _start_device_code_flow=_unfaked_oauth,
         poll_oauth_session=_unfaked_oauth,
         _gc_oauth_sessions=lambda: None,
-        invalidate_nous_auth_status_cache=lambda: None,
         _OAUTH_PROVIDER_CATALOG=(),
         _oauth_sessions={},
         _oauth_sessions_lock=threading.Lock(),

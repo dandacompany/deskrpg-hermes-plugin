@@ -13,7 +13,7 @@ DeskRPG 전용 라우트를 Hermes API Server 에 등록하는 Hermes 플러그�
   봇 토큰·OAuth 로그인·인격·메모리는 복사하지 않는다.
 - **프로바이더 인증(0.9.0)** — `PUT/DELETE /p/{profile}/deskrpg/provider-keys/{provider}` 로 모델 프로바이더 API 키를
   프로필 `.env` 에 쓰기 전용으로 넣고(키 이름은 서버가 정한다), `/p/{profile}/deskrpg/oauth/*` 로 Hermes 대시보드와 같은
-  디바이스 코드 로그인을 한다(Codex·Nous·xAI·MiniMax). 카탈로그 행은 `authType`·`envVars`·`cliCommand` 를 싣는다.
+  디바이스 코드 로그인을 한다(앱 안에서는 Codex 만 — Nous·xAI·MiniMax 는 `cliCommand` 로 CLI 로그인을 안내한다). 카탈로그 행은 `authType`·`envVars`·`cliCommand` 를 싣는다.
 
 ## 요구사항
 

@@ -29,6 +29,7 @@ import logging
 from aiohttp import web
 
 from .common import guarded, run_blocking
+from .contract_fields import in_app_device_login
 from .cron import resolve_profile_home
 
 logger = logging.getLogger(__name__)
@@ -42,12 +43,11 @@ REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"
 
 def _auth_fields(api, pid: str, cfg, profile: str) -> dict:
     """프로바이더의 인증 방식 — 화면이 로그인 버튼·키 입력·CLI 안내 중 무엇을 보일지 정한다."""
-    starters = getattr(api, "_DEVICE_CODE_STARTERS", None) or {}
     auth_type = getattr(cfg, "auth_type", None)
     env_vars = [str(n) for n in (getattr(cfg, "api_key_env_vars", None) or ()) if n]
     if api is not None and auth_type == "api_key" and env_vars:
         return {"authType": "api_key", "envVars": env_vars, "cliCommand": None}
-    if pid in starters:
+    if in_app_device_login(api, pid):
         return {"authType": "oauth_device", "envVars": [], "cliCommand": None}
     command = None
     for entry in getattr(api, "_OAUTH_PROVIDER_CATALOG", None) or ():

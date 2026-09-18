@@ -18,6 +18,7 @@ import logging
 from aiohttp import web
 
 from .common import RequestError, guarded, run_blocking
+from .contract_fields import in_app_device_login
 from .cron import resolve_profile_home
 from .picker import _home_scope
 
@@ -48,7 +49,9 @@ def _http_error(exc):
 
 
 def _require_device(api, provider_id: str):
-    if provider_id not in (api._DEVICE_CODE_STARTERS or {}):
+    # Codex 만 — 다른 프로바이더는 Hermes 폴러가 취소된 세션의 토큰을 default 에 저장할 수 있다
+    # (`contract_fields.IN_APP_DEVICE_LOGIN` 주석).
+    if not in_app_device_login(api, provider_id):
         raise RequestError(400, "oauth_flow_unsupported", provider_id)
 
 
@@ -150,12 +153,7 @@ def disconnect_handler(api):
 
         def _clear():
             with _home_scope(api, home):
-                cleared = bool(api.clear_provider_auth(provider_id))
-                # Hermes 의 disconnect 와 같다 — Nous 는 인증 상태 메모(15초)를 지워야 곧바로 반영된다.
-                invalidate = getattr(api, "invalidate_nous_auth_status_cache", None)
-                if provider_id == "nous" and invalidate is not None:
-                    invalidate()
-                return cleared
+                return bool(api.clear_provider_auth(provider_id))
 
         cleared = await run_blocking(_clear)
         logger.info("[deskrpg] OAuth 연결 끊기: %s (cleared=%s)", provider_id, cleared)

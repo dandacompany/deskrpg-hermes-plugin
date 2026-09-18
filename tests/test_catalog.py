@@ -31,6 +31,13 @@ def _cfg(name):
     return types.SimpleNamespace(id=name, name=name.title())
 
 
+def _oauth_api(**fields):
+    """디바이스 로그인 라우트 심볼이 다 있는 빌드(`contract_fields.has_oauth_symbols`)."""
+    base = dict(_start_device_code_flow=object(), poll_oauth_session=object(), _oauth_sessions={},
+                _oauth_sessions_lock=object(), _oauth_profile_name=object(), clear_provider_auth=object())
+    return types.SimpleNamespace(**{**base, **fields})
+
+
 def test_인증된_프로바이더가_먼저_온다(monkeypatch):
     # 79개 중 실제로 쓸 수 있는 것이 몇 개뿐이다 — 그것들을 찾아 스크롤하게 하면 안 된다.
     _fake_hermes(
@@ -196,7 +203,7 @@ def test_프로바이더_행에_인증_방식과_키_이름과_CLI_안내가_실
                                          api_key_env_vars=(), base_url_env_var=""),
     }
     _fake_hermes(monkeypatch, registry=registry, auth={})
-    api = types.SimpleNamespace(
+    api = _oauth_api(
         PROVIDER_REGISTRY=registry,
         _DEVICE_CODE_STARTERS={"openai-codex": object()},
         _OAUTH_PROVIDER_CATALOG=(
@@ -229,3 +236,37 @@ def test_default_프로필이면_CLI_안내에_p_옵션을_붙이지_않는다(m
     api = types.SimpleNamespace(PROVIDER_REGISTRY=registry, _DEVICE_CODE_STARTERS={},
                                 _OAUTH_PROVIDER_CATALOG=({"id": "qwen-oauth", "cli_command": "hermes auth add qwen-oauth"},))
     assert catalog._provider_rows(api, profile="default")[0]["cliCommand"] == "hermes auth add qwen-oauth"
+
+
+def _oauth_cfg(pid):
+    return types.SimpleNamespace(id=pid, name=pid, auth_type="oauth_external", api_key_env_vars=(), base_url_env_var="")
+
+
+# Hermes 의 xAI·MiniMax 폴러는 저장 직전 `_oauth_session_profile(session_id)` 로 프로필을 다시 푼다
+# (hermes_cli/web_server_oauth.py:397, :424) — 취소로 세션이 사라지면 None → default 프로필에 토큰이 저장된다.
+# Nous 는 15초 네트워크 갱신 동안 프로세스 전역 `_profile_scope` 를 쥔다(:343). 앱 안 로그인은 Codex 만이다.
+def test_앱_안_디바이스_로그인은_Codex_만이고_나머지는_CLI_안내다(monkeypatch):
+    ids = ("openai-codex", "nous", "xai-oauth", "minimax-oauth")
+    registry = {pid: _oauth_cfg(pid) for pid in ids}
+    _fake_hermes(monkeypatch, registry=registry, auth={})
+    api = _oauth_api(
+        PROVIDER_REGISTRY=registry,
+        _DEVICE_CODE_STARTERS={pid: object() for pid in ids},
+        _OAUTH_PROVIDER_CATALOG=tuple({"id": pid, "flow": "device_code", "cli_command": f"hermes auth add {pid}"}
+                                      for pid in ids),
+    )
+    rows = {r["id"]: r for r in catalog._provider_rows(api, profile="noah")}
+    assert rows["openai-codex"]["authType"] == "oauth_device"
+    for pid in ("nous", "xai-oauth", "minimax-oauth"):
+        assert rows[pid] == {**rows[pid], "authType": "external", "envVars": [],
+                             "cliCommand": f"hermes -p noah auth add {pid}"}
+
+
+def test_OAuth_라우트_심볼이_모자라면_Codex_도_로그인_버튼을_주지_않는다(monkeypatch):
+    registry = {"openai-codex": _oauth_cfg("openai-codex")}
+    _fake_hermes(monkeypatch, registry=registry, auth={})
+    api = _oauth_api(PROVIDER_REGISTRY=registry, _DEVICE_CODE_STARTERS={"openai-codex": object()},
+                     poll_oauth_session=None,
+                     _OAUTH_PROVIDER_CATALOG=({"id": "openai-codex", "cli_command": "hermes auth add openai-codex"},))
+    row = catalog._provider_rows(api, profile="noah")[0]
+    assert row["authType"] == "external" and row["cliCommand"] == "hermes -p noah auth add openai-codex"

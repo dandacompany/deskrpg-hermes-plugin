@@ -170,15 +170,18 @@ async def test_시작_전에_Hermes_처럼_만료_세션을_치운다(aiohttp_cl
     assert order == ["gc", "start"]
 
 
-async def test_nous_연결_끊기는_인증_상태_메모도_지운다(aiohttp_client, oauth_api):
-    invalidated = []
-    oauth_api._DEVICE_CODE_STARTERS = {"openai-codex": object(), "nous": object()}
-    oauth_api.invalidate_nous_auth_status_cache = lambda: invalidated.append(True)
+@pytest.mark.parametrize("provider_id", ["nous", "xai-oauth", "minimax-oauth"])
+async def test_Codex_외_디바이스_로그인은_앱에서_시작도_연결_끊기도_못한다(aiohttp_client, oauth_api, provider_id):
+    # Hermes 의 xAI·MiniMax 폴러는 취소된 세션의 토큰을 default 프로필에 저장할 수 있다
+    # (hermes_cli/web_server_oauth.py:397, :424) — 앱 안 로그인은 Codex 만 허용한다.
+    oauth_api._DEVICE_CODE_STARTERS = {"openai-codex": object(), provider_id: object()}
     client = await _client(aiohttp_client, oauth_api)
-    assert await (await client.delete("/p/noah/deskrpg/oauth/openai-codex")).json() == {"ok": True}
-    assert invalidated == []
-    assert await (await client.delete("/p/noah/deskrpg/oauth/nous")).json() == {"ok": True}
-    assert invalidated == [True] and oauth_api._cleared == ["openai-codex", "nous"]
+    start = await client.post(f"/p/noah/deskrpg/oauth/{provider_id}/start")
+    assert start.status == 400 and (await start.json())["error"] == "oauth_flow_unsupported"
+    assert "start" not in oauth_api._calls and oauth_api._oauth_sessions == {}
+    gone = await client.delete(f"/p/noah/deskrpg/oauth/{provider_id}")
+    assert gone.status == 400 and (await gone.json())["error"] == "oauth_flow_unsupported"
+    assert oauth_api._cleared == []
 
 
 async def test_디바이스_로그인이_아닌_프로바이더는_연결_끊기도_400(aiohttp_client, oauth_api):
