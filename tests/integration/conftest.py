@@ -87,3 +87,22 @@ def profile(api, hermes_env):
     home = api.create_profile("sophie")
     assert Path(home).is_relative_to(hermes_env["home"])
     return "sophie"
+
+
+@pytest.fixture
+def hermes_home(hermes_env):
+    """default 프로필 홈 — `hermes_env` 가 가리키는 같은 임시 폴더."""
+    return hermes_env["home"]
+
+
+@pytest.fixture
+def make_profile(api, hermes_env):
+    """이름을 받아 임시 홈 아래 실제 프로필을 만들고 그 홈 경로를 돌려주는 팩토리."""
+
+    def _make(name):
+        api.create_profile(name, no_alias=True)
+        home = Path(api.get_profile_dir(name))
+        assert home.is_relative_to(hermes_env["home"]), f"프로필 홈이 임시 폴더 밖이다: {home}"
+        return home
+
+    return _make
