@@ -16,6 +16,12 @@ async def _info(aiohttp_client, fake_api):
     return await resp.json()
 
 
+def _client(aiohttp_client, fake_api):
+    app = web.Application()
+    routes.attach(app, FakeAdapter(authorized=True), fake_api)
+    return aiohttp_client(app)
+
+
 def test_fake_api_가_REQUIRED_의_모든_심볼을_갖는다(fake_api):
     # 핸들러가 `api.<name>` 으로 부르는 이름이 실제 Hermes 에는 있는데 fake 에 없으면
     # 테스트에서만 AttributeError 로 죽어 회귀를 못 잡는다. 목록을 넓히면 여기서 걸린다.
@@ -28,8 +34,11 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
     assert set(body) == PLUGIN_INFO_KEYS
     assert body["plugin"] == "deskrpg"
     assert body["version"] == routes.PLUGIN_VERSION
-    # fake_api 는 스웜 심볼을 갖춘 빌드를 흉내 낸다 — capability 에 "swarm" 이 붙는다.
-    assert body["capabilities"] == ["kanban", "cron", "events", "artifacts", "swarm"]
+    # fake_api 는 스웜·피커 심볼을 모두 갖춘 빌드를 흉내 낸다 — capability 에 다 붙는다.
+    assert body["capabilities"] == [
+        "kanban", "cron", "events", "artifacts", "swarm",
+        "profile_toolsets", "profile_skills", "profile_clone",
+    ]
     assert "artifacts" in body["capabilities"] and isinstance(body["artifact_max_bytes"], int)
     assert body["timezone"] == "Asia/Seoul"
     assert set(body["kanban"]) == PLUGIN_INFO_KANBAN_KEYS
@@ -176,3 +185,21 @@ async def test_info_의_artifact_max_bytes_는_업로드_상한이라_요청_본
     fake_api.MAX_REQUEST_BYTES = 10
     body = await _info(aiohttp_client, fake_api)
     assert body["artifact_max_bytes"] == 10
+
+
+# ---------------------------------------------------------------------------
+# 0.9.0 — 직원 설정 피커 capability: 심볼이 있을 때만 광고한다
+# ---------------------------------------------------------------------------
+
+
+async def test_피커_능력은_심볼이_있을_때만_광고한다(aiohttp_client, fake_api):
+    client = await _client(aiohttp_client, fake_api)
+    caps = (await (await client.get("/deskrpg/info")).json())["capabilities"]
+    assert {"profile_toolsets", "profile_skills", "profile_clone"} <= set(caps)
+
+    fake_api._find_all_skills = None
+    fake_api._get_platform_tools = None
+    fake_api.PROVIDER_REGISTRY = None
+    client = await _client(aiohttp_client, fake_api)
+    caps = (await (await client.get("/deskrpg/info")).json())["capabilities"]
+    assert not {"profile_toolsets", "profile_skills", "profile_clone"} & set(caps)

@@ -136,6 +136,24 @@ def fake_api(tmp_path):
     def latest_blackboard(conn, root_id):
         return {"topology": {"goal": "g"}, "_authors": {"topology": "swarm-orchestrator"}}
 
+    FAKE_TOOLSETS = [
+        ("web", "🔍 Web", "검색과 스크래핑"),
+        ("file", "📁 File", "파일 읽기·쓰기"),
+        ("tts", "🔊 TTS", "음성 합성"),
+        ("discord", "Discord", "디스코드 전용"),
+    ]
+
+    def _get_platform_tools(cfg, platform, *, include_default_mcp_servers=True):
+        saved = (cfg.get("platform_toolsets") or {}).get(platform)
+        return set(saved) if isinstance(saved, list) else {"web", "file"}
+
+    def _find_all_skills(*, skip_disabled=False):
+        return [
+            {"name": "hermes-agent", "description": "필수", "category": "core"},
+            {"name": "pdf", "description": "PDF 다루기", "category": "docs"},
+            {"name": "xlsx", "description": "엑셀", "category": "docs"},
+        ]
+
     api = types.SimpleNamespace(
         get_profile_dir=get_profile_dir,
         get_wrapper_path=get_wrapper_path,
@@ -158,6 +176,20 @@ def fake_api(tmp_path):
         swarm_calls=swarm_calls,
         # 0.7.1 — hermes_cli.dashboard_auth.prefix (OPTIONAL_SPEC). 기본은 공개 주소 없음.
         resolve_public_url=lambda: "",
+        # 0.9.0 — 직원 설정 피커 (OPTIONAL_SPEC). fake 는 심볼이 다 있는 빌드를 흉내 낸다.
+        _get_effective_configurable_toolsets=lambda: list(FAKE_TOOLSETS),
+        _get_platform_tools=_get_platform_tools,
+        _toolset_has_keys=lambda name, cfg=None: name != "tts",
+        _toolset_allowed_for_platform=lambda name, platform: name != "discord",
+        _find_all_skills=_find_all_skills,
+        _sort_skills=lambda rows: sorted(rows, key=lambda s: (s.get("category") or "", s["name"])),
+        ESSENTIAL_SKILLS=frozenset({"hermes-agent"}),
+        PROVIDER_REGISTRY={
+            "openai": types.SimpleNamespace(id="openai", name="OpenAI", auth_type="api_key",
+                                            api_key_env_vars=("OPENAI_API_KEY",), base_url_env_var="OPENAI_BASE_URL"),
+            "openai-codex": types.SimpleNamespace(id="openai-codex", name="Codex", auth_type="oauth_external",
+                                                  api_key_env_vars=(), base_url_env_var=""),
+        },
     )
     _add_automation_fakes(api, tmp_path)
     return api

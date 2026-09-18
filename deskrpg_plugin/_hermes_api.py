@@ -160,6 +160,19 @@ OPTIONAL_SPEC = (
     ("hermes_cli.kanban_swarm", ("create_swarm", "latest_blackboard", "SwarmWorkerSpec")),
     # 0.7.1 — 대시보드 공개 주소. 없는 빌드는 `/deskrpg/info` 의 dashboard_url 만 null 이 된다.
     ("hermes_cli.dashboard_auth.prefix", ("resolve_public_url",)),
+    # 0.9.0 — 직원 설정 피커. 없는 빌드는 그 라우트와 capability 만 빠진다.
+    (
+        "hermes_cli.tools_config",
+        (
+            "_get_effective_configurable_toolsets",
+            "_get_platform_tools",
+            "_toolset_has_keys",
+            "_toolset_allowed_for_platform",
+        ),
+    ),
+    ("tools.skills_tool", ("_find_all_skills", "_sort_skills")),
+    ("agent.skill_utils", ("ESSENTIAL_SKILLS",)),
+    ("hermes_cli.auth", ("PROVIDER_REGISTRY",)),
 )
 
 REQUIRED = tuple(name for _module, names in SPEC for name in names)

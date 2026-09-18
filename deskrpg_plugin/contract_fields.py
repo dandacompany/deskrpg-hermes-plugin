@@ -22,14 +22,33 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 CAPABILITIES = ("kanban", "cron", "events", "artifacts")
 
 
+_TOOLSET_SYMBOLS = (
+    "_get_effective_configurable_toolsets", "_get_platform_tools",
+    "_toolset_has_keys", "_toolset_allowed_for_platform",
+)
+_SKILL_SYMBOLS = ("_find_all_skills", "_sort_skills")
+
+
+def _has(api, names) -> bool:
+    return all(getattr(api, n, None) is not None for n in names)
+
+
 def capabilities(api) -> tuple[str, ...]:
     """이 Hermes 빌드에서 **실제로 되는** 것만 돌려준다.
 
     버전만 보고 판단하면 "새 플러그인인데 404" 라는 진단 불가능한 상태가 된다.
     capability 문자열이 가용성을 말하게 한다.
     """
-    extra = ("swarm",) if getattr(api, "create_swarm", None) is not None else ()
-    return CAPABILITIES + extra
+    extra = []
+    if getattr(api, "create_swarm", None) is not None:
+        extra.append("swarm")
+    if _has(api, _TOOLSET_SYMBOLS):
+        extra.append("profile_toolsets")
+    if _has(api, _SKILL_SYMBOLS):
+        extra.append("profile_skills")
+    if _has(api, ("PROVIDER_REGISTRY",)):
+        extra.append("profile_clone")
+    return CAPABILITIES + tuple(extra)
 
 # ---------------------------------------------------------------------------
 # A.1 칸반 — 상태·열
