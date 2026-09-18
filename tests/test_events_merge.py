@@ -31,7 +31,7 @@ def _c(ts, exec_id, phase, profile="p", claimed="2026-01-01T00:00:00+09:00", ind
 
 
 def test_ts_오름차순으로_합친다():
-    emitted, has_more, by = events.merge([_k(30, 1)], [_d(10, 1)], [_c(20, "e", "started")], 10)
+    emitted, has_more, by = events.merge([_k(30, 1)], [_d(10, 1)], [_c(20, "e", "started")], [], 10)
     assert [e["id"] for e in emitted] == ["d:1", "c:p:e:started", "k:1"]
     assert has_more is False
     assert [e["id"] for e in by["k"]] == ["k:1"]
@@ -40,26 +40,26 @@ def test_ts_오름차순으로_합친다():
 def test_같은_ts_는_k_d_c_순_그다음_출처_안의_위치():
     emitted, _, _ = events.merge(
         [_k(5, 10), _k(5, 9), _k(5, 9, sub=1)], [_d(5, 2), _d(5, 1)],
-        [_c(5, "b", "finished", index=1), _c(5, "a", "started", index=0)], 10,
+        [_c(5, "b", "finished", index=1), _c(5, "a", "started", index=0)], [], 10,
     )
     assert [e["id"] for e in emitted] == ["k:9", "k:9:status", "k:10", "d:1", "d:2", "c:p:a:started", "c:p:b:finished"]
 
 
 def test_limit_에서_자르면_has_more():
-    emitted, has_more, by = events.merge([_k(1, 1), _k(3, 2)], [_d(2, 1)], [], 2)
+    emitted, has_more, by = events.merge([_k(1, 1), _k(3, 2)], [_d(2, 1)], [], [], 2)
     assert [e["id"] for e in emitted] == ["k:1", "d:1"]
     assert has_more is True
     assert by["k"] == [emitted[0]] and by["d"] == [emitted[1]] and by["c"] == []
 
 
 def test_limit_이_같은_행의_쌍_사이에_떨어지면_쌍을_통째로_넘긴다():
-    emitted, has_more, _ = events.merge([_k(1, 1), _k(2, 2), _k(2, 2, sub=1), _k(3, 3)], [], [], 2)
+    emitted, has_more, _ = events.merge([_k(1, 1), _k(2, 2), _k(2, 2, sub=1), _k(3, 3)], [], [], [], 2)
     assert [e["id"] for e in emitted] == ["k:1"]
     assert has_more is True
 
 
 def test_쌍만_남았고_limit_이_1_이면_쌍을_통째로_싣는다():
-    emitted, has_more, _ = events.merge([_k(2, 2), _k(2, 2, sub=1)], [], [], 1)
+    emitted, has_more, _ = events.merge([_k(2, 2), _k(2, 2, sub=1)], [], [], [], 1)
     assert [e["id"] for e in emitted] == ["k:2", "k:2:status"]
     assert has_more is False
 
@@ -67,13 +67,13 @@ def test_쌍만_남았고_limit_이_1_이면_쌍을_통째로_싣는다():
 def test_limit_1_에서_run_finished_status_쌍이_첫_원소면_limit_plus_1_개를_싣는다_의도된_유일한_예외():
     # 쌍 앞에 비울 사건이 없고 limit=1 이면 쌍을 반으로 자를 수 없다 — 이때만 응답이 limit+1(=2)개다.
     # 쌍 뒤에 사건이 더 있어도 마찬가지이고 has_more 가 그것을 알린다. 그 밖의 어떤 경우에도 limit 을 넘지 않는다.
-    emitted, has_more, by = events.merge([_k(2, 2), _k(2, 2, sub=1), _k(3, 3)], [_d(4, 1)], [], 1)
+    emitted, has_more, by = events.merge([_k(2, 2), _k(2, 2, sub=1), _k(3, 3)], [_d(4, 1)], [], [], 1)
     assert [e["id"] for e in emitted] == ["k:2", "k:2:status"]
     assert len(emitted) == 2 == 1 + 1
     assert has_more is True
     assert by["k"] == emitted and by["d"] == []
     # limit ≥ 2 면 쌍 앞을 비우는 쪽을 택해 limit 을 지킨다.
-    emitted, has_more, _ = events.merge([_k(1, 1), _k(2, 2), _k(2, 2, sub=1), _k(3, 3)], [], [], 2)
+    emitted, has_more, _ = events.merge([_k(1, 1), _k(2, 2), _k(2, 2, sub=1), _k(3, 3)], [], [], [], 2)
     assert [e["id"] for e in emitted] == ["k:1"] and has_more is True
 
 

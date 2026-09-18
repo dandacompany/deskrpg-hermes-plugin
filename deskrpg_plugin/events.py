@@ -1,6 +1,6 @@
 """통합 사건 스트림 — `GET /deskrpg/events?board=&cursor=&limit=` (E1–E7).
 
-세 출처를 하나의 시간순 목록으로 합친다:
+네 출처를 하나의 시간순 목록으로 합친다:
 
 1. **칸반** — 보드의 `task_events` 를 `id > k` 로 tail 하고 Hermes kind 를 계약 kind 로 매핑한다(E3).
 2. **삭제 기록** — 플러그인이 카드를 지울 때 `board_dir(slug)/deskrpg_deleted.jsonl` 에 남긴 줄을
@@ -8,6 +8,8 @@
 3. **크론** — 호스트의 **모든 프로필**에 대해 실행 장부(`<home>/cron/executions.db`)를 최신순으로
    `claimed_at <= t` 까지 읽고, 토큰의 `o`(미완료 실행) 와 비교해 started/finished 를 낸다(E4).
    장부 파일이 없는 프로필은 잡 레코드(`fire_claim`·`last_run_at`)로 폴백한다.
+4. **아티팩트** — 아티팩트 레지스트리(`registry.db`)의 `artifact_events` 를 `id > a` 로 tail 한다.
+   게이트웨이 전역 사건이라 `board` 로 거르지 않는다(R6) — DeskRPG 가 채널로 거른다.
 
 커서는 `v1.` + base64url(JSON) 의 불투명 토큰이고, **각 출처의 위치는 실제로 응답에 실은 사건까지만
 전진**한다(E5·E6). 잘린 사건은 다음 호출에 다시 나온다 — 스트림에 구멍이 나는 것보다 두 번 보이는
@@ -25,6 +27,7 @@ from pathlib import Path
 
 from aiohttp import web
 
+from . import artifacts_store as _artifacts
 from . import cron as _cron
 from . import cron_results
 from . import deleted_log
@@ -39,8 +42,8 @@ LIMIT_MAX = 500
 
 DELETED_LOG_FILENAME = deleted_log.FILENAME
 
-# 병합 tie-break 의 출처 순서(E5): k < d < c.
-_SOURCE_RANK = {"k": 0, "d": 1, "c": 2}
+# 병합 tie-break 의 출처 순서(E5): k < d < c < a.
+_SOURCE_RANK = {"k": 0, "d": 1, "c": 2, "a": 3}
 
 # ---------------------------------------------------------------------------
 # E3 — Hermes task_events.kind → 계약 kind
@@ -139,6 +142,8 @@ def _valid_state(state) -> bool:
             return False
         if not isinstance(part.get("o"), dict):
             return False
+    if "a" in state and not _is_int(state.get("a")):
+        return False
     return True
 
 
@@ -616,6 +621,63 @@ def cron_now_positions(api) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# 아티팩트 사건 (네 번째 출처 `a`) — 게이트웨이 전역이다(R6). `board` 로 거르지 않는다;
+# DeskRPG 가 나중에 채널로 거른다.
+# ---------------------------------------------------------------------------
+
+SQL_ARTIFACT_TAIL = "SELECT id, ts, kind, payload FROM artifact_events WHERE id > ? ORDER BY id ASC LIMIT ?"
+SQL_ARTIFACT_MAX_ID = "SELECT COALESCE(MAX(id), 0) FROM artifact_events"
+
+
+def _artifact_conn(api):
+    """레지스트리가 없으면 None — 사건을 읽으려고 저장소를 만들지 않는다."""
+    if not _artifacts.registry_path(api).is_file():
+        return None
+    return _artifacts.open_registry(api)
+
+
+def read_artifact_events(api, after_id: int, limit: int) -> list:
+    conn = _artifact_conn(api)
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(SQL_ARTIFACT_TAIL, (int(after_id), int(limit))).fetchall()
+    finally:
+        conn.close()
+    out = []
+    for row in rows:
+        payload = json.loads(row["payload"]) if row["payload"] else {}
+        event = {
+            "id": f"a:{row['id']}", "ts": int(row["ts"]) * 1000, "kind": row["kind"], "payload": payload,
+            "artifact_id": payload.get("artifact_id"), "_src": "a", "_pos": (int(row["id"]),),
+        }
+        for key in ("profile", "board", "task_id"):
+            if payload.get(key) is not None:
+                event[key] = payload[key]
+        out.append(event)
+    return out
+
+
+def artifact_position(api, state: dict) -> int:
+    """커서의 `a`. 구버전 커서(키 없음)는 지금 max(id) — 과거 사건을 폭포처럼 다시 주지 않는다."""
+    if "a" in state:
+        return int(state["a"])
+    conn = _artifact_conn(api)
+    if conn is None:
+        return 0
+    try:
+        return int(conn.execute(SQL_ARTIFACT_MAX_ID).fetchone()[0])
+    finally:
+        conn.close()
+
+
+def advance_artifacts(old_a: int, artifact_events, emitted_ids) -> int:
+    groups = [(e["_pos"][0], [e["id"]]) for e in sorted(artifact_events, key=lambda e: e["_pos"])]
+    last = _fully_emitted_prefix(groups, emitted_ids)
+    return last if last is not None else old_a
+
+
+# ---------------------------------------------------------------------------
 # E5·E6 — 병합과 커서 전진
 # ---------------------------------------------------------------------------
 
@@ -624,13 +686,14 @@ def _sort_key(event):
     return (event["ts"], _SOURCE_RANK[event["_src"]], tuple(event["_pos"]))
 
 
-def merge(kanban_events, deleted_events, cron_events, limit) -> tuple:
-    """ts 오름차순(같으면 k<d<c, 그다음 출처 안의 위치)으로 합쳐 `limit` 개까지.
+def merge(kanban_events, deleted_events, cron_events, artifact_events, limit) -> tuple:
+    """ts 오름차순(같으면 k<d<c<a, 그다음 출처 안의 위치)으로 합쳐 `limit` 개까지.
 
-    `(emitted, has_more, emitted_by_source)` — emitted_by_source 는 `{"k": [...], "d": [...], "c": [...]}`
-    로 호출자가 출처별 커서를 **실은 것까지만** 전진시키는 데 쓴다.
+    `(emitted, has_more, emitted_by_source)` — emitted_by_source 는
+    `{"k": [...], "d": [...], "c": [...], "a": [...]}` 로 호출자가 출처별 커서를 **실은 것까지만**
+    전진시키는 데 쓴다.
     """
-    everything = sorted([*kanban_events, *deleted_events, *cron_events], key=_sort_key)
+    everything = sorted([*kanban_events, *deleted_events, *cron_events, *artifact_events], key=_sort_key)
     limit = max(1, int(limit))
     emitted = everything[:limit]
     # 한 task_events 행에서 나온 쌍(run.finished + status)은 같은 ts·같은 출처라 항상 이웃이다. 그 사이를
@@ -642,7 +705,7 @@ def merge(kanban_events, deleted_events, cron_events, limit) -> tuple:
         if last["_src"] == "k" == following["_src"] and last["_pos"][0] == following["_pos"][0]:
             emitted = emitted[:-1] if len(emitted) > 1 else everything[: limit + 1]
     has_more = len(everything) > len(emitted)
-    by_source = {"k": [], "d": [], "c": []}
+    by_source = {"k": [], "d": [], "c": [], "a": []}
     for event in emitted:
         by_source[event["_src"]].append(event)
     return emitted, has_more, by_source
@@ -766,6 +829,7 @@ def now_state(api, conn, slug) -> dict:
         "k": max_event_id(conn),
         "d": deleted_log_position(api, slug),
         "c": cron_now_positions(api),
+        "a": artifact_position(api, {}),
     }
 
 
@@ -781,16 +845,19 @@ def collect(api, slug, state, limit) -> dict:
             kanban_events.extend(map_kanban_row(api, conn, slug, row))
     deleted_events = deleted_tail(api, slug, state["d"])
     cron_events, cron_info = cron_tail(api, state.get("c") or {}, tz)
+    old_a = artifact_position(api, state)
+    artifact_events = read_artifact_events(api, old_a, limit + 1)
 
-    emitted, has_more, _by_source = merge(kanban_events, deleted_events, cron_events, limit)
+    emitted, has_more, _by_source = merge(kanban_events, deleted_events, cron_events, artifact_events, limit)
     # 읽기 상한에 닿았으면 그 뒤에 행이 더 있을 수 있다. 과하게 켜는 쪽이 안전하다 — 다음 호출이 비어 있을 뿐이다.
-    has_more = has_more or len(rows) > limit
+    has_more = has_more or len(rows) > limit or len(artifact_events) > limit
     emitted_ids = {event["id"] for event in emitted}
     next_state = {
         "k": advance_kanban(state["k"], read_ids, kanban_events, emitted_ids),
         "d": advance_deleted(state["d"], deleted_events, emitted_ids),
         "c": {**{p: v for p, v in (state.get("c") or {}).items() if p not in cron_info},
               **advance_cron(cron_info, cron_events, emitted_ids)},
+        "a": advance_artifacts(old_a, artifact_events, emitted_ids),
     }
     return {
         "events": [public_event(event) for event in emitted],
