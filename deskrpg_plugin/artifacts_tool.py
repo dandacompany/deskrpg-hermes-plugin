@@ -70,6 +70,10 @@ def _err(code: str, detail: str, **extra) -> str:
     return json.dumps({"error": code, "detail": detail, **extra}, ensure_ascii=False)
 
 
+def _kind_mismatch(exc) -> str:
+    return _err("artifact_incomplete", f"supersedes 대상과 kind 가 다르다 — {exc}. 다른 kind 면 supersedes 없이 새로 저장한다")
+
+
 def _str(args: dict, key: str, limit: int) -> str:
     value = args.get(key)
     return value.strip()[:limit] if isinstance(value, str) else ""
@@ -130,6 +134,8 @@ def _save(api, args: dict, kwargs: dict) -> str:
             result = store.store_artifact_version(api, conn, meta=meta, data=data, max_bytes=limit)
     except store.ArtifactTooLarge:
         return _err("artifact_too_large", f"{limit} 바이트를 넘는다", max_bytes=limit)
+    except store.ArtifactKindMismatch as exc:
+        return _kind_mismatch(exc)
     log_event("artifact.save", artifact_id=result.artifact_id, version=result.version, kind=kind,
               profile=ctx.profile, source_kind=ctx.source_kind, deduped=result.deduped)
     return json.dumps({"artifact_id": result.artifact_id, "version": result.version, "deduped": result.deduped,
@@ -152,8 +158,11 @@ def _save_link(api, args: dict, kwargs: dict, *, kind: str, title: str, summary:
         note=_str(args, "note", 400) or None, supersedes=_str(args, "supersedes", 64) or None, identity=canonical,
     )
     limit = artifact_storage_max_bytes()
-    with contextlib.closing(store.open_registry(api)) as conn:
-        result = store.store_artifact_version(api, conn, meta=meta, data=links.url_blob(canonical), max_bytes=limit)
+    try:
+        with contextlib.closing(store.open_registry(api)) as conn:
+            result = store.store_artifact_version(api, conn, meta=meta, data=links.url_blob(canonical), max_bytes=limit)
+    except store.ArtifactKindMismatch as exc:
+        return _kind_mismatch(exc)
     log_event("artifact.save", artifact_id=result.artifact_id, version=result.version, kind="link",
               profile=ctx.profile, source_kind=ctx.source_kind, deduped=result.deduped)
     return json.dumps({"artifact_id": result.artifact_id, "version": result.version, "deduped": result.deduped,

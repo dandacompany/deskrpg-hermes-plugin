@@ -337,6 +337,7 @@ def add_version_handler(api):
             with contextlib.closing(store.open_registry(api)) as conn:
                 row = _live(conn, artifact_id)
                 body, name, mime = data, filename, policy.mime_for_filename(filename)
+                summary, identity = row["summary"] or "", None
                 if row["kind"] == "link":
                     # 링크 편집은 URL 한 줄만 받는다 — 저장본은 정리한 URL. 파일명은 기존 버전 것을 잇는다.
                     url = links.canonical_url(data.decode("utf-8", "replace").strip())
@@ -344,11 +345,14 @@ def add_version_handler(api):
                         raise RequestError(422, "artifact_incomplete", "link 는 http(s) 주소 한 줄이어야 한다")
                     head = store.list_versions(conn, artifact_id)[-1]
                     body, name, mime = links.url_blob(url), head["filename"], links.LINK_MIME
+                    # 정체성·요약은 새 URL 로 옮기고 제목은 사람이 보던 그대로 둔다(store 의 UPDATE 규칙).
+                    summary, identity = url, url
                 meta = store.ArtifactMeta(
-                    kind=row["kind"], title=row["title"], summary=row["summary"] or "", filename=name,
+                    kind=row["kind"], title=row["title"], summary=summary, filename=name,
                     mime=mime, profile=row["profile"], source_kind=row["source_kind"],
                     session_id=row["session_id"], created_by=user, captured_via="edit", board=row["board"],
                     task_id=row["task_id"], job_id=row["job_id"], run_id=row["run_id"], note=note, supersedes=artifact_id,
+                    identity=identity,
                 )
                 try:
                     out = store.store_artifact_version(api, conn, meta=meta, data=body, max_bytes=limit)

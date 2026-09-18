@@ -155,3 +155,25 @@ def test_같은_세션에_같은_URL_을_다시_저장하면_중복이다(api):
 ])
 def test_링크_인자_조합이_틀리면_artifact_incomplete(api, args):
     assert _call(api, **args)["error"] == "artifact_incomplete"
+
+
+@pytest.mark.parametrize("first,second", [
+    (dict(kind="link", summary="s", url="https://x.io/a"),
+     dict(kind="document", title="보고서", summary="s", content="# 본문", filename="r.md")),
+    (dict(kind="document", title="보고서", summary="s", content="# 본문", filename="r.md"),
+     dict(kind="link", summary="s", url="https://x.io/a")),
+])
+def test_supersedes_대상과_kind_가_다르고_한쪽이_link_면_artifact_incomplete_이고_저장하지_않는다(api, first, second):
+    base = _call(api, **first)
+    out = _call(api, supersedes=base["artifact_id"], **second)
+    assert out["error"] == "artifact_incomplete" and "kind" in out["detail"]
+    with contextlib.closing(store.open_registry(api)) as conn:
+        assert len(store.list_artifacts(conn)) == 1
+        assert [v["version"] for v in store.list_versions(conn, base["artifact_id"])] == [1]
+
+
+def test_link_가_아닌_kind_끼리의_supersedes_는_그대로_새_버전이다(api):
+    base = _call(api, kind="document", title="보고서", summary="s", content="# 1", filename="r.md")
+    out = _call(api, kind="data", title="표", summary="s", content="a,b\n1,2\n", filename="t.csv",
+                supersedes=base["artifact_id"])
+    assert (out["artifact_id"], out["version"]) == (base["artifact_id"], 2)

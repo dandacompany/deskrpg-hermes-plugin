@@ -1,5 +1,6 @@
 """post_llm_call 훅 — 턴의 최종 응답 속 큰 코드 블록을 아티팩트로 승격한다. 절대 던지지 않는다."""
 import contextlib
+import json
 import types
 
 import pytest
@@ -225,3 +226,25 @@ def test_코드_블록과_링크는_한_연결과_한_실패_사건을_쓴다(ap
 def test_코드_블록_안의_URL_은_링크가_아니다(api):
     _fire(api, "```bash\ncurl https://api.example.com\n```")
     assert not store.registry_path(api).exists()
+
+
+def test_도구가_supersedes_로_바꾼_링크는_옛_URL_이_다시_나와도_되돌아가지_않는다(api):
+    from deskrpg_plugin import artifacts_tool as tool
+
+    def save(**args):
+        return json.loads(tool.make_handler(api)(args, task_id=None, session_id="s1"))
+
+    first = save(kind="link", summary="s", url="https://x.io/a")
+    moved = save(kind="link", summary="s", url="https://x.io/zzz", supersedes=first["artifact_id"])
+    assert (moved["artifact_id"], moved["version"]) == (first["artifact_id"], 2)
+    _fire(api, "바뀐 곳 https://x.io/zzz 예전 https://x.io/a")
+    rows = {r["id"]: r for r in _links(api)}
+    assert len(rows) == 2
+    with contextlib.closing(store.open_registry(api)) as conn:
+        versions = store.list_versions(conn, first["artifact_id"])
+        assert [v["version"] for v in versions] == [1, 2]  # zzz 는 중복, a 는 이 아티팩트로 오지 않는다
+        assert store.blob_path_for(api, versions[-1]).read_bytes() == b"https://x.io/zzz\n"
+        assert rows[first["artifact_id"]]["title_norm"] == "https://x.io/zzz"
+        assert rows[first["artifact_id"]]["title"] == "zzz"
+        other = next(r for i, r in rows.items() if i != first["artifact_id"])
+        assert other["title_norm"] == "https://x.io/a"
