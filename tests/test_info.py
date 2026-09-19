@@ -38,7 +38,7 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
     assert body["capabilities"] == [
         "kanban", "cron", "events", "artifacts", "swarm",
         "profile_toolsets", "profile_skills", "profile_clone", "profile_provider_keys",
-        "profile_oauth",
+        "profile_oauth", "profile_tool_providers",
     ]
     assert "artifacts" in body["capabilities"] and isinstance(body["artifact_max_bytes"], int)
     assert body["timezone"] == "Asia/Seoul"
