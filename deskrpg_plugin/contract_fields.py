@@ -49,6 +49,20 @@ def has_skill_symbols(api) -> bool:
     return _has(api, _SKILL_SYMBOLS)
 
 
+_TOOL_PROVIDER_SYMBOLS = (
+    "TOOL_CATEGORIES", "_visible_providers", "provider_readiness_status",
+    "_is_provider_active", "apply_provider_selection",
+)
+
+
+def has_tool_provider_symbols(api) -> bool:
+    """`profile_tool_providers` capability 와 도구 프로바이더 라우트 두 개가 같은 판정을 쓴다.
+
+    목록 판정(`_get_effective_configurable_toolsets`)과 홈 갈아 끼우기도 필요하므로 툴셋 심볼까지 본다.
+    """
+    return has_toolset_symbols(api) and _has(api, _TOOL_PROVIDER_SYMBOLS)
+
+
 def has_oauth_symbols(api) -> bool:
     """`profile_oauth` capability 와 OAuth 라우트 네 개가 같은 판정을 쓴다."""
     return _has(api, _OAUTH_SYMBOLS)
@@ -88,6 +102,8 @@ def capabilities(api) -> tuple[str, ...]:
         extra.append("profile_provider_keys")
     if has_oauth_symbols(api):
         extra.append("profile_oauth")
+    if has_tool_provider_symbols(api):
+        extra.append("profile_tool_providers")
     return CAPABILITIES + tuple(extra)
 
 # ---------------------------------------------------------------------------

@@ -14,7 +14,7 @@ async def test_툴셋_목록이_비지_않고_모양이_맞다(client, make_prof
     assert {"web", "file", "terminal"} <= names
     assert "discord" not in names
     for row in body["toolsets"]:
-        assert set(row) == {"name", "label", "description", "enabled", "configured"}
+        assert set(row) == {"name", "label", "description", "enabled", "configured", "hasProviders"}
 
 
 async def test_저장한_툴셋이_Hermes_의_판정에_반영된다(client, make_profile):

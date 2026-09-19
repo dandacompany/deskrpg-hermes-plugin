@@ -222,6 +222,12 @@ def fake_api(tmp_path):
         _oauth_sessions_lock=threading.Lock(),
         _oauth_profile_name=lambda p: None if not p or p == "current" else p,
         clear_provider_auth=lambda pid=None: True,
+        # 0.10.0 — 도구별 프로바이더 (OPTIONAL_SPEC). hermes_cli.tools_config 의 대시보드용 함수를 흉내 낸다.
+        TOOL_CATEGORIES=FAKE_TOOL_CATEGORIES,
+        _visible_providers=_fake_visible_providers,
+        provider_readiness_status=_fake_readiness,
+        _is_provider_active=_fake_is_active,
+        apply_provider_selection=_fake_apply_provider_selection,
     )
     _add_automation_fakes(api, tmp_path)
     return api
@@ -379,3 +385,56 @@ def pytest_make_collect_report(collector):
 def pytest_runtest_makereport(item, call):
     outcome = yield
     _fail_skipped_report(outcome.get_result(), item.nodeid)
+
+
+# ---------------------------------------------------------------------------
+# 0.10.0 — 도구별 프로바이더 가짜. 실제 TOOL_CATEGORIES 의 행 모양(hermes_cli/tools_config.py:222)을 따른다.
+# ---------------------------------------------------------------------------
+
+FAKE_TOOL_CATEGORIES = {
+    "tts": {
+        "name": "Text-to-Speech",
+        "providers": [
+            {"name": "Microsoft Edge TTS", "badge": "★ recommended · free", "tag": "no key", "env_vars": [],
+             "tts_provider": "edge"},
+            {"name": "OpenAI TTS", "badge": "paid", "tag": "voices",
+             "env_vars": [{"key": "VOICE_TOOLS_OPENAI_KEY", "prompt": "OpenAI API key",
+                           "url": "https://platform.openai.com/api-keys"}],
+             "tts_provider": "openai"},
+            {"name": "Piper", "badge": "local · free", "tag": "local", "env_vars": [], "tts_provider": "piper",
+             "post_setup": "piper"},
+            {"name": "Nous Subscription", "badge": "subscription", "tag": "managed", "env_vars": [],
+             "tts_provider": "openai", "requires_nous_auth": True, "managed_nous_feature": "tts"},
+        ],
+    },
+}
+
+
+def _fake_visible_providers(cat, config, *, force_fresh=False, features=None):
+    return list(cat.get("providers", []))
+
+
+def _fake_readiness(provider, config, *, features=None, is_active=None):
+    if provider.get("env_vars"):
+        return "needs_keys"  # 가짜는 일부러 프로세스 기준으로 틀리게 답한다 — 플러그인은 .env 로 판정해야 한다
+    if provider.get("managed_nous_feature") or provider.get("requires_nous_auth"):
+        return "needs_auth"
+    if provider.get("post_setup"):
+        return "needs_setup"
+    return "ready"
+
+
+def _fake_is_active(provider, config, *, force_fresh=False):
+    section = config.get("tts") if isinstance(config.get("tts"), dict) else {}
+    return bool(provider.get("tts_provider")) and section.get("provider") == provider["tts_provider"] \
+        and not provider.get("managed_nous_feature")
+
+
+def _fake_apply_provider_selection(ts_key, provider_name, config):
+    cat = FAKE_TOOL_CATEGORIES.get(ts_key)
+    if cat is None:
+        raise KeyError(f"Toolset has no configurable category: {ts_key}")
+    row = next((p for p in cat["providers"] if p["name"] == provider_name), None)
+    if row is None:
+        raise KeyError(f"Unknown provider {provider_name!r} for toolset {ts_key!r}")
+    config.setdefault("tts", {})["provider"] = row["tts_provider"]

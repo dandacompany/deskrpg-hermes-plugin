@@ -15,6 +15,7 @@ from . import profiles as _profiles
 from . import config as _config
 from . import catalog as _catalog
 from . import picker as _picker
+from . import tool_providers as _tool_providers
 from . import provider_keys as _provider_keys
 from . import oauth as _oauth
 from . import kanban_board as _kanban_board
@@ -65,6 +66,8 @@ ROUTES = [
     ("GET", "/p/{profile}/deskrpg/catalog", "get_catalog", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets", "get_toolsets", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/skills", "get_skills", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/toolsets/{toolset}/providers", "get_tool_providers", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/toolsets/{toolset}/provider", "put_tool_provider", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", "put_provider_key", Scope.PROFILE),
     ("DELETE", "/p/{profile}/deskrpg/provider-keys/{provider}", "delete_provider_key", Scope.PROFILE),
     # OAuth 디바이스 로그인 — Hermes 세션 위임. 취소 행이 연결 끊기 행보다 **먼저** 와야 한다:
@@ -167,6 +170,8 @@ _HANDLERS = {
     "get_catalog": lambda api: _catalog.get_handler(api),
     "get_toolsets": lambda api: _picker.toolsets_handler(api),
     "get_skills": lambda api: _picker.skills_handler(api),
+    "get_tool_providers": lambda api: _tool_providers.providers_handler(api),
+    "put_tool_provider": lambda api: _tool_providers.select_handler(api),
     "put_provider_key": lambda api: _provider_keys.put_handler(api),
     "delete_provider_key": lambda api: _provider_keys.delete_handler(api),
     "oauth_start": lambda api: _oauth.start_handler(api),
@@ -391,6 +396,8 @@ _OPTIONAL_ROUTES = {
     "kanban_blackboard": "latest_blackboard",
     "get_toolsets": _contract_fields.has_toolset_symbols,
     "get_skills": _contract_fields.has_skill_symbols,
+    "get_tool_providers": _contract_fields.has_tool_provider_symbols,
+    "put_tool_provider": _contract_fields.has_tool_provider_symbols,
     "put_provider_key": "PROVIDER_REGISTRY",
     "delete_provider_key": "PROVIDER_REGISTRY",
     "oauth_start": _contract_fields.has_oauth_symbols,

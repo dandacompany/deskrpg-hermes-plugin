@@ -14,6 +14,11 @@ DeskRPG 전용 라우트를 Hermes API Server 에 등록하는 Hermes 플러그�
 - **프로바이더 인증(0.9.0)** — `PUT/DELETE /p/{profile}/deskrpg/provider-keys/{provider}` 로 모델 프로바이더 API 키를
   프로필 `.env` 에 쓰기 전용으로 넣고(키 이름은 서버가 정한다), `/p/{profile}/deskrpg/oauth/*` 로 Hermes 대시보드와 같은
   디바이스 코드 로그인을 한다(앱 안에서는 Codex 만 — Nous·xAI·MiniMax 는 `cliCommand` 로 CLI 로그인을 안내한다). 카탈로그 행은 `authType`·`envVars`·`cliCommand` 를 싣는다.
+- **도구별 프로바이더(0.10.0)** — `GET /p/{profile}/deskrpg/toolsets/{toolset}/providers` 가 `hermes tools` 의 프로바이더
+  행(키 이름·키 설정 여부·active·readiness)을, `PUT …/toolsets/{toolset}/provider {provider, env?}` 가 프로바이더 선택과 그
+  행의 키만 쓰기 전용으로 저장한다. Hermes 대시보드 도구 설정 라우터와 같은 함수를 쓴다. 키 설정 여부는 프로필 `.env` 로
+  판정하고(게이트웨이 프로세스 환경을 섞지 않는다), 설치·구독 로그인이 필요한 행은 `setup: "cli"` 로 표시하고 PUT 을 409 로
+  거절한다. 툴셋 목록 행에 `hasProviders` 가 붙는다.
 
 ## 요구사항
 
@@ -132,6 +137,8 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 | PUT | `/p/{profile}/deskrpg/config` | profile | 프로필 설정 쓰기 (읽을 수 없으면 409 `config_unreadable`) |
 | GET | `/p/{profile}/deskrpg/toolsets` | profile | `api_server` 플랫폼 툴셋 목록 `{name, label, description, enabled, configured}` (0.9.0) |
 | GET | `/p/{profile}/deskrpg/skills` | profile | 프로필 스킬 목록 `{name, category, description, disabled, essential}` (0.9.0) |
+| GET | `/p/{profile}/deskrpg/toolsets/{toolset}/providers` | profile | 도구 프로바이더 행 `{name, badge, tag, envVars[{key,prompt,url,isSet}], active, status, setup}` · `activeProvider` · `cliCommand` (0.10.0) |
+| PUT | `/p/{profile}/deskrpg/toolsets/{toolset}/provider` | profile | 프로바이더 선택 + 그 행의 키 저장(쓰기 전용). `missing_keys`·`unknown_env_key` 400, `provider_needs_cli` 409 (0.10.0) |
 
 ### 칸반 (0.6.0 · 전부 default · `?board=<slug>` 필수인 곳은 표시)
 

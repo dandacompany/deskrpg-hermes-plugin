@@ -27,7 +27,7 @@ async def test_툴셋_목록은_켜짐과_키_설정_여부를_함께_준다(aio
     assert body["platform"] == "api_server"
     rows = {r["name"]: r for r in body["toolsets"]}
     assert rows["web"] == {"name": "web", "label": "🔍 Web", "description": "검색과 스크래핑",
-                           "enabled": True, "configured": True}
+                           "enabled": True, "configured": True, "hasProviders": False}
     assert rows["tts"]["enabled"] is True and rows["tts"]["configured"] is False
     assert rows["file"]["enabled"] is False
 

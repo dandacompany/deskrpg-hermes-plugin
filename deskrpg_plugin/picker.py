@@ -73,6 +73,7 @@ def toolset_rows(api, home) -> list[dict]:
     with _home_scope(api, home):
         enabled = api._get_platform_tools(cfg, PLATFORM, include_default_mcp_servers=False)
         extra = _features_kwargs(api, cfg)
+        categories = getattr(api, "TOOL_CATEGORIES", None)
         rows = []
         for name, label, description in _configurable(api):
             try:
@@ -80,8 +81,12 @@ def toolset_rows(api, home) -> list[dict]:
             except Exception as exc:  # noqa: BLE001 — 한 툴셋의 판정 실패가 목록을 죽이면 안 된다
                 logger.warning("[deskrpg] 툴셋 키 판정 실패: %s — %s", name, type(exc).__name__)
                 configured = None
-            rows.append({"name": name, "label": label, "description": description,
-                         "enabled": name in enabled, "configured": configured})
+            row = {"name": name, "label": label, "description": description,
+                   "enabled": name in enabled, "configured": configured}
+            if categories is not None:
+                # 0.10.0 — 프로바이더를 고르는 툴셋인가. 화면이 "설정" 을 붙일지 정한다.
+                row["hasProviders"] = name in categories
+            rows.append(row)
     return rows
 
 

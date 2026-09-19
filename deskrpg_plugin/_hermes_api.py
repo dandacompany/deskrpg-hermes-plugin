@@ -184,6 +184,12 @@ OPTIONAL_SPEC = (
             "_configurable_keys",
             "_platform_default_keys",
             "_get_plugin_toolset_keys",
+            # 0.10.0 — 도구별 프로바이더. 대시보드 도구 설정 라우터와 같은 함수다.
+            "TOOL_CATEGORIES",
+            "_visible_providers",
+            "provider_readiness_status",
+            "_is_provider_active",
+            "apply_provider_selection",
         ),
     ),
     # 툴셋 목록이 구독 기능 판정을 한 번만 계산하는 데 쓴다. 없으면 툴셋마다 Hermes 가 다시 계산한다.
