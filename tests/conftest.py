@@ -438,3 +438,40 @@ def _fake_apply_provider_selection(ts_key, provider_name, config):
     if row is None:
         raise KeyError(f"Unknown provider {provider_name!r} for toolset {ts_key!r}")
     config.setdefault("tts", {})["provider"] = row["tts_provider"]
+
+
+@pytest.fixture
+def tmp_api(tmp_path, monkeypatch):
+    """카드 제안 저장소·도구가 쓰는 최소 Hermes API.
+
+    `events()` 는 진짜 사건 tail(`events.read_artifact_events`)을 통과시킨다 — 페이로드에서
+    `profile` 을 끌어올리는 규칙까지 실제 경로로 확인하려는 것이다. `kanban_writes()` 는
+    이 플러그인이 칸반 정본에 쓰지 않았음을 확인하는 데 쓴다 — 칸반 DB 를 열기만 해도 기록된다.
+    """
+    monkeypatch.delenv("HERMES_DESKRPG_ARTIFACTS_ROOT", raising=False)
+    home = tmp_path / "profiles" / "noah"
+    home.mkdir(parents=True)
+    kanban = tmp_path / "kanban"
+    kanban.mkdir()
+    writes = []
+
+    class _KanbanDB:
+        def __init__(self, *a, **k):
+            writes.append(("KanbanDB", a, k))
+
+    api = types.SimpleNamespace(
+        get_hermes_home=lambda: str(home),
+        kanban_home=lambda: (writes.append(("kanban_home", (), {})), str(kanban))[1],
+        get_current_board=lambda: "dev",
+        KanbanDB=_KanbanDB,
+        MAX_REQUEST_BYTES=50 * 1024 * 1024,
+    )
+    api.kanban_writes = lambda: list(writes)
+
+    def _events():
+        from deskrpg_plugin import events as events_module
+
+        return events_module.read_artifact_events(api, 0, 100)
+
+    api.events = _events
+    return api
