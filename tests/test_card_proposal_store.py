@@ -54,3 +54,10 @@ def test_record_task_는_해소된_제안에_한_번만_적는다(tmp_api):
     assert store.get(tmp_api, pid)["resolved_task_id"] == "t-1"
     assert store.unresolve(tmp_api, pid) is False            # 가드가 살아 있다
     assert store.record_task(tmp_api, "nope", "t-1") is False
+
+
+def test_record_task_는_inline_해소를_받지_않는다(tmp_api):
+    pid = store.create(tmp_api, profile="noah", title="t", summary="s", body=None, acceptance=None)
+    assert store.resolve(tmp_api, pid, "inline", None) is True
+    assert store.record_task(tmp_api, pid, "t-1") is False
+    assert store.get(tmp_api, pid)["resolved_task_id"] is None

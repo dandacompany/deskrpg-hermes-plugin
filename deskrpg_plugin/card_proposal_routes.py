@@ -77,6 +77,7 @@ def record_task_handler(api):
     """만들어진 카드 id 를 해소된 제안에 적는다.
 
     이미 카드가 적힌 제안은 덮지 않는다 — 덮을 수 있으면 두 번째 카드가 첫 카드를 가려 이중 방어가 무너진다.
+    `choice="inline"` 으로 해소된 제안도 받지 않는다(만들어진 카드가 없다).
     409 를 두 경우(미해소 / 이미 적힘)로 가르지 않는 이유는 `unresolve_handler` 와 같다.
     """
 
@@ -91,7 +92,7 @@ def record_task_handler(api):
                 raise RequestError(404, "card_proposal_not_found", proposal_id)
             if not store.record_task(api, proposal_id, task_id):
                 raise RequestError(409, "card_proposal_task_not_recordable",
-                                   "해소되지 않았거나 카드가 이미 기록됐다")
+                                   "해소되지 않았거나, 카드 갈래가 아니거나, 카드가 이미 기록됐다")
             return {"recorded": True}
 
         result = await run_blocking(work)

@@ -60,8 +60,13 @@ def test_아티팩트_모듈_import_가_실패해도_라우트는_등록되고_�
     deskrpg_plugin.register(ctx)  # 던지지 않아야 한다
     names = [c[0] for c in ctx.calls]
     assert names.count("register_platform_handler") == 1
-    # 아티팩트 도구는 등록되지 않는다. 카드 제안은 별도 등록이라 살아 있어도 된다(그게 의도다).
-    assert artifacts_tool.TOOL_NAME not in [c[1][0] for c in ctx.calls if c[0] == "register_tool"]
+    # 아티팩트 도구는 등록되지 않는다. 카드 제안은 별도 등록이라 **살아 있어야 한다** — 두 단정이
+    # 함께 있어야 "둘 다 조용히 죽는" 회귀가 통과하지 못한다.
+    from deskrpg_plugin import card_proposal_tool
+
+    tools = [c[1][0] for c in ctx.calls if c[0] == "register_tool"]
+    assert artifacts_tool.TOOL_NAME not in tools
+    assert card_proposal_tool.TOOL_NAME in tools
 
 
 def test_스킬_파일이_존재하고_섹션_텍스트가_짧다():

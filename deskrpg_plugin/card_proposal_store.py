@@ -124,6 +124,8 @@ def record_task(api, proposal_id: str, task_id: str) -> bool:
     DeskRPG 는 카드를 만들기 **전에** `resolve` 를 부르므로(그 순서가 "한 번만 해소" 를 보장한다)
     카드 id 는 사후에만 적을 수 있다. 이 값이 채워지는 순간부터 `unresolve` 가 그 제안을 막는다 —
     그게 카드 중복을 막는 이중 방어이고, 이 경로가 없으면 그 가드가 영영 놀게 된다.
+    `resolved_choice='card'` 인 제안에만 적는다 — `inline` 로 해소된 제안에는 만들어진 카드가 없으므로
+    카드 id 가 적힐 자리가 아니다(DeskRPG 도 그 갈래에서 이 경로를 부르지 않는다).
     판정은 `resolve`·`unresolve` 와 같이 단일 `UPDATE` 의 `rowcount` 다."""
     conn = open_store(api)
     try:
@@ -131,7 +133,8 @@ def record_task(api, proposal_id: str, task_id: str) -> bool:
             conn.execute("BEGIN IMMEDIATE")
             cur = conn.execute(
                 "UPDATE card_proposals SET resolved_task_id=?"
-                " WHERE proposal_id=? AND resolved_at IS NOT NULL AND resolved_task_id IS NULL",
+                " WHERE proposal_id=? AND resolved_at IS NOT NULL AND resolved_task_id IS NULL"
+                " AND resolved_choice='card'",
                 (task_id, proposal_id),
             )
             return cur.rowcount == 1

@@ -147,3 +147,13 @@ async def test_없는_제안에는_적을_수_없다_404(client):
     resp = await client.post("/deskrpg/card-proposals/nope/task", json={"task_id": "t-1"})
     assert resp.status == 404
     assert (await resp.json())["error"] == "card_proposal_not_found"
+
+
+async def test_inline_로_해소된_제안에는_카드_id_를_적을_수_없다(client, tmp_api):
+    """`inline` 갈래에는 만들어진 카드가 없다 — 카드 id 가 적힐 자리가 아니다."""
+    pid = _seed(tmp_api)
+    assert (await client.post(f"/deskrpg/card-proposals/{pid}/resolve", json={"choice": "inline"})).status == 200
+    resp = await client.post(f"/deskrpg/card-proposals/{pid}/task", json={"task_id": "t-1"})
+    assert resp.status == 409
+    assert (await resp.json())["error"] == "card_proposal_task_not_recordable"
+    assert store.get(tmp_api, pid)["resolved_task_id"] is None
