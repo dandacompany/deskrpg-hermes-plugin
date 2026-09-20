@@ -163,9 +163,17 @@ async def test_읽기_권한이_없는_config는_GET에서_unreadable(aiohttp_cl
         p.chmod(stat.S_IRUSR | stat.S_IWUSR)  # tmp_path 정리가 지울 수 있도록 복구
 
 
-async def test_ALLOWED_KEYS_는_문서화된_여섯_키다():
+async def test_ALLOWED_KEYS_는_문서화된_일곱_키다():
     assert config.ALLOWED_KEYS == frozenset(
-        {"model", "provider", "toolsets", "reasoning_effort", "enabledToolsets", "disabledSkills"}
+        {
+            "model",
+            "provider",
+            "toolsets",
+            "reasoning_effort",
+            "enabledToolsets",
+            "disabledSkills",
+            "clearBaseUrl",
+        }
     )
 
 
@@ -467,3 +475,60 @@ async def test_플러그인_툴셋이_있으면_known_plugin_toolsets_를_기록
     saved = yaml.safe_load(path.read_text(encoding="utf-8"))
     assert saved["platform_toolsets"]["api_server"] == ["my-mcp", "web"]
     assert saved["known_plugin_toolsets"] == {p: ["spotify"] for p in ("api_server", "cron", "cli")}
+
+
+async def test_GET은_요청_주소를_함께_준다(aiohttp_client, fake_api):
+    # 제공자를 바꿔도 이 값이 남아 있으면 요청은 옛 엔드포인트로 간다 — 화면이 알려면 값이 필요하다.
+    _seed(fake_api, {"model": {"provider": "openrouter", "default": "x", "base_url": "https://old.example/v1"}})
+    client = await _client(aiohttp_client, fake_api)
+    body = await (await client.get("/p/sophie/deskrpg/config")).json()
+    assert body["baseUrl"] == "https://old.example/v1"
+
+
+async def test_주소가_없으면_null(aiohttp_client, fake_api):
+    _seed(fake_api, {"model": {"provider": "openai-api", "default": "gpt-5"}})
+    client = await _client(aiohttp_client, fake_api)
+    body = await (await client.get("/p/sophie/deskrpg/config")).json()
+    assert body["baseUrl"] is None
+
+
+async def test_clearBaseUrl_은_주소와_별칭을_지우고_나머지는_남긴다(aiohttp_client, fake_api):
+    path = _seed(
+        fake_api,
+        {
+            "model": {
+                "provider": "openrouter",
+                "default": "x",
+                "base_url": "https://old.example/v1",
+                "api_base": "https://old.example/v1",
+                "context_length": 128000,
+            }
+        },
+    )
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put(
+        "/p/sophie/deskrpg/config",
+        json={"provider": "openai-api", "model": "gpt-5", "clearBaseUrl": True},
+    )
+    assert resp.status == 200
+    saved = yaml.safe_load(path.read_text(encoding="utf-8"))["model"]
+    assert "base_url" not in saved and "api_base" not in saved
+    assert saved["provider"] == "openai-api"
+    assert saved["default"] == "gpt-5"
+    # 주소와 무관한 값은 건드리지 않는다.
+    assert saved["context_length"] == 128000
+
+
+async def test_clearBaseUrl_을_보내지_않으면_주소는_그대로다(aiohttp_client, fake_api):
+    path = _seed(fake_api, {"model": {"provider": "openrouter", "default": "x", "base_url": "https://old.example/v1"}})
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/sophie/deskrpg/config", json={"provider": "openai-api"})
+    assert resp.status == 200
+    assert yaml.safe_load(path.read_text(encoding="utf-8"))["model"]["base_url"] == "https://old.example/v1"
+
+
+async def test_clearBaseUrl_은_true_만_받는다(aiohttp_client, fake_api):
+    _seed(fake_api, {"model": {"provider": "openrouter", "default": "x"}})
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/sophie/deskrpg/config", json={"clearBaseUrl": "yes"})
+    assert resp.status == 400
