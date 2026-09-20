@@ -1,4 +1,5 @@
 """`POST /deskrpg/card-proposals/{proposal_id}/resolve` — 제안을 한 번만 해소한다.
+`…/unresolve` — 카드가 기록되지 않은 해소를 되돌린다(카드 생성이 실패했을 때의 롤백).
 
 소유자 키다(칸반과 같은 스코프) — 해소는 프로필이 아니라 DeskRPG 사용자가 하는 일이고,
 제안 저장소도 호스트 공유 자원(게이트웨이당 하나)이기 때문이다.
@@ -38,6 +39,34 @@ def resolve_handler(api):
 
         result = await run_blocking(work)
         log_event("card_proposal.resolved", proposal_id=proposal_id, choice=choice)
+        return web.json_response(result)
+
+    return handler
+
+
+def unresolve_handler(api):
+    """해소를 되돌린다. 본문 없음.
+
+    `resolved_task_id` 가 있는 제안은 되돌리지 않는다 — 카드가 이미 있는 제안을 다시 열면 카드가 둘 생긴다.
+    되돌릴 수 없는 두 경우(애초에 해소되지 않음 / 카드가 기록됨)를 코드로 가르지 않는다: 어느 쪽이든
+    호출자가 할 일은 같고(이 제안은 되돌릴 수 없다), 가르려면 트랜잭션 밖에서 상태를 한 번 더 읽어
+    그 사이에 바뀔 수 있는 값을 근거로 오류를 정하게 된다. 판정은 rowcount 하나에만 둔다.
+    """
+
+    @guarded
+    async def handler(request):
+        proposal_id = request.match_info["proposal_id"]
+
+        def work():
+            if store.get(api, proposal_id) is None:
+                raise RequestError(404, "card_proposal_not_found", proposal_id)
+            if not store.unresolve(api, proposal_id):
+                raise RequestError(409, "card_proposal_not_unresolvable",
+                                   "해소되지 않았거나 카드가 이미 기록됐다")
+            return {"resolved": False}
+
+        result = await run_blocking(work)
+        log_event("card_proposal.unresolved", proposal_id=proposal_id)
         return web.json_response(result)
 
     return handler

@@ -98,6 +98,26 @@ def resolve(api, proposal_id: str, choice: str, task_id=None) -> bool:
         conn.close()
 
 
+def unresolve(api, proposal_id: str) -> bool:
+    """해소를 되돌렸으면 True. **카드가 기록된 제안(`resolved_task_id` 가 있는 것)은 절대 다시 열지 않는다.**
+
+    되돌릴 수 있는 것은 "해소는 됐는데 카드가 기록되지 않은" 반쪽 상태뿐이다 — 카드 생성이 실패한 그 상태가
+    정확히 롤백이 필요한 상태이고, 그 조건 덕에 되돌리기로 두 번째 카드를 만드는 길이 없다.
+    판정은 `resolve` 와 같이 단일 `UPDATE` 의 `rowcount` 다."""
+    conn = open_store(api)
+    try:
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            cur = conn.execute(
+                "UPDATE card_proposals SET resolved_at=NULL, resolved_choice=NULL"
+                " WHERE proposal_id=? AND resolved_at IS NOT NULL AND resolved_task_id IS NULL",
+                (proposal_id,),
+            )
+            return cur.rowcount == 1
+    finally:
+        conn.close()
+
+
 def get(api, proposal_id: str):
     conn = open_store(api)
     try:

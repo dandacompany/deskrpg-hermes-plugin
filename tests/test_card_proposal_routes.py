@@ -1,4 +1,4 @@
-"""`POST /deskrpg/card-proposals/{id}/resolve` — 200 / 409(두 번째) / 400(잘못된 choice) / 404(없는 id)."""
+"""`POST /deskrpg/card-proposals/{id}/resolve` 와 `…/unresolve` — 상태 코드와 롤백 가드."""
 
 import pytest
 from aiohttp import web
@@ -12,10 +12,10 @@ from tests.conftest import FakeAdapter
 @pytest.fixture
 async def client(aiohttp_client, tmp_api):
     app = web.Application()
-    app.router.add_route(
-        "POST", "/deskrpg/card-proposals/{proposal_id}/resolve",
-        require_auth(FakeAdapter(authorized=True), Scope.DEFAULT, routes.resolve_handler(tmp_api)),
-    )
+    adapter = FakeAdapter(authorized=True)
+    for action, factory in (("resolve", routes.resolve_handler), ("unresolve", routes.unresolve_handler)):
+        app.router.add_route("POST", f"/deskrpg/card-proposals/{{proposal_id}}/{action}",
+                             require_auth(adapter, Scope.DEFAULT, factory(tmp_api)))
     return await aiohttp_client(app)
 
 
@@ -63,5 +63,43 @@ async def test_허용되지_않은_choice_는_400_이고_제안은_그대로다(
 
 async def test_없는_제안은_404_다(client):
     resp = await client.post("/deskrpg/card-proposals/nope/resolve", json={"choice": "card"})
+    assert resp.status == 404
+    assert (await resp.json())["error"] == "card_proposal_not_found"
+
+
+async def test_카드가_없는_해소는_되돌려지고_다시_해소할_수_있다(client, tmp_api):
+    """롤백의 목적은 재시도다 — 되돌린 뒤 resolve 가 다시 성공해야 의미가 있다."""
+    pid = _seed(tmp_api)
+    assert (await client.post(f"/deskrpg/card-proposals/{pid}/resolve", json={"choice": "card"})).status == 200
+    resp = await client.post(f"/deskrpg/card-proposals/{pid}/unresolve")
+    assert resp.status == 200
+    assert await resp.json() == {"resolved": False}
+    row = store.get(tmp_api, pid)
+    assert row["resolved_at"] is None and row["resolved_choice"] is None
+    again = await client.post(f"/deskrpg/card-proposals/{pid}/resolve", json={"choice": "card", "task_id": "t-9"})
+    assert again.status == 200
+    assert store.get(tmp_api, pid)["resolved_task_id"] == "t-9"
+
+
+async def test_카드가_기록된_제안은_되돌려지지_않고_상태도_그대로다(client, tmp_api):
+    pid = _seed(tmp_api)
+    assert (await client.post(f"/deskrpg/card-proposals/{pid}/resolve",
+                              json={"choice": "card", "task_id": "t-1"})).status == 200
+    before = store.get(tmp_api, pid)
+    resp = await client.post(f"/deskrpg/card-proposals/{pid}/unresolve")
+    assert resp.status == 409
+    assert (await resp.json())["error"] == "card_proposal_not_unresolvable"
+    assert store.get(tmp_api, pid) == before
+
+
+async def test_해소되지_않은_제안의_되돌리기는_409_다(client, tmp_api):
+    pid = _seed(tmp_api)
+    resp = await client.post(f"/deskrpg/card-proposals/{pid}/unresolve")
+    assert resp.status == 409
+    assert store.get(tmp_api, pid)["resolved_at"] is None
+
+
+async def test_없는_제안의_되돌리기는_404_다(client):
+    resp = await client.post("/deskrpg/card-proposals/nope/unresolve")
     assert resp.status == 404
     assert (await resp.json())["error"] == "card_proposal_not_found"
