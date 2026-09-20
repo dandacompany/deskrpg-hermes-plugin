@@ -22,7 +22,10 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 # `kanban_views` = 묶음 조회(`GET /kanban/links`, `GET /kanban/runs`). Hermes 의 선택 심볼을
 # 쓰지 않고 보드 DB 만 읽으므로 칸반이 되면 늘 된다 — 그래도 **capability 로 내보낸다.**
 # 호출부가 버전으로 판단하면 "새 플러그인인데 404" 를 진단할 수 없다.
-CAPABILITIES = ("kanban", "cron", "events", "artifacts", "kanban_views")
+# `card_proposals` 는 사건 옵트인 토큰(`include=card_proposals`)과 같은 이름이다 — DeskRPG 는 이 값으로
+# "이 게이트웨이가 카드 제안을 아는가" 를 판정해 칸반·크론과 같은 방식의 안내를 띄운다. 경로 문자열을
+# 뒤져 판정하게 두면 경로를 고치는 날 조용히 깨진다.
+CAPABILITIES = ("kanban", "cron", "events", "artifacts", "kanban_views", "card_proposals")
 
 
 _TOOLSET_SYMBOLS = (

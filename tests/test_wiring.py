@@ -53,7 +53,7 @@ async def test_info_가_예순네_라우트와_capability_전부를_보고한다
     assert len(body["routes"]) == 64
     # fake_api 는 스웜·피커 심볼을 모두 갖춘 빌드를 흉내 낸다 — capability 에 다 붙는다.
     assert body["capabilities"] == [
-        "kanban", "cron", "events", "artifacts", "kanban_views", "swarm",
+        "kanban", "cron", "events", "artifacts", "kanban_views", "card_proposals", "swarm",
         "profile_toolsets", "profile_skills", "profile_clone", "profile_provider_keys",
         "profile_oauth", "profile_tool_providers", "initial_status",
     ]

@@ -36,11 +36,14 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
     assert body["version"] == routes.PLUGIN_VERSION
     # fake_api 는 스웜·피커 심볼을 모두 갖춘 빌드를 흉내 낸다 — capability 에 다 붙는다.
     assert body["capabilities"] == [
-        "kanban", "cron", "events", "artifacts", "kanban_views", "swarm",
+        "kanban", "cron", "events", "artifacts", "kanban_views", "card_proposals", "swarm",
         "profile_toolsets", "profile_skills", "profile_clone", "profile_provider_keys",
         "profile_oauth", "profile_tool_providers", "initial_status",
     ]
     assert "artifacts" in body["capabilities"] and isinstance(body["artifact_max_bytes"], int)
+    # 카드 제안은 Hermes 빌드와 무관하게 이 플러그인이 늘 싣는다 — 구버전 플러그인에는 없으므로
+    # DeskRPG 는 이 문자열의 유무로 기능을 판별한다.
+    assert "card_proposals" in body["capabilities"]
     assert body["timezone"] == "Asia/Seoul"
     assert set(body["kanban"]) == PLUGIN_INFO_KANBAN_KEYS
     assert body["kanban"] == {
