@@ -63,6 +63,23 @@ def has_tool_provider_symbols(api) -> bool:
     return has_toolset_symbols(api) and _has(api, _TOOL_PROVIDER_SYMBOLS)
 
 
+def has_initial_status(api) -> bool:
+    """이 Hermes 빌드의 `create_task` 가 `initial_status` 를 받는가.
+
+    버전으로 판단하지 않는다 — 이 모듈의 원칙대로 **되는 것만** 광고한다. 받지 못하는
+    빌드에서 이 필드를 받아 넘기면 TypeError 가 400 invalid_task 로 뭉뚱그려진다.
+    """
+    import inspect
+
+    create = getattr(api, "create_task", None)
+    if create is None:
+        return False
+    try:
+        return "initial_status" in inspect.signature(create).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def has_oauth_symbols(api) -> bool:
     """`profile_oauth` capability 와 OAuth 라우트 네 개가 같은 판정을 쓴다."""
     return _has(api, _OAUTH_SYMBOLS)
@@ -104,6 +121,10 @@ def capabilities(api) -> tuple[str, ...]:
         extra.append("profile_oauth")
     if has_tool_provider_symbols(api):
         extra.append("profile_tool_providers")
+    if has_initial_status(api):
+        # 실행 전 승인 관문이 카드를 `blocked` 로 세울 수 있는가. 화면은 이 값이 없으면
+        # "플러그인 업데이트 필요" 로 안내한다 — 조용히 승인 없이 실행되지 않게.
+        extra.append("initial_status")
     return CAPABILITIES + tuple(extra)
 
 # ---------------------------------------------------------------------------

@@ -55,7 +55,7 @@ async def test_info_가_예순한_라우트와_capability_전부를_보고한다
     assert body["capabilities"] == [
         "kanban", "cron", "events", "artifacts", "swarm",
         "profile_toolsets", "profile_skills", "profile_clone", "profile_provider_keys",
-        "profile_oauth", "profile_tool_providers",
+        "profile_oauth", "profile_tool_providers", "initial_status",
     ]
     assert "GET /deskrpg/events" in body["routes"]
     assert "POST /p/{profile}/deskrpg/cron/jobs" in body["routes"]

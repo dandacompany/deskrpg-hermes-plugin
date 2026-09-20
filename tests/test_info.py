@@ -38,7 +38,7 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
     assert body["capabilities"] == [
         "kanban", "cron", "events", "artifacts", "swarm",
         "profile_toolsets", "profile_skills", "profile_clone", "profile_provider_keys",
-        "profile_oauth", "profile_tool_providers",
+        "profile_oauth", "profile_tool_providers", "initial_status",
     ]
     assert "artifacts" in body["capabilities"] and isinstance(body["artifact_max_bytes"], int)
     assert body["timezone"] == "Asia/Seoul"
@@ -204,3 +204,20 @@ async def test_피커_능력은_심볼이_있을_때만_광고한다(aiohttp_cli
     client = await _client(aiohttp_client, fake_api)
     caps = (await (await client.get("/deskrpg/info")).json())["capabilities"]
     assert not {"profile_toolsets", "profile_skills", "profile_clone"} & set(caps)
+
+
+async def test_initial_status_능력은_Hermes_가_받을_때만_광고한다(aiohttp_client, fake_api):
+    """버전이 아니라 `create_task` 시그니처를 본다 — 받지 못하는 빌드에서 광고하면
+    화면이 승인 관문을 켜고, 카드가 `running` 으로 생겨 관문이 통째로 빠진다."""
+    client = await _client(aiohttp_client, fake_api)
+    caps = (await (await client.get("/deskrpg/info")).json())["capabilities"]
+    assert "initial_status" in caps
+
+    def old_create_task(conn, *, title, body=None, **kwargs):  # initial_status 없음
+        raise AssertionError("불리면 안 된다")
+
+    # 플러그인은 `api.create_task` 를 본다 — kanban_db 심볼이 api 로 위임된 이름이다.
+    fake_api.create_task = old_create_task
+    client = await _client(aiohttp_client, fake_api)
+    caps = (await (await client.get("/deskrpg/info")).json())["capabilities"]
+    assert "initial_status" not in caps
