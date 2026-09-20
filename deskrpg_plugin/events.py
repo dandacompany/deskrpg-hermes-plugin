@@ -629,6 +629,12 @@ def cron_now_positions(api) -> dict:
 SQL_ARTIFACT_TAIL = "SELECT id, ts, kind, payload FROM artifact_events WHERE id > ? ORDER BY id ASC LIMIT ?"
 SQL_ARTIFACT_MAX_ID = "SELECT COALESCE(MAX(id), 0) FROM artifact_events"
 
+# 같은 표(`artifact_events`)에 아티팩트와 카드 제안이 함께 쌓인다. 호출자는 종류를 따로 옵트인하므로
+# 읽을 때 SQL 로 거른다 — 거르지 않고 나중에 버리면 커서가 그 자리에 멈춘다.
+ARTIFACT_EVENT_KINDS = ("artifact.created", "artifact.versioned", "artifact.deleted",
+                        "artifact.capture_failed", "artifact.delete_partial")
+CARD_PROPOSAL_EVENT_KINDS = ("card_proposal.created",)
+
 
 def _artifact_conn(api):
     """레지스트리가 없으면 None — 사건을 읽으려고 저장소를 만들지 않는다."""
@@ -637,12 +643,19 @@ def _artifact_conn(api):
     return _artifacts.open_registry(api)
 
 
-def read_artifact_events(api, after_id: int, limit: int) -> list:
+def read_artifact_events(api, after_id: int, limit: int, kinds=None) -> list:
+    """`kinds` 가 오면 그 종류만 SQL 로 걸러 읽는다 — None 은 표 전체(옛 호출자)."""
     conn = _artifact_conn(api)
     if conn is None:
         return []
     try:
-        rows = conn.execute(SQL_ARTIFACT_TAIL, (int(after_id), int(limit))).fetchall()
+        if kinds:
+            kinds = tuple(kinds)
+            sql = ("SELECT id, ts, kind, payload FROM artifact_events WHERE id > ?"
+                   f" AND kind IN ({','.join('?' * len(kinds))}) ORDER BY id ASC LIMIT ?")
+            rows = conn.execute(sql, (int(after_id), *kinds, int(limit))).fetchall()
+        else:
+            rows = conn.execute(SQL_ARTIFACT_TAIL, (int(after_id), int(limit))).fetchall()
     finally:
         conn.close()
     out = []
@@ -825,26 +838,46 @@ def _timezone_of(api):
         return None
 
 
+def _include_tokens(raw) -> set:
+    if not raw:
+        return set()
+    return {token.strip() for token in str(raw).split(",")}
+
+
 def wants_artifacts(raw) -> bool:
     """`include=artifacts` 옵트인(R17). 쉼표 목록을 받고 모르는 토큰은 무시한다."""
-    if not raw:
-        return False
-    return "artifacts" in {token.strip() for token in str(raw).split(",")}
+    return "artifacts" in _include_tokens(raw)
 
 
-def now_state(api, conn, slug, *, include_artifacts=False) -> dict:
-    """E1 — 커서가 없을 때의 "지금" 위치. `a` 는 옵트인했을 때만 싣는다."""
+def wants_card_proposals(raw) -> bool:
+    """`include=card_proposals` 옵트인. 아티팩트와 같은 규약이고 서로 독립이다 —
+    이걸 켜지 않은 DeskRPG 는 `card_proposal.created` 를 영영 받지 않는다."""
+    return "card_proposals" in _include_tokens(raw)
+
+
+def artifact_kind_filter(*, include_artifacts: bool, include_card_proposals: bool) -> tuple:
+    """`a` 출처에서 읽을 종류. 둘 다 끄면 빈 튜플 — 호출자는 출처를 아예 읽지 않는다."""
+    kinds = []
+    if include_artifacts:
+        kinds.extend(ARTIFACT_EVENT_KINDS)
+    if include_card_proposals:
+        kinds.extend(CARD_PROPOSAL_EVENT_KINDS)
+    return tuple(kinds)
+
+
+def now_state(api, conn, slug, *, include_artifacts=False, include_card_proposals=False) -> dict:
+    """E1 — 커서가 없을 때의 "지금" 위치. `a` 는 옵트인했을 때만 싣는다(어느 종류든)."""
     state = {
         "k": max_event_id(conn),
         "d": deleted_log_position(api, slug),
         "c": cron_now_positions(api),
     }
-    if include_artifacts:
+    if include_artifacts or include_card_proposals:
         state["a"] = artifact_position(api, {})
     return state
 
 
-def collect(api, slug, state, limit, *, include_artifacts=False) -> dict:
+def collect(api, slug, state, limit, *, include_artifacts=False, include_card_proposals=False) -> dict:
     """E3–E6 을 한 번에: 세 출처를 읽고 병합해 `{events, cursor, has_more}` 를 만든다. 워커 스레드 안에서 부른다."""
     tz = _timezone_of(api)
     with board_conn(api, slug) as conn:
@@ -857,9 +890,11 @@ def collect(api, slug, state, limit, *, include_artifacts=False) -> dict:
     deleted_events = deleted_tail(api, slug, state["d"])
     cron_events, cron_info = cron_tail(api, state.get("c") or {}, tz)
     # 옵트인하지 않은 호출자는 아티팩트 출처를 읽지도 합치지도 않고, 받은 `a` 를 그대로 돌려준다(없으면 없는 채로).
-    if include_artifacts:
+    kinds = artifact_kind_filter(include_artifacts=include_artifacts,
+                                 include_card_proposals=include_card_proposals)
+    if kinds:
         old_a = artifact_position(api, state)
-        artifact_events = read_artifact_events(api, old_a, limit + 1)
+        artifact_events = read_artifact_events(api, old_a, limit + 1, kinds)
     else:
         old_a, artifact_events = state.get("a"), []
 
@@ -885,7 +920,8 @@ def collect(api, slug, state, limit, *, include_artifacts=False) -> dict:
 def events_handler(api):
     """GET /deskrpg/events?board=&cursor=&limit=&include= → `{events, cursor, has_more}` (E1–E7).
 
-    아티팩트 사건은 `include=artifacts` 일 때만 섞인다(R17) — 구버전 DeskRPG 는 모르는 kind 를 받지 않는다.
+    아티팩트 사건은 `include=artifacts`, 카드 제안 사건은 `include=card_proposals` 일 때만 섞인다(R17)
+    — 구버전 DeskRPG 는 모르는 kind 를 받지 않는다. 둘은 서로 독립이다.
     """
 
     @guarded
@@ -894,16 +930,19 @@ def events_handler(api):
         limit = clamp_limit(request.query.get("limit"))
         token = request.query.get("cursor")
         include_artifacts = wants_artifacts(request.query.get("include"))
+        include_card_proposals = wants_card_proposals(request.query.get("include"))
 
         def work():
             if not api.board_exists(slug):
                 raise RequestError(404, "board_not_found", slug)
             if token is None or token == "":
                 with board_conn(api, slug) as conn:
-                    state = now_state(api, conn, slug, include_artifacts=include_artifacts)
+                    state = now_state(api, conn, slug, include_artifacts=include_artifacts,
+                                      include_card_proposals=include_card_proposals)
                 return {"events": [], "cursor": encode_cursor(state), "has_more": False}
             state = decode_cursor(token)
-            result = collect(api, slug, state, limit, include_artifacts=include_artifacts)
+            result = collect(api, slug, state, limit, include_artifacts=include_artifacts,
+                             include_card_proposals=include_card_proposals)
             log_event("events.tail", board=slug, count=len(result["events"]), has_more=result["has_more"])
             return result
 

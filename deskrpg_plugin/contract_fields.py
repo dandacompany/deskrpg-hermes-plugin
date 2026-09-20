@@ -279,6 +279,8 @@ EVENT_KINDS = frozenset({
     "artifact.deleted",
     "artifact.capture_failed",
     "artifact.delete_partial",
+    # 카드 제안 — `include=card_proposals` 로 옵트인했을 때만 실린다. 아티팩트 옵트인과 독립이다.
+    "card_proposal.created",
 })
 
 PLUGIN_EVENT_REQUIRED = frozenset({"id", "ts", "kind", "payload"})

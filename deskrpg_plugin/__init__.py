@@ -28,6 +28,7 @@ def register(ctx) -> None:
 
     ctx.register_platform_handler("api_server", _wire)
     _register_artifacts(ctx, api)
+    _register_card_proposal(ctx, api)
 
 
 def _register_artifacts(ctx, api) -> None:
@@ -55,3 +56,28 @@ def _register_artifacts(ctx, api) -> None:
             step()
         except Exception as exc:  # noqa: BLE001 — 한 등록의 실패가 다른 등록을 막지 않는다
             logger.warning("[deskrpg] 아티팩트 %s 등록 실패: %s", name, type(exc).__name__)
+
+
+def _register_card_proposal(ctx, api) -> None:
+    """카드 제안 도구와 프롬프트 절. `_register_artifacts` 와 같은 모양 — import 도, 각 단계도
+    따로 감싼다. 하나가 실패해도 라우트와 아티팩트는 살아야 한다."""
+    try:
+        from . import card_proposal_prompt, card_proposal_tool
+    except Exception as exc:  # noqa: BLE001 — 이 임포트 실패로 라우트까지 끌려 내려가면 안 된다
+        logger.warning("[deskrpg] 카드 제안 모듈 import 실패: %s", type(exc).__name__)
+        return
+
+    steps = (
+        ("tool", lambda: ctx.register_tool(
+            card_proposal_tool.TOOL_NAME, card_proposal_tool.TOOLSET, card_proposal_tool.TOOL_SCHEMA,
+            card_proposal_tool.make_handler(api),
+            description=card_proposal_tool.TOOL_SCHEMA["description"], emoji="📋")),
+        ("prompt", lambda: ctx.register_system_prompt_section(
+            card_proposal_prompt.SECTION_ID, card_proposal_prompt.SECTION_TEXT,
+            position="after_memory")),
+    )
+    for name, step in steps:
+        try:
+            step()
+        except Exception as exc:  # noqa: BLE001 — 한 등록의 실패가 다른 등록을 막지 않는다
+            logger.warning("[deskrpg] 카드 제안 %s 등록 실패: %s", name, type(exc).__name__)
