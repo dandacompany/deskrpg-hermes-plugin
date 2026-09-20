@@ -39,6 +39,7 @@ from .contract_fields import (
     BOARD_META_KEYS,
     CARD_STATUSES,
     CREATE_TASK_KEYS,
+    INITIAL_STATUSES,
     KANBAN_COMMENT_KEYS,
     KANBAN_EVENT_KEYS,
     KANBAN_RUN_KEYS,
@@ -302,6 +303,13 @@ def _parse_create_body(body: dict) -> dict:
         if kind not in WORKSPACE_KINDS:
             raise RequestError(400, "invalid_field", f"workspace_kind 는 {'|'.join(WORKSPACE_KINDS)} 중 하나여야 한다")
         fields["workspace_kind"] = kind
+    status = require_str(body, "initial_status", required=False)
+    if status is not None:
+        # 모르는 값을 Hermes 로 흘리지 않는다 — 거기서는 ValueError 가 되어 400 invalid_task 로
+        # 뭉뚱그려지고, 어느 필드가 틀렸는지 부르는 쪽이 알 수 없다.
+        if status not in INITIAL_STATUSES:
+            raise RequestError(400, "invalid_field", f"initial_status 는 {'|'.join(INITIAL_STATUSES)} 중 하나여야 한다")
+        fields["initial_status"] = status
     return fields
 
 

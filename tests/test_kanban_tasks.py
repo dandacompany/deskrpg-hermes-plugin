@@ -137,6 +137,8 @@ async def test_카드_생성은_디스패처가_없으면_경고를_싣는다(ai
         ({"title": "x", "triage": "yes"}, "invalid_field"),
         ({"title": "x", "workspace_kind": "cloud"}, "invalid_field"),
         ({"title": "x", "max_runtime_seconds": 0}, "invalid_field"),
+        ({"title": "x", "initial_status": "triage"}, "invalid_field"),
+        ({"title": "x", "initial_status": "ready"}, "invalid_field"),
         ({"title": "x", "bogus": 1}, "unknown_field"),
     ],
 )
@@ -145,6 +147,26 @@ async def test_카드_생성_본문_검증(aiohttp_client, fake_api, payload, co
     resp = await client.post(f"/deskrpg/kanban/tasks{B}", json=payload)
     assert resp.status == 400
     assert (await resp.json())["error"] == code
+
+
+async def test_initial_status_blocked_는_카드를_승인_대기로_세운다(aiohttp_client, fake_api):
+    """실행 전 승인 관문의 토대 — `blocked` 는 사람이 풀어 줄 때까지 디스패치되지 않는다.
+
+    `triage` 를 쓸 수 없는 이유는 게이트웨이가 매 틱 triage 카드를 자동 분해하기 때문이다.
+    """
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post(
+        f"/deskrpg/kanban/tasks{B}", json={"title": "승인 대기 과업", "initial_status": "blocked"}
+    )
+    assert resp.status == 201, await resp.text()
+    assert (await resp.json())["task"]["status"] == "blocked"
+
+
+async def test_initial_status_를_주지_않으면_예전과_같다(aiohttp_client, fake_api):
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post(f"/deskrpg/kanban/tasks{B}", json={"title": "보통 과업"})
+    assert resp.status == 201
+    assert (await resp.json())["task"]["status"] == "ready"
 
 
 async def test_카드_생성은_Hermes_의_ValueError_를_400_으로(aiohttp_client, fake_api):

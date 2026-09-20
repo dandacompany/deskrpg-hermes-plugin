@@ -201,7 +201,13 @@ CREATE_TASK_OPTIONAL = frozenset({
     "body", "assignee", "tenant", "priority", "workspace_kind", "workspace_path", "parents",
     "triage", "idempotency_key", "max_runtime_seconds", "skills", "goal_mode",
     "goal_max_turns", "model_override", "provider_override", "reasoning_effort", "project_id",
+    "initial_status",
 })
+
+# 생성 시점에만 지정할 수 있는 상태. Hermes 의 `VALID_INITIAL_STATUSES` 와 같아야 한다
+# (`hermes_cli/kanban_db.py`). `blocked` 는 사람이 풀어 줄 때까지 sticky 라 실행 전 승인
+# 대기 자리로 쓴다 — `triage` 는 게이트웨이가 자동 분해하므로 그 용도로 쓸 수 없다.
+INITIAL_STATUSES = ("running", "blocked")
 CREATE_TASK_KEYS = CREATE_TASK_REQUIRED | CREATE_TASK_OPTIONAL
 
 # PATCH — CreateTaskBody 에서 idempotency_key 를 뺀 전부가 선택이고 status 가 더 붙는다.

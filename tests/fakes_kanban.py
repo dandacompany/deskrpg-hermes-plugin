@@ -429,8 +429,13 @@ class FakeKanbanDb:
             for existing in state.tasks.values():
                 if existing.idempotency_key == idempotency_key and existing.status != "archived":
                     return existing.id
+        if initial_status not in ("running", "blocked"):
+            raise ValueError(f"invalid initial_status: {initial_status}")
         if triage:
             status = "triage"
+        elif initial_status == "blocked":
+            # Hermes 처럼 사람이 풀어 줄 때까지 세워 둔다(`kanban_db.py` 의 sticky block).
+            status = "blocked"
         elif any(state.tasks[p].status != "done" for p in parents):
             status = "todo"
         else:
