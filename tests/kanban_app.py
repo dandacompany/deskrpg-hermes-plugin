@@ -8,6 +8,7 @@
 from aiohttp import web
 
 from deskrpg_plugin import kanban_board as kb
+from deskrpg_plugin import kanban_views as kv
 from deskrpg_plugin.auth import Scope, require_auth
 from tests.conftest import FakeAdapter
 
@@ -25,6 +26,8 @@ def make_app(api, *, authorized: bool = True) -> web.Application:
         ("PATCH", "/deskrpg/kanban/tasks/{task_id}", kb.patch_task_handler(api)),
         ("DELETE", "/deskrpg/kanban/tasks/{task_id}", kb.delete_task_handler(api)),
         ("POST", "/deskrpg/kanban/tasks/{task_id}/comments", kb.add_comment_handler(api)),
+        ("GET", "/deskrpg/kanban/links", kv.links_handler(api)),
+        ("GET", "/deskrpg/kanban/runs", kv.runs_handler(api)),
         ("POST", "/deskrpg/kanban/links", kb.link_handler(api, "add")),
         ("DELETE", "/deskrpg/kanban/links", kb.link_handler(api, "remove")),
     ]

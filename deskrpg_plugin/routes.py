@@ -19,6 +19,7 @@ from . import tool_providers as _tool_providers
 from . import provider_keys as _provider_keys
 from . import oauth as _oauth
 from . import kanban_board as _kanban_board
+from . import kanban_views as _kanban_views
 from . import kanban_actions as _kanban_actions
 from . import kanban_files as _kanban_files
 from . import kanban_ops as _kanban_ops
@@ -98,6 +99,10 @@ ROUTES = [
     ("POST", "/deskrpg/kanban/tasks/{id}/{action}", "kanban_task_action", Scope.DEFAULT),
     ("GET", "/deskrpg/kanban/attachments/{id}", "kanban_download_attachment", Scope.DEFAULT),
     ("DELETE", "/deskrpg/kanban/attachments/{id}", "kanban_delete_attachment", Scope.DEFAULT),
+    # 묶음 조회 — 목록 앞에 둔다(고정 세그먼트가 와일드카드보다 앞이라는 이 표의 규칙과 무관하게,
+    # 같은 경로의 GET 은 POST/DELETE 와 충돌하지 않는다. 읽기를 위에 모아 둔다).
+    ("GET", "/deskrpg/kanban/links", "kanban_list_links", Scope.DEFAULT),
+    ("GET", "/deskrpg/kanban/runs", "kanban_list_runs", Scope.DEFAULT),
     ("POST", "/deskrpg/kanban/links", "kanban_add_link", Scope.DEFAULT),
     ("DELETE", "/deskrpg/kanban/links", "kanban_remove_link", Scope.DEFAULT),
     ("POST", "/deskrpg/kanban/dispatch", "kanban_dispatch", Scope.DEFAULT),
@@ -194,6 +199,8 @@ _HANDLERS = {
     "kanban_task_action": lambda api: _make_task_action(api),
     "kanban_download_attachment": lambda api: _kanban_files.download_attachment_handler(api),
     "kanban_delete_attachment": lambda api: _kanban_files.delete_attachment_handler(api),
+    "kanban_list_links": lambda api: _kanban_views.links_handler(api),
+    "kanban_list_runs": lambda api: _kanban_views.runs_handler(api),
     "kanban_add_link": lambda api: _kanban_board.link_handler(api, "add"),
     "kanban_remove_link": lambda api: _kanban_board.link_handler(api, "remove"),
     "kanban_dispatch": lambda api: _kanban_ops.dispatch_handler(api),

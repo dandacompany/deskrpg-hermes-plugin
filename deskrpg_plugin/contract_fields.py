@@ -19,7 +19,10 @@ PLUGIN_INFO_REQUIRED = frozenset({
 PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | frozenset({"routes"})
 PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attachment_max_bytes"})
 # 항상 있는 것. 스웜처럼 Hermes 빌드에 따라 갈리는 것은 `capabilities()` 가 붙인다.
-CAPABILITIES = ("kanban", "cron", "events", "artifacts")
+# `kanban_views` = 묶음 조회(`GET /kanban/links`, `GET /kanban/runs`). Hermes 의 선택 심볼을
+# 쓰지 않고 보드 DB 만 읽으므로 칸반이 되면 늘 된다 — 그래도 **capability 로 내보낸다.**
+# 호출부가 버전으로 판단하면 "새 플러그인인데 404" 를 진단할 수 없다.
+CAPABILITIES = ("kanban", "cron", "events", "artifacts", "kanban_views")
 
 
 _TOOLSET_SYMBOLS = (
@@ -187,6 +190,12 @@ KANBAN_RUN_OPTIONAL = frozenset({
     "profile", "outcome", "summary", "error", "metadata", "worker_pid", "started_at", "ended_at",
 })
 KANBAN_RUN_KEYS = KANBAN_RUN_REQUIRED | KANBAN_RUN_OPTIONAL
+
+# 타임라인용 실행 기록(`GET /kanban/runs`). 카드별 `runs[]` 보다 넓다 — 어느 카드·어느
+# 서브프로젝트·어느 보드의 실적인지가 응답만 보고 가려져야 다시 조인하지 않는다.
+KANBAN_TIMELINE_RUN_REQUIRED = KANBAN_RUN_REQUIRED | frozenset({"task_id", "board"})
+KANBAN_TIMELINE_RUN_OPTIONAL = KANBAN_RUN_OPTIONAL | frozenset({"task_title", "tenant", "step_key"})
+KANBAN_TIMELINE_RUN_KEYS = KANBAN_TIMELINE_RUN_REQUIRED | KANBAN_TIMELINE_RUN_OPTIONAL
 
 KANBAN_COMMENT_REQUIRED = frozenset({"id", "author", "body", "created_at"})
 KANBAN_COMMENT_KEYS = KANBAN_COMMENT_REQUIRED

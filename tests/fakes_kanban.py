@@ -242,6 +242,30 @@ class FakeKanbanDb:
 
         if sql == "SELECT parent_id, child_id FROM task_links":
             return _FakeCursor({"parent_id": p, "child_id": c} for p, c in sorted(state.links))
+        if sql == "SELECT parent_id, child_id FROM task_links ORDER BY parent_id, child_id":
+            return _FakeCursor({"parent_id": p, "child_id": c} for p, c in sorted(state.links))
+
+        # 타임라인 묶음 조회(`GET /kanban/runs`). 겹침 판정·정렬·상한을 실제 SQL 그대로 흉내 낸다 —
+        # 가짜가 더 너그러우면 창 경계 결함이 테스트를 그대로 통과한다.
+        if sql == (
+            "SELECT r.*, t.tenant AS tenant, t.title AS task_title FROM task_runs r "
+            "LEFT JOIN tasks t ON t.id = r.task_id WHERE r.started_at <= ? "
+            "AND (r.ended_at IS NULL OR r.ended_at >= ?) ORDER BY r.started_at DESC, r.id DESC LIMIT ?"
+        ):
+            to_ts, from_ts, limit = params
+            picked = []
+            for run in state.runs.values():
+                if run.started_at > to_ts:
+                    continue
+                if run.ended_at is not None and run.ended_at < from_ts:
+                    continue
+                row = asdict(run)
+                task = state.tasks.get(run.task_id)
+                row["tenant"] = task.tenant if task else None
+                row["task_title"] = task.title if task else None
+                picked.append(row)
+            picked.sort(key=lambda r: (r["started_at"], r["id"]), reverse=True)
+            return _FakeCursor(picked[: int(limit)])
         if sql == "SELECT task_id, COUNT(*) AS n FROM task_comments GROUP BY task_id":
             counts: dict[str, int] = {}
             for c in state.comments:
