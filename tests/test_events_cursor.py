@@ -116,6 +116,15 @@ async def test_깨진_커서는_400_unknown_cursor(aiohttp_client, fake_api, kan
     assert (await resp.json())["error"] == "unknown_cursor"
 
 
+async def test_모르는_include_토큰은_400_이_아니라_무시된다(aiohttp_client, fake_api, kanban, store):
+    """하위 호환 계약. DeskRPG 는 플러그인 버전을 보지 않고 `include` 에 새 토큰을 얹는다 —
+    구버전 플러그인이 모르는 토큰에 400 을 내면 토큰을 하나 더할 때마다 구버전 게이트웨이의 폴링이 통째로 죽는다."""
+    client = await events_client(aiohttp_client, fake_api)
+    resp = await client.get("/deskrpg/events?board=default&include=artifacts,card_proposals,not_a_real_token")
+    assert resp.status == 200
+    assert "cursor" in await resp.json()
+
+
 async def test_보드가_없으면_404_board_not_found(aiohttp_client, fake_api, kanban, store):
     client = await events_client(aiohttp_client, fake_api)
     resp = await client.get("/deskrpg/events?board=nope")
