@@ -88,7 +88,33 @@ def _provider_rows(api, profile: str) -> list[dict]:
 
 
 def _models_for(provider_id: str) -> list[str]:
-    """그 프로바이더의 모델 목록 — models.dev + 큐레이션 병합."""
+    """그 프로바이더의 모델 목록 — `hermes model` 피커가 쓰는 목록을 그대로 옮긴다.
+
+    `cached_provider_model_ids` 는 프로바이더마다 전용 fetcher 로 분기한다
+    (`hermes_cli/models.py:1421-1439`). 그래서 **인증 방식을 안다** — openai-codex 는
+    `_codex_catalog` → `get_codex_model_ids(access_token)` 로 그 계정의 live 카탈로그를
+    받아 backend `priority` 순으로 준다(`hermes_cli/codex_models.py:126-168`).
+
+    옛 경로(큐레이션 + `_models_dev_merged`)는 인증 방식을 몰랐다. 그래서 ChatGPT 계정으로
+    로그인한 프로필에도 models.dev 의 OpenAI 공개 API 목록이 나왔고, 거기서 고른
+    `gpt-5.3-codex-spark` 는 대화할 때 400 "not supported when using Codex with a ChatGPT
+    account" 로 처음 드러났다(2026-09-20 실측). 순서도 models.dev 삽입 순서
+    그대로여서 세대·계열이 뒤섞였다.
+
+    **우리가 다시 정렬하지 않는다.** 이 목록의 순서는 Hermes 가 의도한 순서다(codex 는
+    priority 순, 일부 프로바이더는 큐레이션 우선). 여기서 다시 섞으면 CLI 피커와 순서가
+    갈리고 그 의도를 잃는다.
+    """
+    try:
+        from hermes_cli.models import cached_provider_model_ids
+
+        models = [str(m) for m in (cached_provider_model_ids(provider_id) or []) if m]
+        if models:
+            return models
+    except Exception:
+        # 낡은 Hermes 빌드에 이 함수가 없거나 조회가 실패할 수 있다 — 아래 폴백으로 내려간다.
+        pass
+
     curated: list[str] = []
     try:
         from hermes_cli.model_catalog import get_catalog

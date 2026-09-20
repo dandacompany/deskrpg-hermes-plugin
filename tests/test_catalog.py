@@ -270,3 +270,47 @@ def test_OAuth_라우트_심볼이_모자라면_Codex_도_로그인_버튼을_�
                      _OAUTH_PROVIDER_CATALOG=({"id": "openai-codex", "cli_command": "hermes auth add openai-codex"},))
     row = catalog._provider_rows(api, profile="noah")[0]
     assert row["authType"] == "external" and row["cliCommand"] == "hermes -p noah auth add openai-codex"
+
+
+def _fake_picker(monkeypatch, fn):
+    """`hermes_cli.models.cached_provider_model_ids` — `hermes model` 피커가 쓰는 목록."""
+    monkeypatch.setitem(sys.modules, "hermes_cli.models",
+                        types.SimpleNamespace(cached_provider_model_ids=fn))
+
+
+def test_모델_목록은_Hermes_피커가_쓰는_목록을_그대로_준다(monkeypatch):
+    # Hermes 는 프로바이더마다 전용 fetcher 로 목록을 만들고 의도된 순서를 준다
+    # (openai-codex 는 backend priority 순, 일부는 큐레이션 우선). 우리가 다시 섞지 않는다.
+    _fake_hermes(monkeypatch, registry={"p": _cfg("p")}, auth={"p": {"logged_in": True}},
+                 curated={"p": {"models": ["curated-only"]}}, mdev={"p": ["mdev-1", "mdev-2"]})
+    _fake_picker(monkeypatch, lambda pid: ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4"])
+    assert catalog._models_for("p") == ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4"]
+
+
+def test_그_계정으로_못_쓰는_모델은_목록에_없다(monkeypatch):
+    # ChatGPT 계정(OAuth)에서 `gpt-5.3-codex-spark` 는 400 "not supported when using Codex
+    # with a ChatGPT account" 를 낸다. Hermes 의 `_codex_catalog` 는 계정 카탈로그를 받아
+    # 걸러 주는데, models.dev 병합 경로는 인증 방식을 몰라 그 죽은 선택지를 노출했다.
+    _fake_hermes(monkeypatch, registry={"openai-codex": _cfg("openai-codex")},
+                 auth={"openai-codex": {"logged_in": True}},
+                 mdev={"openai-codex": ["gpt-4o", "gpt-5.3-codex-spark", "o1"]})
+    _fake_picker(monkeypatch, lambda pid: ["gpt-5.6-sol", "gpt-5.3-codex"])
+    assert catalog._models_for("openai-codex") == ["gpt-5.6-sol", "gpt-5.3-codex"]
+
+
+def test_피커_목록이_비면_큐레이션_병합으로_폴백한다(monkeypatch):
+    # 낡은 Hermes 빌드·네트워크 실패에도 "직접 입력" 으로만 떨어뜨리지 않는다.
+    _fake_hermes(monkeypatch, registry={"p": _cfg("p")}, auth={"p": {"logged_in": True}},
+                 curated={"p": {"models": ["curated-1"]}}, mdev={"p": ["mdev-1", "curated-1"]})
+    _fake_picker(monkeypatch, lambda pid: [])
+    assert catalog._models_for("p") == ["mdev-1", "curated-1"]
+
+
+def test_피커_조회가_실패해도_목록이_죽지_않는다(monkeypatch):
+    def boom(pid):
+        raise RuntimeError("models.dev unreachable")
+
+    _fake_hermes(monkeypatch, registry={"p": _cfg("p")}, auth={"p": {"logged_in": True}},
+                 curated={"p": {"models": ["curated-1"]}}, mdev={})
+    _fake_picker(monkeypatch, boom)
+    assert catalog._models_for("p") == ["curated-1"]
