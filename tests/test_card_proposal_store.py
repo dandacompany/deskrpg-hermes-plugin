@@ -43,3 +43,14 @@ def test_unresolve_는_카드가_없는_해소만_되돌린다(tmp_api):
 
 def test_unresolve_unknown_id_returns_false(tmp_api):
     assert store.unresolve(tmp_api, "nope") is False
+
+
+def test_record_task_는_해소된_제안에_한_번만_적는다(tmp_api):
+    pid = store.create(tmp_api, profile="noah", title="t", summary="s", body=None, acceptance=None)
+    assert store.record_task(tmp_api, pid, "t-1") is False   # 해소되지 않았다
+    assert store.resolve(tmp_api, pid, "card", None) is True
+    assert store.record_task(tmp_api, pid, "t-1") is True
+    assert store.record_task(tmp_api, pid, "t-2") is False   # 덮지 않는다
+    assert store.get(tmp_api, pid)["resolved_task_id"] == "t-1"
+    assert store.unresolve(tmp_api, pid) is False            # 가드가 살아 있다
+    assert store.record_task(tmp_api, "nope", "t-1") is False

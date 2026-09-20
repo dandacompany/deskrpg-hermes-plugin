@@ -13,7 +13,8 @@ from tests.conftest import FakeAdapter
 async def client(aiohttp_client, tmp_api):
     app = web.Application()
     adapter = FakeAdapter(authorized=True)
-    for action, factory in (("resolve", routes.resolve_handler), ("unresolve", routes.unresolve_handler)):
+    for action, factory in (("resolve", routes.resolve_handler), ("unresolve", routes.unresolve_handler),
+                            ("task", routes.record_task_handler)):
         app.router.add_route("POST", f"/deskrpg/card-proposals/{{proposal_id}}/{action}",
                              require_auth(adapter, Scope.DEFAULT, factory(tmp_api)))
     return await aiohttp_client(app)
@@ -101,5 +102,48 @@ async def test_해소되지_않은_제안의_되돌리기는_409_다(client, tmp
 
 async def test_없는_제안의_되돌리기는_404_다(client):
     resp = await client.post("/deskrpg/card-proposals/nope/unresolve")
+    assert resp.status == 404
+    assert (await resp.json())["error"] == "card_proposal_not_found"
+
+
+async def test_카드_id_를_적으면_되돌리기가_막힌다(client, tmp_api):
+    """이 작업의 핵심 — task_id 가 적히는 순간 unresolve 의 가드가 되살아난다."""
+    pid = _seed(tmp_api)
+    assert (await client.post(f"/deskrpg/card-proposals/{pid}/resolve", json={"choice": "card"})).status == 200
+    resp = await client.post(f"/deskrpg/card-proposals/{pid}/task", json={"task_id": "t-42"})
+    assert resp.status == 200
+    assert await resp.json() == {"recorded": True}
+    assert store.get(tmp_api, pid)["resolved_task_id"] == "t-42"
+    assert (await client.post(f"/deskrpg/card-proposals/{pid}/unresolve")).status == 409
+
+
+async def test_이미_적힌_카드_id_는_덮이지_않는다(client, tmp_api):
+    pid = _seed(tmp_api)
+    await client.post(f"/deskrpg/card-proposals/{pid}/resolve", json={"choice": "card", "task_id": "t-1"})
+    resp = await client.post(f"/deskrpg/card-proposals/{pid}/task", json={"task_id": "t-2"})
+    assert resp.status == 409
+    assert (await resp.json())["error"] == "card_proposal_task_not_recordable"
+    assert store.get(tmp_api, pid)["resolved_task_id"] == "t-1"
+
+
+async def test_해소되지_않은_제안에는_적을_수_없다(client, tmp_api):
+    pid = _seed(tmp_api)
+    resp = await client.post(f"/deskrpg/card-proposals/{pid}/task", json={"task_id": "t-1"})
+    assert resp.status == 409
+    row = store.get(tmp_api, pid)
+    assert row["resolved_task_id"] is None and row["resolved_at"] is None
+
+
+@pytest.mark.parametrize("body", [{}, {"task_id": ""}, {"task_id": 7}])
+async def test_잘못된_task_id_본문은_400_이다(client, tmp_api, body):
+    pid = _seed(tmp_api)
+    await client.post(f"/deskrpg/card-proposals/{pid}/resolve", json={"choice": "card"})
+    resp = await client.post(f"/deskrpg/card-proposals/{pid}/task", json=body)
+    assert resp.status == 400
+    assert store.get(tmp_api, pid)["resolved_task_id"] is None
+
+
+async def test_없는_제안에는_적을_수_없다_404(client):
+    resp = await client.post("/deskrpg/card-proposals/nope/task", json={"task_id": "t-1"})
     assert resp.status == 404
     assert (await resp.json())["error"] == "card_proposal_not_found"

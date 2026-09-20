@@ -138,6 +138,7 @@ ROUTES = [
     # ---- 카드 제안 해소 (소유자 키 — 제안 저장소도 게이트웨이당 하나다) ------------------
     ("POST", "/deskrpg/card-proposals/{proposal_id}/resolve", "card_proposal_resolve", Scope.DEFAULT),
     ("POST", "/deskrpg/card-proposals/{proposal_id}/unresolve", "card_proposal_unresolve", Scope.DEFAULT),
+    ("POST", "/deskrpg/card-proposals/{proposal_id}/task", "card_proposal_record_task", Scope.DEFAULT),
 ]
 
 # Hermes 의 프로필 프리픽스 미들웨어는 `request.match_info.get("profile")` 로
@@ -238,6 +239,7 @@ _HANDLERS = {
     # 카드 제안
     "card_proposal_resolve": lambda api: _card_proposal_routes.resolve_handler(api),
     "card_proposal_unresolve": lambda api: _card_proposal_routes.unresolve_handler(api),
+    "card_proposal_record_task": lambda api: _card_proposal_routes.record_task_handler(api),
 }
 
 
