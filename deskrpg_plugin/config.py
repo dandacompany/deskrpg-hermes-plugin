@@ -17,7 +17,15 @@ from .common import run_blocking
 logger = logging.getLogger(__name__)
 
 ALLOWED_KEYS = frozenset(
-    {"model", "provider", "toolsets", "reasoning_effort", "enabledToolsets", "disabledSkills"}
+    {
+        "model",
+        "provider",
+        "toolsets",
+        "reasoning_effort",
+        "enabledToolsets",
+        "disabledSkills",
+        "clearBaseUrl",
+    }
 )
 
 # `reasoning_effort` 는 **config 최상위 키**다(`model` 블록 안이 아니다) —
@@ -60,6 +68,11 @@ def _value_error(key, value):
             return f"{key} must be a string"
         if not value.strip():
             return f"{key} must not be empty"
+        return None
+    if key == "clearBaseUrl":
+        # 값이 있는 키가 아니라 "지워 달라" 는 신호다 — true 만 받는다.
+        if value is not True:
+            return "clearBaseUrl must be true"
         return None
     if key == "reasoning_effort":
         # 빈 문자열은 "지정 안 함" 이라는 뜻으로 Hermes 가 다루므로 허용한다
@@ -204,6 +217,10 @@ def get_handler(api):
             {
                 "model": model_block.get("default"),
                 "provider": model_block.get("provider"),
+                # 런타임 리졸버가 실제로 읽는 요청 주소(hermes_cli/config.py 의 model.base_url).
+                # 제공자를 바꿔도 이 값이 남아 있으면 요청은 옛 엔드포인트로 간다 — 화면이
+                # 그 사실을 보여 주려면 값을 알아야 한다. 비밀이 아니라 주소다.
+                "baseUrl": model_block.get("base_url"),
                 "toolsets": data.get("toolsets"),
                 # 최상위 키다 — model 블록 안에서 찾지 않는다.
                 "reasoning_effort": data.get("reasoning_effort"),
@@ -314,6 +331,11 @@ def put_handler(api):
             backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
 
         model_block = dict(existing_model or {})
+        if payload.get("clearBaseUrl"):
+            # Hermes 의 clear_model_endpoint_credentials(clear_base_url=True) 와 같은 결과다.
+            # 사용자가 확인한 경우에만 호출부가 이 신호를 보낸다 — 말없이 지우지 않는다.
+            model_block.pop("base_url", None)
+            model_block.pop("api_base", None)
         if "model" in payload:
             model_block["default"] = payload["model"]
         if "provider" in payload:
