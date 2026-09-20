@@ -18,7 +18,7 @@ def _app(adapter, fake_api):
 _PATH_VALUES = {
     "profile": "sophie", "name": "sophie", "slug": "deskrpg-abc", "task_id": "t0001", "id": "t0001",
     "action": "approve", "artifact_id": "01abc", "v": "1", "provider": "openai",
-    "session_id": "sid-1", "toolset": "tts",
+    "session_id": "sid-1", "toolset": "tts", "proposal_id": "9f0c",
 }
 
 

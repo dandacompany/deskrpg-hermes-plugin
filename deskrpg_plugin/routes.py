@@ -27,6 +27,7 @@ from . import kanban_swarm as _kanban_swarm
 from . import cron as _cron
 from . import events as _events
 from . import artifacts_routes as _artifacts_routes
+from . import card_proposal_routes as _card_proposal_routes
 from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
@@ -134,6 +135,8 @@ ROUTES = [
     ("POST", "/deskrpg/artifacts/{artifact_id}/versions", "artifacts_add_version", Scope.DEFAULT),
     ("POST", "/deskrpg/artifacts/{artifact_id}/rework", "artifacts_rework", Scope.DEFAULT),
     ("DELETE", "/deskrpg/artifacts/{artifact_id}", "artifacts_delete", Scope.DEFAULT),
+    # ---- 카드 제안 해소 (소유자 키 — 제안 저장소도 게이트웨이당 하나다) ------------------
+    ("POST", "/deskrpg/card-proposals/{proposal_id}/resolve", "card_proposal_resolve", Scope.DEFAULT),
 ]
 
 # Hermes 의 프로필 프리픽스 미들웨어는 `request.match_info.get("profile")` 로
@@ -231,6 +234,8 @@ _HANDLERS = {
     "artifacts_add_version": lambda api: _artifacts_routes.add_version_handler(api),
     "artifacts_rework": lambda api: _artifacts_routes.rework_handler(api),
     "artifacts_delete": lambda api: _artifacts_routes.delete_handler(api),
+    # 카드 제안
+    "card_proposal_resolve": lambda api: _card_proposal_routes.resolve_handler(api),
 }
 
 

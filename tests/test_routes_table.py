@@ -90,22 +90,24 @@ EXPECTED_ROUTES = {
     ("POST", "/deskrpg/artifacts/{artifact_id}/versions", _OWNER),
     ("POST", "/deskrpg/artifacts/{artifact_id}/rework", _OWNER),
     ("DELETE", "/deskrpg/artifacts/{artifact_id}", _OWNER),
+    # 카드 제안 해소 (소유자 키) — 등록 여부는 사용자가 고르고, 이 라우트가 그 선택을 한 번만 받는다.
+    ("POST", "/deskrpg/card-proposals/{proposal_id}/resolve", _OWNER),
 }
 
 
-def test_라우트_테이블이_스펙의_예순세_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 63
-    assert len(routes.ROUTES) == 63, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+def test_라우트_테이블이_스펙의_예순네_개와_스코프까지_정확히_같다():
+    assert len(EXPECTED_ROUTES) == 64
+    assert len(routes.ROUTES) == 64, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
-def test_소유자_라우트는_36_개_프로필_라우트는_27_개다():
+def test_소유자_라우트는_37_개_프로필_라우트는_27_개다():
     by_scope = {}
     for _m, _p, _h, scope in routes.ROUTES:
         by_scope[scope] = by_scope.get(scope, 0) + 1
-    # 소유자: 기존 4 + 칸반 21 + 뷰 묶음 조회 2 + 스웜 2 + 사건 1 + 아티팩트 6 = 36 ·
+    # 소유자: 기존 4 + 칸반 21 + 뷰 묶음 조회 2 + 스웜 2 + 사건 1 + 아티팩트 6 + 카드 제안 1 = 37 ·
     # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 + 0.10.0 도구 프로바이더 2 = 27.
-    assert by_scope == {routes.Scope.DEFAULT: 4 + 21 + 2 + 2 + 1 + 6, routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2}
+    assert by_scope == {routes.Scope.DEFAULT: 4 + 21 + 2 + 2 + 1 + 6 + 1, routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2}
 
 
 def test_OAuth_취소_행이_연결_끊기_행보다_앞에_있다():
