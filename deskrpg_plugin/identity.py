@@ -10,6 +10,8 @@ import time
 
 from aiohttp import web
 
+from . import envfile
+
 SOUL_FILENAME = "SOUL.md"
 
 
@@ -150,10 +152,12 @@ def put_handler(api):
             # 같은 초에 두 번 써도 백업이 서로 덮어쓰지 않도록 마이크로초까지 찍는다 —
             # 백업의 존재 이유가 옛 내용 보존인데 충돌로 지워지면 목적이 무색해진다.
             backup = path.with_name(f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1_000_000:06d}")
-            backup.write_text(current, encoding="utf-8")
+            # 원자적으로 쓴다(config.py·tool_providers.py 와 같은 헬퍼). SOUL.md 는
+            # 비밀이 아니지만, 쓰는 도중 끊기면 반쯤 쓴 인격이 남는다 — 그러면
+            # revision 은 바뀐 것으로 보이면서 내용은 잘린 상태가 된다.
+            envfile.write_text_atomic(backup, current)
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(new_body, encoding="utf-8")
+        envfile.write_text_atomic(path, new_body)
         return web.json_response({"revision": revision_of(new_body)})
 
     return handler

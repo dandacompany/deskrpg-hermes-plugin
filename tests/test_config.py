@@ -609,3 +609,61 @@ async def test_기존_model_이_문자열이면_그_값을_로그에_싣지_않�
     assert resp.status == 409
     assert SEEDED_SECRET not in caplog.text
     assert SEEDED_SECRET not in await resp.text()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root 는 umask·권한을 무시한다")
+async def test_PUT_은_백업과_본_파일을_0600_으로_남긴다(aiohttp_client, fake_api):
+    path = _seed(fake_api, {"model": {"provider": "openai-codex", "default": "a"},
+                            "providers": {"openai": {"api_key": SEEDED_SECRET}}})
+    os.chmod(path, 0o600)
+
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/sophie/deskrpg/config", json={"model": "gpt-5.6-terra"})
+    assert resp.status == 200
+
+    backups = list(path.parent.glob("config.yaml.bak-*"))
+    assert len(backups) == 1
+    # 백업은 원본의 완전한 사본이다 — 인라인 키가 그 안에 들어 있다.
+    assert SEEDED_SECRET in backups[0].read_text(encoding="utf-8")
+    for target in (path, backups[0]):
+        mode = stat.S_IMODE(target.stat().st_mode)
+        assert mode == 0o600, f"{target.name} 의 권한이 {oct(mode)}"
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root 는 umask·권한을 무시한다")
+async def test_남은_임시_파일이_없다(aiohttp_client, fake_api):
+    # 원자적 교체는 임시 파일을 쓴다 — 성공 경로에서 그것이 남으면 키 사본이
+    # 하나 더 생기는 셈이다.
+    path = _seed(fake_api, {"model": {"provider": "openai-codex", "default": "a"}})
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.put("/p/sophie/deskrpg/config", json={"model": "b"})).status == 200
+
+    leftovers = [p.name for p in path.parent.iterdir() if p.name.startswith(".config.yaml.")]
+    assert leftovers == []
+
+
+async def test_본_파일_쓰기가_실패하면_원본이_온전하다(aiohttp_client, fake_api, monkeypatch):
+    # `write_text` 는 자리에서 잘라 쓴다 — 쓰는 도중 끊기면 반쯤 쓴 YAML 이
+    # 남아 프로필이 뜨지 않는다. 원자적 교체면 원본은 손대지 않은 채로 남는다.
+    original = {"model": {"provider": "openai-codex", "default": "a"},
+                "providers": {"openai": {"api_key": SEEDED_SECRET}}}
+    path = _seed(fake_api, original)
+    before = path.read_text(encoding="utf-8")
+
+    real_replace = os.replace
+
+    def boom(src, dst):
+        if str(dst) == str(path):
+            raise OSError("디스크가 꽉 찼다")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", boom)
+
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put("/p/sophie/deskrpg/config", json={"model": "gpt-5.6-terra"})
+    assert resp.status >= 500
+
+    # 원본이 한 글자도 바뀌지 않았다.
+    assert path.read_text(encoding="utf-8") == before
+    # 임시 파일도 남지 않았다.
+    assert [p.name for p in path.parent.iterdir() if p.name.startswith(".config.yaml.")] == []

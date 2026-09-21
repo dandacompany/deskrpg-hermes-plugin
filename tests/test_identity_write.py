@@ -1,3 +1,5 @@
+import os
+
 from aiohttp import web
 
 from deskrpg_plugin import identity, routes
@@ -139,3 +141,32 @@ async def test_같은_초에_두_번_써도_백업_둘_다_남는다(aiohttp_cli
     assert len(backups) == 2
     contents = {b.read_text(encoding="utf-8") for b in backups}
     assert contents == {"첫 인격", "둘째 인격"}
+
+
+async def test_SOUL_쓰기가_실패하면_원본이_온전하다(aiohttp_client, fake_api, monkeypatch):
+    # SOUL.md 는 비밀이 아니지만, `write_text` 로 자리에서 잘라 쓰면 도중에 끊길 때
+    # 반쯤 쓴 인격이 남는다 — revision 은 바뀐 것처럼 보이고 내용은 잘린 상태다.
+    # 원자적 교체면 실패해도 원본이 손대지 않은 채 남는다.
+    body = "나는 소피다"
+    await _seed(fake_api, body)
+    d = fake_api.get_profile_dir("sophie")
+    path = d / "SOUL.md"
+    revision = identity.revision_of(body)
+
+    real_replace = os.replace
+
+    def boom(src, dst):
+        if str(dst) == str(path):
+            raise OSError("디스크가 꽉 찼다")
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", boom)
+
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.put(
+        "/p/sophie/deskrpg/identity", json={"body": "새 인격", "ifRevision": revision}
+    )
+    assert resp.status >= 500
+
+    assert path.read_text(encoding="utf-8") == body
+    assert [p.name for p in d.iterdir() if p.name.startswith(".SOUL.md.")] == []

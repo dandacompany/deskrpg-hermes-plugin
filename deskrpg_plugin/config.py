@@ -10,7 +10,7 @@ import time
 import yaml
 from aiohttp import web
 
-from . import contract_fields
+from . import contract_fields, envfile
 from .catalog import REASONING_EFFORTS
 from .common import run_blocking
 
@@ -356,7 +356,11 @@ def put_handler(api):
                 f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
                 f"-{time.time_ns() % 1_000_000:06d}"
             )
-            backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+            # 원자적으로, 0600 으로 쓴다 — 백업은 원본의 **완전한 사본**이라
+            # config.yaml 에 인라인 키가 있으면 그 키가 그대로 들어간다.
+            # `write_text` 로 쓰면 umask(보통 022)를 타 0644 가 되고, 원본이
+            # 0600 이어도 사본만 세상에 열린다. 백업은 저장할 때마다 쌓인다.
+            envfile.write_text_atomic(backup, path.read_text(encoding="utf-8"))
 
         model_block = dict(existing_model or {})
         if payload.get("clearBaseUrl"):
@@ -386,9 +390,11 @@ def put_handler(api):
             else:
                 data.pop("reasoning_effort", None)
 
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8"
+        # `write_text` 는 자리에서 잘라 쓴다 — 쓰는 도중 끊기면(디스크 가득·강제
+        # 종료) 반쯤 쓴 YAML 이 남아 그 프로필이 뜨지 않는다. 임시 파일에 다 쓰고
+        # `os.replace` 로 갈아 끼우면 실패해도 원본이 손대지 않은 채 남는다.
+        envfile.write_text_atomic(
+            path, yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
         )
 
         return web.json_response(
