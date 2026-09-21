@@ -58,9 +58,10 @@ def record_capture_failure(api, *, tool_name: str, reason: str) -> None:
 
 
 def make_hook(api):
-    def hook(*, tool_name="", args=None, result=None, session_id="", task_id="", **_rest) -> None:
+    # Hermes 가 넘기는 `task_id` 는 카드 id 가 아니라 실행 범위 id 다 — 받지 않는다(artifacts_context 주석).
+    def hook(*, tool_name="", args=None, result=None, session_id="", **_rest) -> None:
         try:
-            _capture(api, tool_name or "", result, session_id or "", task_id or "")
+            _capture(api, tool_name or "", result, session_id or "")
         except Exception as exc:  # noqa: BLE001 — 마지막 방어선
             logger.exception("[deskrpg] 아티팩트 훅 예외: %s", type(exc).__name__)
             record_capture_failure(api, tool_name=tool_name or "", reason=type(exc).__name__)
@@ -68,7 +69,7 @@ def make_hook(api):
     return hook
 
 
-def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None:
+def _capture(api, tool_name: str, result, session_id: str) -> None:
     if tool_name == TOOL_NAME:
         return
     producer = detect.is_producer_tool(tool_name)
@@ -79,7 +80,7 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
     if not payloads:
         return
     if want_links:
-        _capture_tool_links(api, tool_name, payloads, producer, session_id, task_id)
+        _capture_tool_links(api, tool_name, payloads, producer, session_id)
     if not producer:
         return
     candidates = detect.candidate_paths(payloads, producer=True)[:MAX_CANDIDATES_SCANNED]
@@ -110,7 +111,7 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
             record_capture_failure(api, tool_name=tool_name, reason="too_large")
             continue
         if ctx is None:
-            ctx = context.resolve_context(api, session_id=session_id, task_id=task_id or None)
+            ctx = context.resolve_context(api, session_id=session_id)
         meta = store.ArtifactMeta(
             kind=policy.kind_for_filename(source.name), title=source.name, summary=f"`{tool_name}` 이 만든 파일",
             filename=source.name, mime=policy.mime_for_filename(source.name), profile=ctx.profile,
@@ -128,12 +129,12 @@ def _capture(api, tool_name: str, result, session_id: str, task_id: str) -> None
             record_capture_failure(api, tool_name=tool_name, reason=type(exc).__name__)
 
 
-def _capture_tool_links(api, tool_name: str, payloads: list, producer: bool, session_id: str, task_id: str) -> None:
+def _capture_tool_links(api, tool_name: str, payloads: list, producer: bool, session_id: str) -> None:
     found = links.links_in_payload(payloads, producer=producer)[:MAX_LINKS_PER_CALL]
     if not found:
         return
     limit = artifact_storage_max_bytes()
-    writer = _TurnWriter(api, session_id, task_id or None)
+    writer = _TurnWriter(api, session_id)
     try:
         for link in found:
             if writer.stopped:
@@ -162,15 +163,15 @@ class _TurnWriter:
     """한 번의 훅 호출이 쓰는 저장 비용 묶음 — 연결은 하나, 컨텍스트는 한 번, 실패 사건은 이유를 합쳐 한 번.
     `sqlite3.OperationalError`(잠금 등)를 만나면 `stopped` 가 되고 이후 저장을 하지 않는다."""
 
-    def __init__(self, api, session_id: str, task_id):
-        self.api, self.session_id, self.task_id = api, session_id, task_id
+    def __init__(self, api, session_id: str):
+        self.api, self.session_id = api, session_id
         self.ctx = self.conn = None
         self.reasons: list = []
         self.stopped = False
 
     def context(self):
         if self.ctx is None:
-            self.ctx = context.resolve_context(self.api, session_id=self.session_id, task_id=self.task_id)
+            self.ctx = context.resolve_context(self.api, session_id=self.session_id)
         return self.ctx
 
     def fail(self, reason: str) -> None:
@@ -217,9 +218,9 @@ def make_response_hook(api):
     절대 던지지 않는다. 비용은 스위치와 블록 감지(순수 문자열 처리)에서 끊는다.
     """
 
-    def hook(*, assistant_response=None, session_id="", task_id=None, **_rest) -> None:
+    def hook(*, assistant_response=None, session_id="", **_rest) -> None:
         try:
-            _capture_response(api, assistant_response, session_id or "", task_id or None)
+            _capture_response(api, assistant_response, session_id or "")
         except Exception as exc:  # noqa: BLE001 — 마지막 방어선
             logger.exception("[deskrpg] 응답 아티팩트 훅 예외: %s", type(exc).__name__)
             record_capture_failure(api, tool_name=RESPONSE_SOURCE, reason=type(exc).__name__)
@@ -227,7 +228,7 @@ def make_response_hook(api):
     return hook
 
 
-def _capture_response(api, response, session_id: str, task_id) -> None:
+def _capture_response(api, response, session_id: str) -> None:
     """턴 하나의 비용을 묶는다: 코드 블록은 `MAX_RESPONSE_BLOCKS` 번, 링크는 `MAX_RESPONSE_LINKS` 번까지
     시도하고, 둘이 레지스트리 연결 하나와 capture_failed 사건 한 번을 함께 쓴다. 잠기면 그 자리에서 멈춘다."""
     if not responses_enabled():
@@ -237,7 +238,7 @@ def _capture_response(api, response, session_id: str, task_id) -> None:
     if not blocks and not found_links:
         return
     limit = artifact_storage_max_bytes()
-    writer = _TurnWriter(api, session_id, task_id)
+    writer = _TurnWriter(api, session_id)
     try:
         attempts = 0
         for block in blocks:

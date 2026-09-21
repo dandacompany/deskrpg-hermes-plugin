@@ -73,9 +73,11 @@ def test_같은_제목을_고쳐_쓰면_다음_버전이고_같은_내용이면_
         assert [v["version"] for v in store.list_versions(conn, rows[0]["id"])] == [1, 2]
 
 
-def test_칸반_워커와_크론_세션의_응답도_출처가_남는다(api):
-    _fire(api, _html_answer("카드 결과"), task_id="t9")
-    _fire(api, _html_answer("정기 보고"), session_id="cron-s")
+def test_칸반_워커와_크론_세션의_응답도_출처가_남는다(api, monkeypatch):
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t9")
+    _fire(api, _html_answer("카드 결과"), task_id="run-scope-id")
+    monkeypatch.delenv("HERMES_KANBAN_TASK")
+    _fire(api, _html_answer("정기 보고"), session_id="cron-s", task_id="run-scope-id")
     kinds = {r["title"]: (r["source_kind"], r["task_id"]) for r in _rows(api)}
     assert kinds == {"카드 결과": ("kanban", "t9"), "정기 보고": ("cron", None)}
 

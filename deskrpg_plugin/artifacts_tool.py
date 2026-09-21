@@ -122,7 +122,7 @@ def _save(api, args: dict, kwargs: dict) -> str:
     except policy.PolicyError as exc:
         return _err(exc.code, exc.detail)
 
-    ctx = context.resolve_context(api, session_id=str(kwargs.get("session_id") or ""), task_id=kwargs.get("task_id"))
+    ctx = context.resolve_context(api, session_id=str(kwargs.get("session_id") or ""))
     meta = store.ArtifactMeta(
         kind=kind, title=title, summary=summary, filename=filename, mime=policy.mime_for_filename(filename),
         profile=ctx.profile, source_kind=ctx.source_kind, session_id=ctx.session_id, created_by=f"agent:{ctx.profile}",
@@ -150,7 +150,7 @@ def _save_link(api, args: dict, kwargs: dict, *, kind: str, title: str, summary:
     if canonical is None:
         return _err("artifact_incomplete", f"url 은 http(s) 주소여야 한다({links.MAX_URL_CHARS}자 이하)")
     title = title or links.label_for(canonical)
-    ctx = context.resolve_context(api, session_id=str(kwargs.get("session_id") or ""), task_id=kwargs.get("task_id"))
+    ctx = context.resolve_context(api, session_id=str(kwargs.get("session_id") or ""))
     meta = store.ArtifactMeta(
         kind="link", title=title, summary=summary, filename=links.link_filename(title), mime=links.LINK_MIME,
         profile=ctx.profile, source_kind=ctx.source_kind, session_id=ctx.session_id, created_by=f"agent:{ctx.profile}",

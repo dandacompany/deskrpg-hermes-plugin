@@ -47,13 +47,25 @@ def test_인라인_문서를_저장하면_id_와_버전이_돌아오고_출처�
         assert (v["created_by"], v["captured_via"], v["mime"]) == ("agent:sophie", "tool", "text/markdown")
 
 
-def test_task_id_가_오면_kanban_출처가_된다(api):
+def test_칸반_워커에서는_환경변수의_카드_id_가_출처가_된다(api, monkeypatch):
+    # Hermes 가 넘기는 `task_id` 인자는 실행 범위 id 라 무시한다. 카드 id 는 디스패처가 넣은 환경변수뿐이다.
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_card")
     handler = tool.make_handler(api)
     out = json.loads(handler({"kind": "document", "title": "t", "summary": "s", "content": "x", "filename": "a.md"},
-                             task_id="t7", session_id="s1", user_task=""))
+                             task_id="20260921_125750_24ff1e", session_id="s1", user_task=""))
     with contextlib.closing(store.open_registry(api)) as conn:
         row = store.get_artifact(conn, out["artifact_id"])
-        assert (row["source_kind"], row["task_id"], row["board"]) == ("kanban", "t7", "dev")
+        assert (row["source_kind"], row["task_id"], row["board"]) == ("kanban", "t_card", "dev")
+
+
+def test_채팅에서_넘어온_task_id_는_칸반으로_만들지_않는다(api, monkeypatch):
+    monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
+    handler = tool.make_handler(api)
+    out = json.loads(handler({"kind": "document", "title": "t", "summary": "s", "content": "x", "filename": "a.md"},
+                             task_id="20260921_125750_24ff1e", session_id="s1", user_task=""))
+    with contextlib.closing(store.open_registry(api)) as conn:
+        row = store.get_artifact(conn, out["artifact_id"])
+        assert (row["source_kind"], row["task_id"]) == ("chat", None)
 
 
 def test_모델이_넘긴_session_id_profile_인자는_무시된다(api):
