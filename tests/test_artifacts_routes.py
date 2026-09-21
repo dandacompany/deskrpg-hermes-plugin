@@ -292,11 +292,14 @@ async def test_쓰는_중_연결이_끊기면_두_번째_응답을_보내지_않
     caplog.set_level("INFO", logger="deskrpg_plugin")
     resp = await client.get(f"/deskrpg/artifacts/{r.artifact_id}/versions/1/content")
     assert resp.status == 200  # 헤더는 이미 나갔다 — 본문은 기다리지 않는다(가짜 끊김이라 전송로는 살아 있다)
-    resp.close()
-    for _ in range(100):  # 핸들러가 finally 까지 도는 것을 기다린다
+    # 응답을 **먼저 닫지 않는다.** 닫으면 aiohttp 가 핸들러를 취소할 수 있고, 취소가 첫 `write` 보다
+    # 먼저 도착하면(느린 CI 에서 실제로 그랬다) 핸들러는 `ConnectionError` 가지가 아니라 `CancelledError`
+    # 로 빠져나가 파일은 닫히지만 로그는 남지 않는다 — 이 테스트가 보려는 것은 쓰기 실패 가지다.
+    for _ in range(200):  # 핸들러가 finally 까지 도는 것을 기다린다
         if opened and opened[0].closed:
             break
         await asyncio.sleep(0.01)
+    resp.close()
     assert opened and opened[0].closed
     assert "핸들러 예외" not in caplog.text
     assert "artifact.content_aborted" in caplog.text
