@@ -151,6 +151,7 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 | GET | `/deskrpg/info` | default | 버전·라우트 목록·`capabilities`(`kanban, cron, events, artifacts, kanban_views, card_proposals` + Hermes 빌드에 따라 `swarm`·`profile_*`·`initial_status`)·`timezone`·`kanban{dispatcher_present, attachments, attachment_max_bytes}`·`dashboard_url`(0.7.1)·`artifact_max_bytes`(0.8.0) (**default 키 전용**) |
 | GET | `/deskrpg/profiles` | default | 프로필 목록 (`hasCustomPersona` 포함) |
 | POST | `/deskrpg/profiles` | default | 프로필 생성 (**응답이 새 키를 한 번만 싣는다**) |
+| POST | `/deskrpg/worker-plugin` | default | 본문 없으면 모든 프로필, `{profiles:[…]}` 면 그것만 — 프로필 홈에 이 플러그인으로 가는 링크와 `plugins.enabled` 항목을 넣는다 → `{results:[{profile, link, enabled}\|{profile, error}]}`. 멱등, 바꾼 config 는 백업. `plugins.disabled` 에 있으면 켜지 않는다. 게이트웨이 기동 때 자동으로 하지 않는다 (0.12.0) |
 | DELETE | `/deskrpg/profiles/{name}` | default | 프로필 삭제 (`?confirm={name}` 필수) |
 | GET | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 읽기 (읽을 수 없으면 200 + `unreadable: true`) |
 | PUT | `/p/{profile}/deskrpg/identity` | profile | SOUL.md 쓰기 (`ifRevision` 필수 · 읽을 수 없으면 409 `identity_unreadable`) |
@@ -177,6 +178,7 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 | POST | `/deskrpg/kanban/tasks/{id}/comments?board=` | default | `{author?, body}` → 201 `{comment}` |
 | POST | `/deskrpg/kanban/tasks/{id}/{action}?board=` | default | `reassign · reclaim · specify · decompose · estimate(501) · approve · request-changes · unblock · terminate · archive` — 응답 `{task, …}`. 모르는 이름 404 `unknown_action` |
 | GET | `/deskrpg/kanban/tasks/{id}/attachments?board=` | default | `{attachments}` |
+| GET | `/deskrpg/kanban/attachments?board=&limit=&cursor=` | default | 보드 전체의 카드 첨부를 한 번에(보관 카드 포함). 다른 보드의 커서는 거절 (capability `kanban_attachment_list`, 0.12.0) |
 | POST | `/deskrpg/kanban/tasks/{id}/attachments?board=` | default | multipart `file` 파트 → 201 `{attachment}`. 초과 시 413 `attachment_too_large` (아래 상한) |
 | GET | `/deskrpg/kanban/attachments/{id}?board=` | default | 파일 바이트 (`Content-Type`·`Content-Disposition`) |
 | DELETE | `/deskrpg/kanban/attachments/{id}?board=` | default | `{ok}` — Hermes 가 blob 도 지운다 |
