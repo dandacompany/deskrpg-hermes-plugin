@@ -25,6 +25,9 @@ DeskRPG 전용 라우트를 Hermes API Server 에 등록하는 Hermes 플러그�
   가 보드 전체의 부모·자식 쌍과 실행 기록을 한 번에 준다(capability `kanban_views` — 목록 트리·실적 타임라인용). 프로필은
   `propose_kanban_card` 도구로 대화 중에 "업무 카드로 남길 만한 요청" 을 **제안**만 하고, 카드로 만들지는 사람이 고른다
   (capability `card_proposals`, 사건 `card_proposal.created` 는 `include=card_proposals` 옵트인).
+- **config 비밀 위생(0.11.1)** — 깨진 `config.yaml` 을 만났을 때 오류 사유·로그에 **원문을 싣지 않는다**(YAML 오류 문장은
+  문제의 줄을 인용하고, 그 파일에는 인라인 API 키가 들어갈 수 있다 — 위치만 알린다). config·SOUL.md 의 본 파일과 백업을
+  임시 파일 + `os.replace` 로 원자적으로, **0600** 으로 쓴다. 기존 0644 파일은 다음 저장 때 0600 으로 좁아진다.
 
 ## 요구사항
 
