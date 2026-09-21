@@ -28,7 +28,11 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 # 뒤져 판정하게 두면 경로를 고치는 날 조용히 깨진다.
 # `worker_plugin` = `/deskrpg/info` 의 `worker_plugin` 보고와 `POST /deskrpg/worker-plugin`. 프로필 목록·경로 심볼만
 # 쓰므로 늘 된다.
-CAPABILITIES = ("kanban", "cron", "events", "artifacts", "kanban_views", "card_proposals", "worker_plugin")
+# `kanban_attachment_list` = `GET /deskrpg/kanban/attachments?board=` (보드 전체 첨부, 결과물 갤러리용).
+CAPABILITIES = (
+    "kanban", "cron", "events", "artifacts", "kanban_views", "card_proposals", "worker_plugin",
+    "kanban_attachment_list",
+)
 
 
 _TOOLSET_SYMBOLS = (

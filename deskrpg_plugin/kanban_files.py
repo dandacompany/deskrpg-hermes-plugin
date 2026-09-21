@@ -1,6 +1,7 @@
 """첨부 파일과 워커 로그 — 카드에 딸린 **바이트**를 다루는 라우트.
 
 - `GET  /deskrpg/kanban/tasks/{id}/attachments?board=` → `{attachments}`
+- `GET  /deskrpg/kanban/attachments?board=&limit=&cursor=` → `{attachments, next_cursor}` (보드 전체, 최신순)
 - `POST /deskrpg/kanban/tasks/{id}/attachments?board=` multipart(`file`) → 201 `{attachment}`
 - `GET  /deskrpg/kanban/attachments/{id}?board=` → 파일 바이트
 - `DELETE /deskrpg/kanban/attachments/{id}?board=` → `{ok}`
@@ -12,6 +13,9 @@ blob 과 행의 원자성). 내려받기는 DB 행이 가리키는 경로가 **�
 삭제는 Hermes `delete_attachment` 가 blob 까지 지우므로 우리가 따로 unlink 하지 않는다.
 """
 
+import base64
+import binascii
+import json
 import urllib.parse
 from pathlib import Path
 
@@ -62,6 +66,91 @@ def list_attachments_handler(api):
         slug = parse_board_slug(request)
         rows = await run_blocking(work, slug)
         return web.json_response({"attachments": rows})
+
+    return handler
+
+
+# 보드 전체 목록 — 결과물 갤러리가 쓴다. 상한을 넘기면 400 이 아니라 상한으로 자른다.
+BOARD_ATTACHMENTS_LIMIT_DEFAULT = 50
+BOARD_ATTACHMENTS_LIMIT_MAX = 200
+_CURSOR_VERSION = 1
+
+
+def _encode_cursor(slug: str, created_at, att_id) -> str:
+    raw = json.dumps({"v": _CURSOR_VERSION, "b": slug, "t": created_at, "i": att_id}, separators=(",", ":"))
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def _decode_cursor(token: str, slug: str) -> tuple:
+    """`(created_at, id)`. 모양이 틀리거나 **다른 보드의 커서**면 400 `unknown_cursor` — 사건 스트림과 같은 코드다.
+    다른 보드의 위치로 이 보드를 자르면 조용히 앞부분이 빠진다."""
+    try:
+        padded = token + "=" * (-len(token) % 4)
+        data = json.loads(base64.urlsafe_b64decode(padded.encode()).decode())
+        if data["v"] != _CURSOR_VERSION or data["b"] != slug:
+            raise ValueError
+        return data["t"], int(data["i"])
+    except (ValueError, KeyError, TypeError, binascii.Error, UnicodeDecodeError):
+        raise RequestError(400, "unknown_cursor", "커서 없이 다시 부른다")
+
+
+def _limit(request) -> int:
+    raw = request.query.get("limit")
+    if raw is None or raw == "":
+        return BOARD_ATTACHMENTS_LIMIT_DEFAULT
+    try:
+        value = int(raw)
+    except ValueError:
+        raise RequestError(400, "invalid_query", f"limit 는 정수여야 한다: {raw!r}")
+    if value < 1:
+        raise RequestError(400, "invalid_query", f"limit 는 1 이상이어야 한다: {value}")
+    return min(value, BOARD_ATTACHMENTS_LIMIT_MAX)
+
+
+def _sort_key_of(created_at, att_id) -> tuple:
+    # `created_at` 이 없는 행은 가장 오래된 것으로 친다 — 정렬이 None 비교로 깨지지 않게.
+    return (created_at if created_at is not None else -1, int(att_id))
+
+
+def _sort_key(att) -> tuple:
+    return _sort_key_of(att.created_at, att.id)
+
+
+def list_board_attachments_handler(api):
+    """보드 전체의 카드 첨부를 최신순(`created_at` 내림차순, 같으면 `id` 내림차순)으로 준다.
+
+    끝난 카드·보관한 카드의 첨부도 빼지 않는다. 칸반 워커의 `scratch` 워크스페이스는 카드가 끝나면
+    지워지므로, 워커가 만든 파일 중 남는 것이 첨부뿐이다 — 빼면 갤러리가 보여 줄 것이 없어진다.
+
+    Hermes 에는 카드 단위 목록(`list_attachments`)만 있어서 한 연결 안에서 카드마다 부른다. 보드 DB 를
+    직접 조회하지 않는 이유: 표 모양에 묶이지 않고 Hermes 가 쓰는 판정(삭제된 카드 등)을 그대로 따른다.
+    요소는 `attachment_payload` 의 상위집합이다 — 카드별 목록·상세·업로드와 같은 모양에 `task_id`·
+    `task_title` 만 더한다(갤러리가 어느 카드인지 보이고 그 카드로 가려면 필요하다).
+    """
+
+    @guarded
+    async def handler(request):
+        slug = parse_board_slug(request)
+        limit = _limit(request)
+        token = request.query.get("cursor")
+        after = _sort_key_of(*_decode_cursor(token, slug)) if token else None
+
+        def work():
+            with open_board(api, slug) as conn:
+                rows = []
+                for task in api.list_tasks(conn, include_archived=True):
+                    for att in api.list_attachments(conn, task.id):
+                        rows.append((att, task))
+            rows.sort(key=lambda pair: _sort_key(pair[0]), reverse=True)
+            if after is not None:
+                rows = [pair for pair in rows if _sort_key(pair[0]) < after]
+            page, rest = rows[:limit], rows[limit:]
+            out = [{**attachment_payload(att), "task_id": task.id, "task_title": task.title} for att, task in page]
+            last = page[-1][0] if page else None
+            cursor = _encode_cursor(slug, last.created_at, int(last.id)) if rest and last is not None else None
+            return {"attachments": out, "next_cursor": cursor}
+
+        return web.json_response(await run_blocking(work))
 
     return handler
 
@@ -249,6 +338,7 @@ __all__ = [
     "attachment_max_bytes",
     "attachment_payload",
     "list_attachments_handler",
+    "list_board_attachments_handler",
     "upload_attachment_handler",
     "download_attachment_handler",
     "delete_attachment_handler",

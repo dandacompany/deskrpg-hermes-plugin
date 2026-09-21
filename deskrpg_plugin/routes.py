@@ -104,6 +104,8 @@ ROUTES = [
     ("POST", "/deskrpg/kanban/tasks/{id}/attachments", "kanban_upload_attachment", Scope.DEFAULT),
     ("GET", "/deskrpg/kanban/tasks/{id}/log", "kanban_worker_log", Scope.DEFAULT),
     ("POST", "/deskrpg/kanban/tasks/{id}/{action}", "kanban_task_action", Scope.DEFAULT),
+    # 보드 전체 첨부(결과물 갤러리). `/attachments/{id}` 와 세그먼트 수가 달라 충돌하지 않는다.
+    ("GET", "/deskrpg/kanban/attachments", "kanban_list_board_attachments", Scope.DEFAULT),
     ("GET", "/deskrpg/kanban/attachments/{id}", "kanban_download_attachment", Scope.DEFAULT),
     ("DELETE", "/deskrpg/kanban/attachments/{id}", "kanban_delete_attachment", Scope.DEFAULT),
     # 묶음 조회 — 목록 앞에 둔다(고정 세그먼트가 와일드카드보다 앞이라는 이 표의 규칙과 무관하게,
@@ -206,6 +208,7 @@ _HANDLERS = {
     "kanban_delete_task": lambda api: _kanban_board.delete_task_handler(api),
     "kanban_add_comment": lambda api: _kanban_board.add_comment_handler(api),
     "kanban_list_attachments": lambda api: _kanban_files.list_attachments_handler(api),
+    "kanban_list_board_attachments": lambda api: _kanban_files.list_board_attachments_handler(api),
     "kanban_upload_attachment": lambda api: _kanban_files.upload_attachment_handler(api),
     "kanban_worker_log": lambda api: _kanban_files.worker_log_handler(api),
     "kanban_task_action": lambda api: _make_task_action(api),
