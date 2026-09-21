@@ -19,6 +19,12 @@ DeskRPG 전용 라우트를 Hermes API Server 에 등록하는 Hermes 플러그�
   행의 키만 쓰기 전용으로 저장한다. Hermes 대시보드 도구 설정 라우터와 같은 함수를 쓴다. 키 설정 여부는 프로필 `.env` 로
   판정하고(게이트웨이 프로세스 환경을 섞지 않는다), 설치·구독 로그인이 필요한 행은 `setup: "cli"` 로 표시하고 PUT 을 409 로
   거절한다. 툴셋 목록 행에 `hasProviders` 가 붙는다.
+- **승인 대기 카드·묶음 조회·카드 제안(0.11.0)** — 카드 생성 본문이 `initial_status`(`running`·`blocked`)를 받는다.
+  `blocked` 로 만든 카드는 디스패치되지 않고 `unblock` 으로만 풀리므로 "사람이 승인한 뒤 실행" 을 만들 수 있다(Hermes 의
+  `create_task` 가 그 인자를 받을 때만 capability `initial_status` 가 붙는다). `GET /deskrpg/kanban/links`·`GET /deskrpg/kanban/runs`
+  가 보드 전체의 부모·자식 쌍과 실행 기록을 한 번에 준다(capability `kanban_views` — 목록 트리·실적 타임라인용). 프로필은
+  `propose_kanban_card` 도구로 대화 중에 "업무 카드로 남길 만한 요청" 을 **제안**만 하고, 카드로 만들지는 사람이 고른다
+  (capability `card_proposals`, 사건 `card_proposal.created` 는 `include=card_proposals` 옵트인).
 
 ## 요구사항
 
@@ -126,7 +132,7 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 
 | Method | Path | Scope | 설명 |
 |---|---|---|---|
-| GET | `/deskrpg/info` | default | 버전·라우트 목록·`capabilities`(`kanban, cron, events, artifacts` + 스웜이 켜져 있으면 `swarm`)·`timezone`·`kanban{dispatcher_present, attachments, attachment_max_bytes}`·`dashboard_url`(0.7.1)·`artifact_max_bytes`(0.8.0) (**default 키 전용**) |
+| GET | `/deskrpg/info` | default | 버전·라우트 목록·`capabilities`(`kanban, cron, events, artifacts, kanban_views, card_proposals` + Hermes 빌드에 따라 `swarm`·`profile_*`·`initial_status`)·`timezone`·`kanban{dispatcher_present, attachments, attachment_max_bytes}`·`dashboard_url`(0.7.1)·`artifact_max_bytes`(0.8.0) (**default 키 전용**) |
 | GET | `/deskrpg/profiles` | default | 프로필 목록 (`hasCustomPersona` 포함) |
 | POST | `/deskrpg/profiles` | default | 프로필 생성 (**응답이 새 키를 한 번만 싣는다**) |
 | DELETE | `/deskrpg/profiles/{name}` | default | 프로필 삭제 (`?confirm={name}` 필수) |
@@ -160,6 +166,11 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 | DELETE | `/deskrpg/kanban/attachments/{id}?board=` | default | `{ok}` — Hermes 가 blob 도 지운다 |
 | POST | `/deskrpg/kanban/links?board=` | default | `{parent_id, child_id}` → `{ok}`. 순환(자기 자신 포함) 400 `link_cycle`, 없는 카드 404 |
 | DELETE | `/deskrpg/kanban/links?board=` | default | 링크 해제 |
+| GET | `/deskrpg/kanban/links?board=` | default | 보드 전체의 `{links:[{parent_id, child_id}]}` (0.11.0) |
+| GET | `/deskrpg/kanban/runs?board=&from=&to=&limit=` | default | 창 안의 실행 기록 `{runs, window:{from,to}, truncated}` — 시각은 epoch 초, 창 기본 최근 7일, `limit` 기본 1000·최대 5000, 넘으면 최근 것부터 남기고 `truncated:true`. `from > to` 는 400 `invalid_query` (0.11.0) |
+| POST | `/deskrpg/card-proposals/{proposal_id}/resolve` | default | `{choice:"card"\|"inline", task_id?}` → `{resolved:true}`. 한 번만 해소된다 — 404 `card_proposal_not_found`, 409 `card_proposal_already_resolved` (0.11.0) |
+| POST | `/deskrpg/card-proposals/{proposal_id}/unresolve` | default | 카드가 기록되지 않은 해소를 되돌린다 → `{resolved:false}`. 409 `card_proposal_not_unresolvable` (0.11.0) |
+| POST | `/deskrpg/card-proposals/{proposal_id}/task` | default | `{task_id}` → `{recorded:true}`. `card` 로 해소된 제안에 만든 카드 id 를 적는다. 409 `card_proposal_task_not_recordable` (0.11.0) |
 | POST | `/deskrpg/kanban/dispatch?board=&max=8` | default | **수동** 디스패치 한 틱 → `{spawned:[{task_id, profile}], skipped_locked, warning?}`. `kanban.*` 운영 설정(`max_in_progress*` 등)을 적용하지 않고 `dispatch_once` 를 바로 부른다 — 대시보드의 수동 디스패치와 같다 (`kanban.dispatch_in_gateway` 가 꺼져 있으면 `warning:"embedded_dispatcher_disabled"`) |
 | GET | `/deskrpg/kanban/tasks/{id}/log?board=&tail=` | default | 워커 로그 `{exists, size_bytes, content, truncated}` (tail 기본 16384, 최대 1 MiB) |
 | GET | `/deskrpg/kanban/orchestration` | default | `kanban.*` 운영 설정 + 해소된 프로필 |
@@ -188,6 +199,9 @@ API Server 는 프리픽스 없는 경로를 **default(리스너 소유자) 키*
 `deskrpg/artifacts/blobs/` 뿐이며, `HERMES_DESKRPG_ARTIFACTS_ROOT` 로 옮길 수 있다. 사건 스트림
 (`/deskrpg/events`)에 `artifact.created`·`artifact.versioned`·`artifact.deleted`·`artifact.delete_partial`·
 `artifact.capture_failed` 다섯 kind 로 합류하며, 게이트웨이 전역이라 채널/보드로 거르는 것은 DeskRPG 쪽 몫이다.
+카드 제안(0.11.0)의 `card_proposal.created` 도 같은 출처·같은 커서로 흐른다 — 두 옵트인 토큰은 `include=artifacts,card_proposals`
+처럼 **함께** 켠다. 한쪽만 켜면 그쪽을 읽으며 커서가 전진해 다른 쪽 사건을 지나치고, 그 사건은 다시 오지 않는다.
+모르는 `include` 토큰은 400 이 아니라 무시된다(구버전 플러그인도 같다).
 
 ### 크론 (0.6.0 · 전부 profile — 잡은 그 프로필의 `cron/jobs.json` 에만 산다)
 
