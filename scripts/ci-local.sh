@@ -12,6 +12,13 @@
 # 작업 산출물은 전부 gitignore 된 .ci-venv/ · .ci-hermes/ 에 들어가고 재사용된다.
 set -euo pipefail
 
+# git 은 훅(pre-push 등)을 부를 때 `GIT_DIR`·`GIT_WORK_TREE` 를 환경에 넣는다. 그 값이 있으면
+# `git -C <다른 저장소>` 가 **무시된다** — 아래 Hermes 소스 fetch 가 플러그인 레포의 원격에
+# Hermes 커밋을 묻고 `not our ref` 로 죽는다. `git clone` 은 새 저장소를 만들어 영향이 없어서
+# "복제는 되는데 fetch 만 실패" 로 보인다(2026-09-21, 0.11.0 릴리스 푸시에서 실측).
+# 훅이 매번 빨개지면 `--no-verify` 가 일상이 되므로 여기서 끊는다.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 VENV="$ROOT/.ci-venv"
