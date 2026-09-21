@@ -532,3 +532,80 @@ async def test_clearBaseUrl_은_true_만_받는다(aiohttp_client, fake_api):
     client = await _client(aiohttp_client, fake_api)
     resp = await client.put("/p/sophie/deskrpg/config", json={"clearBaseUrl": "yes"})
     assert resp.status == 400
+
+
+# ── 비밀 위생 (PVTI_…7n8oo · PVTI_…7oHZg) ────────────────────────────────────
+#
+# config.yaml 에는 인라인 API 키가 들어갈 수 있다(`providers.*.api_key`,
+# `custom_providers`). 그래서 이 파일을 다루는 모든 경로는 두 가지를 지켜야 한다:
+# 원문을 **밖으로 내지 않는 것**(응답·로그)과, 사본을 **넓은 권한으로 남기지
+# 않는 것**(백업·임시 파일). 아래 테스트가 그 둘을 고정한다.
+
+SEEDED_SECRET = "sk-SEEDED-abc123"
+
+# 문법이 깨진 YAML 이고, 깨진 줄에 비밀이 있다 — YAML 파서의 오류 메시지는
+# 문제가 난 줄을 그대로 인용하므로 이 배치가 유출의 최단 경로다.
+BROKEN_WITH_SECRET = (
+    "providers:\n"
+    "  openai:\n"
+    f'    api_key: "{SEEDED_SECRET}\n'  # 닫는 따옴표가 없다
+)
+
+
+def _seed_broken_with_secret(fake_api):
+    fake_api.create_profile("sophie")
+    p = fake_api.get_profile_dir("sophie") / "config.yaml"
+    p.write_text(BROKEN_WITH_SECRET, encoding="utf-8")
+    return p
+
+
+async def test_GET_은_깨진_config_의_비밀을_응답에도_로그에도_싣지_않는다(
+    aiohttp_client, fake_api, caplog
+):
+    _seed_broken_with_secret(fake_api)
+    client = await _client(aiohttp_client, fake_api)
+
+    with caplog.at_level("WARNING"):
+        resp = await client.get("/p/sophie/deskrpg/config")
+
+    assert resp.status == 200
+    raw = await resp.text()
+    assert SEEDED_SECRET not in raw
+    assert SEEDED_SECRET not in caplog.text
+    # 유출을 막느라 "왜" 를 잃지 않았는지도 본다 — 플래그는 그대로 있어야 한다.
+    assert (await resp.json())["unreadable"] is True
+
+
+async def test_PUT_은_깨진_config_의_비밀을_409_본문에도_로그에도_싣지_않는다(
+    aiohttp_client, fake_api, caplog
+):
+    path = _seed_broken_with_secret(fake_api)
+    client = await _client(aiohttp_client, fake_api)
+
+    with caplog.at_level("WARNING"):
+        resp = await client.put("/p/sophie/deskrpg/config", json={"model": "gpt-5.6-terra"})
+
+    assert resp.status == 409
+    raw = await resp.text()
+    assert SEEDED_SECRET not in raw
+    assert SEEDED_SECRET not in caplog.text
+    # 거절이 사유를 잃지는 않는다 — 코드로 구분할 수 있어야 화면이 안내한다.
+    assert (await resp.json())["error"] == "config_unreadable"
+    # 원본은 그대로다.
+    assert path.read_text(encoding="utf-8") == BROKEN_WITH_SECRET
+
+
+async def test_기존_model_이_문자열이면_그_값을_로그에_싣지_않는다(
+    aiohttp_client, fake_api, caplog
+):
+    # `model:` 이 스칼라인 config 는 409 로 거절되는데, 그 로그가 값을 %r 로
+    # 찍었다. 사용자가 거기에 무엇을 적어 두었는지는 알 수 없다.
+    _seed(fake_api, {"model": SEEDED_SECRET})
+    client = await _client(aiohttp_client, fake_api)
+
+    with caplog.at_level("WARNING"):
+        resp = await client.put("/p/sophie/deskrpg/config", json={"model": "gpt-5.6-terra"})
+
+    assert resp.status == 409
+    assert SEEDED_SECRET not in caplog.text
+    assert SEEDED_SECRET not in await resp.text()

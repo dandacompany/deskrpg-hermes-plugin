@@ -51,6 +51,21 @@ class ConfigUnreadable(Exception):
     """
 
 
+def _yaml_fault_location(exc) -> str:
+    """YAML 오류의 **위치만** 문자열로 — 줄·열, 없으면 빈 문자열.
+
+    `str(yaml.YAMLError)` 는 문제가 난 줄을 그대로 인용한다. config.yaml 에는
+    인라인 API 키가 들어갈 수 있으므로(`providers.*.api_key`, `custom_providers`)
+    그 문장을 응답이나 로그에 실으면 키가 새어 나간다. 사용자가 파일을 고치려면
+    위치는 알아야 하니, 숫자만 꺼내 쓴다 — `problem_mark.get_snippet()` 은
+    원문을 담으므로 **절대 쓰지 않는다**.
+    """
+    mark = getattr(exc, "problem_mark", None)
+    if mark is None:
+        return ""
+    return f" ({mark.line + 1}번째 줄 {mark.column + 1}번째 칸)"
+
+
 def _value_error(key, value):
     """키가 허용목록에 있어도 값의 타입이 틀리면 거절 사유를 돌려준다.
 
@@ -121,12 +136,19 @@ def _load(path):
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise ConfigUnreadable(f"config.yaml 읽기 실패: {exc}") from exc
+        # 사유에 예외 타입 이름만 싣는다 — OSError 의 메시지는 경로를,
+        # UnicodeDecodeError 의 메시지는 깨진 바이트열을 담는다. `from None` 으로
+        # 체인을 끊어 상위 트레이스백에도 원문이 실리지 않게 한다.
+        raise ConfigUnreadable(
+            f"config.yaml 을 읽을 수 없다 ({type(exc).__name__})"
+        ) from None
 
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
-        raise ConfigUnreadable(f"config.yaml 파싱 실패: {exc}") from exc
+        raise ConfigUnreadable(
+            f"config.yaml 의 YAML 문법이 올바르지 않다{_yaml_fault_location(exc)}"
+        ) from None
 
     if data is None:
         return {}
@@ -193,7 +215,7 @@ def get_handler(api):
             # 500 으로 새지 않는다 — 이 라우트는 설정 화면이 여는 첫 요청이라,
             # 파일이 망가졌다고 화면 자체가 못 뜨면 고칠 방법도 없어진다.
             # 값은 전부 null 로 두고 unreadable 플래그로 "비어있음"과 구분한다.
-            logger.warning("[deskrpg] config 읽기 실패: %s", exc)
+            logger.warning("[deskrpg] config 읽기 실패: %s", type(exc).__name__)
             return web.json_response(
                 {
                     "model": None,
@@ -263,10 +285,13 @@ def put_handler(api):
             # 망가진 파일 위에 백업하고 새로 쓰면 "성공"을 보고하면서 원본을
             # 영영 잃는다 — 여기서 거절하는 편이 백업-후-덮어쓰기보다 안전하다.
             # 호출자가 먼저 config.yaml 을 직접 고치거나 지워야 한다.
-            logger.warning("[deskrpg] config 쓰기 거부 — 기존 파일을 해석할 수 없다: %s", exc)
-            # HTTP reason 은 개행을 못 담는다(aiohttp 가 \r\n 을 거절) — YAML
-            # 파서 에러는 여러 줄이라 reason 에는 한 줄 요약만, 자세한 사유는
-            # 응답 본문에 담는다.
+            logger.warning(
+                "[deskrpg] config 쓰기 거부 — 기존 파일을 해석할 수 없다: %s",
+                type(exc).__name__,
+            )
+            # 사유는 이제 한 줄 고정 문장이다(원문을 싣지 않으므로) — 그래도
+            # HTTP reason 이 아니라 본문에 담는다. reason 은 개행을 못 담고
+            # (aiohttp 가 \r\n 을 거절), 화면은 `error` 코드로 분기한다.
             return web.json_response(
                 {"error": "config_unreadable", "reason": str(exc)}, status=409
             )
@@ -277,8 +302,11 @@ def put_handler(api):
             # 던진다 — 그 전에 걸러야 한다. get_handler(:110-112) 는 이미 같은
             # 상황을 방어하는데 put 만 놓치고 있었다(I-1). 백업보다 반드시
             # 먼저 거절해야 "거절 전 백업 찌꺼기 0개" 가 이 경로에서도 지켜진다.
+            # 값을 %r 로 찍지 않는다 — 사용자가 그 자리에 무엇을 적어 두었는지
+            # 알 수 없고, 이 파일에는 인라인 키가 들어갈 수 있다.
             logger.warning(
-                "[deskrpg] config 쓰기 거부 — 기존 model 키가 매핑이 아니다: %r", existing_model
+                "[deskrpg] config 쓰기 거부 — 기존 model 키가 매핑이 아니다: %s",
+                type(existing_model).__name__,
             )
             return web.json_response(
                 {
