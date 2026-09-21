@@ -1,4 +1,5 @@
 import contextlib
+import os
 import re
 import threading
 import types
@@ -475,3 +476,66 @@ def tmp_api(tmp_path, monkeypatch):
 
     api.events = _events
     return api
+
+
+# --- 공용 저장소 설정 가드 -------------------------------------------------
+#
+# `GIT_DIR`+`GIT_WORK_TREE` 가 걸린 채(훅 환경, 또는 그것을 흉내 낸 실행) `git init` 을 부르면
+# 새 저장소가 생기는 대신 **물려받은 저장소의 공용 `.git/config`** 에 `core.worktree` 가 쓰인다.
+# 그 뒤 공용 체크아웃의 모든 git 명령이 조용히 남의 디렉터리를 본다 — `git status` 가 그럴듯한
+# diff 를 보여 주고, 거기서 `git add -A` 를 하면 남의 내용이 커밋된다. 증상이 없는 것이 이 결함의
+# 핵심이라 사람이 알아차릴 길이 없다(2026-09-21 실측: 공용 config 에 실제로 박혔다).
+#
+# `core.worktree` 는 워크트리별 설정이 아니라 공용 config 에 들어가므로, 한 번 박히면 그 저장소를
+# 쓰는 모든 세션이 영향을 받는다. 그래서 **고치지 않고 실패시킨다** — 조용히 지우면 어느 테스트가
+# 박았는지 다음번에 또 모른다.
+
+
+def _core_worktree() -> str | None:
+    """공용 설정의 `core.worktree` 값. 없으면 None.
+
+    설정 **파일의 글자**를 보지 않는다 — `worktree` 라는 낱말은 브랜치 이름 등
+    엉뚱한 곳에도 나온다(실측: `[branch "fix/worktree-config-guard"]` 가 걸렸다).
+    git 에게 그 키 하나만 묻는다. 환경변수는 넘기지 않는다 — 이 가드가 잡으려는
+    그 환경이 답을 바꾸면 안 된다.
+    """
+    import subprocess
+
+    clean = {"PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+    try:
+        done = subprocess.run(
+            ["git", "config", "--get", "core.worktree"],
+            cwd=Path(__file__).resolve().parent,
+            capture_output=True,
+            text=True,
+            env=clean,
+            check=False,
+        )
+    except OSError:
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def worktree_newly_set(before: str | None, after: str | None) -> bool:
+    """스위트가 도는 동안 `core.worktree` 가 새로 생기거나 바뀌었는가.
+
+    이미 있던 값(누군가 의도적으로 둔 것)은 이 스위트의 잘못이 아니다. 값이 **바뀐** 것은
+    잡는다 — 다른 워크트리를 가리키게 덮어쓰는 것도 같은 사고다.
+    """
+    if after is None:
+        return False
+    return before != after
+
+
+@pytest.fixture(scope="session", autouse=True)
+def 공용_config_에_core_worktree_가_생기지_않는다():
+    before = _core_worktree()
+    yield
+    after = _core_worktree()
+    if worktree_newly_set(before, after):
+        pytest.fail(
+            f"이 스위트가 공용 git 설정의 `core.worktree` 를 바꿨다: {before!r} → {after!r}\n"
+            "git 을 부르는 픽스처가 `GIT_DIR`·`GIT_WORK_TREE` 를 끊지 않은 것이다. "
+            "지우기 전에 어느 테스트가 그랬는지 먼저 찾아라 — "
+            "`git config --unset core.worktree` 로 복구한다."
+        )

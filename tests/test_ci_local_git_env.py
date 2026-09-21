@@ -66,3 +66,31 @@ def test_가드가_있어야_다른_저장소를_가리키는_C_가_살아난다
     else:
         # 가드가 없으면 훅을 띄운 저장소가 답한다 — 이것이 실패의 정체다.
         assert url.endswith("plugin.git"), "이 테스트의 전제(git 의 GIT_DIR 우선)가 깨졌다"
+
+
+# --- 공용 config 가드의 판정 -------------------------------------------------
+#
+# 가드 자체(세션 픽스처)는 진짜 저장소의 설정을 읽는다. 그 판정을 실제로 빨갛게 만들려면 공용
+# 설정을 오염시켜야 하므로, 판정 부분만 떼어 여기서 본다. 오염 메커니즘 자체는 `git init` 이
+# `GIT_DIR`+`GIT_WORK_TREE` 아래에서 공용 config 에 `worktree =` 를 쓰는 것으로 실측했다.
+
+from tests.conftest import worktree_newly_set  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "expected"),
+    [
+        (None, "/x", True),
+        (None, None, False),
+        # 이미 있던 값은 이 스위트의 잘못이 아니다 — 남의 의도를 지우게 만들지 않는다.
+        ("/x", "/x", False),
+        # 다른 워크트리를 가리키게 덮어쓰는 것도 같은 사고다.
+        ("/x", "/y", True),
+        # 스위트가 도는 동안 사라진 것은 이 가드가 다룰 일이 아니다.
+        ("/x", None, False),
+    ],
+)
+def test_가드는_이번_실행에서_바뀐_core_worktree_만_잡는다(
+    before: str | None, after: str | None, expected: bool
+) -> None:
+    assert worktree_newly_set(before, after) is expected

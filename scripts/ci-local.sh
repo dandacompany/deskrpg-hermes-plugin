@@ -19,6 +19,16 @@ set -euo pipefail
 # 훅이 매번 빨개지면 `--no-verify` 가 일상이 되므로 여기서 끊는다.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
 
+# 같은 부류의 더 나쁜 변종 — `GIT_DIR`+`GIT_WORK_TREE` 아래에서 `git init` 을 부르면 새 저장소
+# 대신 **공용 `.git/config`** 에 `core.worktree` 가 박힌다. 그러면 공용 체크아웃의 모든 git 이
+# 조용히 남의 디렉터리를 본다. **여기서 고치지 않고 멈춘다** — 조용히 지우면 무엇이 박았는지
+# 다음번에 또 모른다(2026-09-21 실측).
+if git config --get core.worktree >/dev/null 2>&1; then
+  printf '\n공용 git 설정에 core.worktree 가 있다: %s\n' "$(git config --get core.worktree)" >&2
+  printf '무엇이 박았는지 먼저 찾아라. 복구는 `git config --unset core.worktree` 다.\n' >&2
+  exit 1
+fi
+
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 VENV="$ROOT/.ci-venv"
