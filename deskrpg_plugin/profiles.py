@@ -10,7 +10,7 @@ import logging
 
 from aiohttp import web
 
-from . import cloneprofile, keyissue, safedelete
+from . import cloneprofile, keyissue, safedelete, worker_plugin
 from .identity import SOUL_FILENAME, is_default_template
 
 logger = logging.getLogger(__name__)
@@ -108,6 +108,17 @@ def create_handler(api):
             except cloneprofile.CloneFailed as exc:
                 body["cloneError"] = exc.reason
                 logger.warning("[deskrpg] 프로필 복제 실패: %s — %s", name, exc.reason)
+
+        # 칸반 워커·크론은 이 프로필 홈으로 뜬다 — 여기에 플러그인이 없으면 워커가 만든 결과물이
+        # 하나도 안 쌓인다(worker_plugin 모듈 주석). 실패해도 프로필은 이미 있으므로 201 로 말한다.
+        try:
+            body["workerPlugin"] = await asyncio.to_thread(worker_plugin.ensure, api, name)
+        except worker_plugin.EnsureFailed as exc:
+            body["workerPluginError"] = exc.reason
+            logger.warning("[deskrpg] 워커 플러그인 준비 실패: %s — %s", name, exc.reason)
+        except OSError as exc:
+            body["workerPluginError"] = type(exc).__name__
+            logger.warning("[deskrpg] 워커 플러그인 준비 실패: %s — %s", name, type(exc).__name__)
 
         # Hermes 는 빈 .env 를 씨딩할 뿐이라, 키를 발급하지 않으면 이 프로필은
         # 아무도 말을 걸 수 없는 상태로 태어난다(keyissue 모듈 주석 참조).

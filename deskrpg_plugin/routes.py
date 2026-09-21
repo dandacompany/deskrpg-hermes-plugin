@@ -4,6 +4,7 @@
 require_auth 로 감싸므로, 핸들러를 빠뜨릴 자리가 없다.
 """
 
+import logging
 import os
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -12,6 +13,7 @@ from .auth import Scope, require_auth
 from . import contract_fields as _contract_fields
 from . import identity as _identity
 from . import profiles as _profiles
+from . import worker_plugin as _worker_plugin
 from . import config as _config
 from . import catalog as _catalog
 from . import picker as _picker
@@ -54,6 +56,8 @@ def _read_plugin_version() -> str:
     return "unknown"
 
 
+logger = logging.getLogger("deskrpg_plugin")
+
 PLUGIN_VERSION = _read_plugin_version()
 
 # (method, path, handler_name, scope)
@@ -62,6 +66,8 @@ ROUTES = [
     ("GET", "/deskrpg/profiles", "list_profiles", Scope.DEFAULT),
     ("POST", "/deskrpg/profiles", "create_profile", Scope.DEFAULT),
     ("DELETE", "/deskrpg/profiles/{name}", "delete_profile", Scope.DEFAULT),
+    # 워커(칸반·크론)는 프로필 홈으로 뜬다 — 그 홈에도 이 플러그인이 있게 한다. 명시 호출 전용(worker_plugin 모듈 주석).
+    ("POST", "/deskrpg/worker-plugin", "ensure_worker_plugin", Scope.DEFAULT),
     ("GET", "/p/{profile}/deskrpg/identity", "get_identity", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/identity", "put_identity", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/config", "get_config", Scope.PROFILE),
@@ -170,6 +176,7 @@ _assert_scope_matches_path()
 
 _HANDLERS = {
     "info": lambda api: _make_info(api),
+    "ensure_worker_plugin": lambda api: _worker_plugin.ensure_handler(api),
     "list_profiles": lambda api: _profiles.list_handler(api),
     "create_profile": lambda api: _profiles.create_handler(api),
     "delete_profile": lambda api: _profiles.delete_handler(api),
@@ -341,6 +348,16 @@ def _info_dispatcher_present(api) -> bool:
 _FALSY = {"", "0", "false", "no", "off"}
 
 
+def _info_worker_plugin(api):
+    """워커에서 이 플러그인이 안 뜨는 프로필. 판정이 실패해도 info 전체를 500 으로 만들지 않는다 —
+    null 은 "모른다" 이고, 빈 `missing` 은 "전부 된다" 다. 둘을 섞지 않는다."""
+    try:
+        return _worker_plugin.report(api)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[deskrpg] 워커 플러그인 판정 실패: %s", type(exc).__name__)
+        return None
+
+
 def _info_dashboard_url(api):
     """Hermes 대시보드 공개 주소, 또는 None.
 
@@ -380,6 +397,7 @@ def _make_info(api):
                 "timezone": _info_timezone(api),
                 "dashboard_url": _info_dashboard_url(api),
                 "artifact_max_bytes": _artifact_upload_max_bytes(api),
+                "worker_plugin": _info_worker_plugin(api),
                 "kanban": {
                     "dispatcher_present": _info_dispatcher_present(api),
                     "attachments": True,

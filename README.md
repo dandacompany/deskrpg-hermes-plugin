@@ -96,6 +96,19 @@ curl -s -H "Authorization: Bearer $API_SERVER_KEY" http://127.0.0.1:8642/deskrpg
 `~/.hermes/config.yaml` 의 `plugins.enabled` 화이트리스트를 한 번 더 거른다.
 설치만 하고 enable 을 건너뛰면 모든 라우트가 404 를 반환한다.
 
+**프로필마다 한 번 더 — 칸반 워커와 크론은 프로필 홈으로 뜬다.** 위의 설치·enable 은 루트 홈(게이트웨이)에만
+적용된다. 칸반 워커는 `hermes -p <담당 프로필>` 로, 크론 실행은 그 프로필 홈으로 뜨고, Hermes 는 플러그인을
+**로드하는 홈의** `plugins/` 와 `config.yaml` 에서만 찾는다. 루트에만 두면 채팅에서는 아티팩트가 쌓이는데
+워커가 만든 결과 파일은 하나도 안 쌓인다 — 오류도 로그도 없다. 소유자 키로 한 번 부르면 모든 프로필에
+루트 설치로 가는 링크와 `plugins.enabled` 항목을 넣는다(멱등, 바꾼 config 는 백업을 남긴다):
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $API_SERVER_KEY" http://127.0.0.1:8642/deskrpg/worker-plugin | jq
+```
+
+DeskRPG 로 만든 새 프로필에는 생성 때 자동으로 들어간다. 어느 프로필이 빠져 있는지는
+`/deskrpg/info` 의 `worker_plugin.missing` 이 알려 준다. 운영자가 `plugins.disabled` 에 넣은 프로필은 켜지 않는다.
+
 설치 확인:
 
 ```bash

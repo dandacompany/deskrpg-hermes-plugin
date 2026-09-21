@@ -9,7 +9,10 @@
 Hermes 가 부르는 kwargs: tool_name, args, result, task_id, session_id, tool_call_id, turn_id, api_request_id,
 duration_ms, status, error_type, error_message, middleware_trace (`model_tools.py:_emit_post_tool_call_hook`,
 0.21.x). 훅은 **절대 던지지 않는다** — 던지면 도구 호출 자체가 흔들린다. 비용은 첫 줄(산출 도구 판정)에서
-끊는다. 크론·칸반 워커 세션에서도 같은 코드가 돈다(Task 1 스파이크가 워커의 플러그인 로드를 실증했다).
+끊는다. 크론·칸반 워커에서는 **그 프로필 홈에 이 플러그인이 있을 때만** 돈다 — 워커는 프로필 홈으로 뜨고
+Hermes 는 그 홈의 `plugins/`·`config.yaml` 에서만 플러그인을 찾는다. 예전 주석은 "워커에서도 돈다" 고 단정했는데,
+프로필이 자기 `plugins.enabled` 를 가진 설치(스테이징 7개 프로필 전부)에서는 거짓이었고 결과물이 하나도 쌓이지
+않았다. 준비는 `worker_plugin` 모듈이 한다.
 
 `artifacts_detect.candidate_paths` 는 조상 키 태그 규칙(R9) 때문에 하위 트리 전체를 후보로 묶는다 — 그
 결과 "application/pdf" 같은 비경로 문자열도 후보 목록에 섞여 들어온다. 이런 값은 `resolve_source_path`

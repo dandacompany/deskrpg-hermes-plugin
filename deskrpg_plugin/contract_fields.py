@@ -16,7 +16,8 @@ PLUGIN_INFO_REQUIRED = frozenset({
     "plugin", "version", "capabilities", "timezone", "kanban", "dashboard_url", "artifact_max_bytes",
 })
 # `routes` 는 0.1.0 부터 내던 필드라 유지한다. 계약 타입에는 없지만 해가 없다.
-PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | frozenset({"routes"})
+# `worker_plugin` 은 0.11.2 에서 더했다 — 옛 플러그인에는 없으므로 계약상 선택 키다.
+PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | frozenset({"routes", "worker_plugin"})
 PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attachment_max_bytes"})
 # 항상 있는 것. 스웜처럼 Hermes 빌드에 따라 갈리는 것은 `capabilities()` 가 붙인다.
 # `kanban_views` = 묶음 조회(`GET /kanban/links`, `GET /kanban/runs`). Hermes 의 선택 심볼을
@@ -25,7 +26,9 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 # `card_proposals` 는 사건 옵트인 토큰(`include=card_proposals`)과 같은 이름이다 — DeskRPG 는 이 값으로
 # "이 게이트웨이가 카드 제안을 아는가" 를 판정해 칸반·크론과 같은 방식의 안내를 띄운다. 경로 문자열을
 # 뒤져 판정하게 두면 경로를 고치는 날 조용히 깨진다.
-CAPABILITIES = ("kanban", "cron", "events", "artifacts", "kanban_views", "card_proposals")
+# `worker_plugin` = `/deskrpg/info` 의 `worker_plugin` 보고와 `POST /deskrpg/worker-plugin`. 프로필 목록·경로 심볼만
+# 쓰므로 늘 된다.
+CAPABILITIES = ("kanban", "cron", "events", "artifacts", "kanban_views", "card_proposals", "worker_plugin")
 
 
 _TOOLSET_SYMBOLS = (
