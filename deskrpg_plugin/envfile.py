@@ -46,6 +46,10 @@ def write_text_atomic(path: Path, text: str) -> None:
     """`text` 를 0600 임시 파일에 쓰고 `os.replace` 로 갈아 끼운다.
 
     `.env` 뿐 아니라 키가 인라인으로 들어갈 수 있는 파일(복제한 config.yaml 의 `providers`)도 쓴다.
+
+    **대상이 심볼릭 링크면 링크가 일반 파일로 바뀐다** — `os.replace` 는 링크를 따라가지 않고
+    경로 자체를 갈아 끼운다. `.env` 는 처음부터 이 성질이었고, config.yaml·SOUL.md 도 같은
+    헬퍼를 쓰면서 물려받았다. 설정 파일을 링크로 두는 설치가 실제로 있는지는 확인되지 않았다.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
