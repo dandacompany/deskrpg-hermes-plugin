@@ -43,10 +43,24 @@ async def _codex_authenticated(client, profile):
     return rows["openai-codex"]
 
 
-async def test_default_로그인은_프로필의_인증이_아니다(client, profile, hermes_env, monkeypatch):
+async def test_default_로그인_표시는_프로필_런타임의_상속_정책을_따른다(client, api, profile, hermes_env, monkeypatch):
     monkeypatch.setattr(catalog, "_models_for", lambda pid: [])  # models.dev 왕복 차단
     _write_codex_login(hermes_env["home"])
-    assert await _codex_authenticated(client, profile) is False
+    # 최신 Hermes는 루트 OAuth를 프로필 워커에도 상속한다. 피커와 실제 실행 판정이 같아야 한다.
+    import inspect
+    from hermes_cli.auth import resolve_codex_runtime_credentials, AuthError
+    from deskrpg_plugin.cron import cron_scope
+
+    kwargs = {"force_refresh": False, "refresh_if_expiring": False}
+    if "read_only" in inspect.signature(resolve_codex_runtime_credentials).parameters:
+        kwargs["read_only"] = True
+    with cron_scope(api, profile):
+        try:
+            resolved = resolve_codex_runtime_credentials(**kwargs)
+            usable = bool(resolved.get("api_key"))
+        except AuthError:
+            usable = False
+    assert await _codex_authenticated(client, profile) is usable
 
 
 async def test_프로필에서_로그인하면_인증된다(client, profile, hermes_env, monkeypatch):

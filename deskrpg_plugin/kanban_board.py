@@ -40,6 +40,7 @@ from .contract_fields import (
     CARD_STATUSES,
     CREATE_TASK_KEYS,
     INITIAL_STATUSES,
+    has_review_policy,
     KANBAN_COMMENT_KEYS,
     KANBAN_EVENT_KEYS,
     KANBAN_RUN_KEYS,
@@ -224,6 +225,7 @@ def get_board_handler(api):
                 for t in tasks:
                     full = summary_map.get(t.id)
                     d = task_dict(t, latest_summary=(full[:CARD_SUMMARY_PREVIEW_CHARS] if full else None))
+                    d["review"] = api.get_review_state(conn, t.id) if has_review_policy(api) else None
                     decorate(d, t.id, link_counts, comment_counts, progress, diagnostics.get(t.id))
                     columns[t.status if t.status in columns else "todo"].append(project(d, KANBAN_TASK_KEYS))
                 tenants = [
@@ -310,6 +312,11 @@ def _parse_create_body(body: dict) -> dict:
         if status not in INITIAL_STATUSES:
             raise RequestError(400, "invalid_field", f"initial_status 는 {'|'.join(INITIAL_STATUSES)} 중 하나여야 한다")
         fields["initial_status"] = status
+    if "review_policy" in body:
+        policy = body["review_policy"]
+        if not isinstance(policy, dict):
+            raise RequestError(400, "invalid_field", "review_policy must be an object")
+        fields["review_policy"] = policy
     return fields
 
 
@@ -328,6 +335,8 @@ def create_task_handler(api):
         slug = _board_from_query(api, request)
         body = await read_json_object(request)
         fields = _parse_create_body(body)
+        if "review_policy" in fields and not has_review_policy(api):
+            raise RequestError(428, "review_policy_required", "Hermes approval policy support is required")
         created_by = actor_from_request(request)
 
         def work():
@@ -354,6 +363,7 @@ def create_task_handler(api):
 _MISSING = object()
 _PATCH_SUPPORTED = frozenset({
     "title", "body", "priority", "assignee", "status", "model_override", "provider_override", "reasoning_effort",
+    "review_policy", "expected_revision",
 })
 
 
@@ -363,6 +373,8 @@ def _set_status_direct(api, conn, task_id: str, new_status: str) -> bool:
     terminations = []
     effective = new_status
     with api.write_txn(conn):
+        if has_review_policy(api):
+            api.guard_task_mutation(conn, task_id, {"status": new_status})
         prev = conn.execute(
             "SELECT status, current_run_id, worker_pid, claim_lock FROM tasks WHERE id = ?", (task_id,)
         ).fetchone()
@@ -476,6 +488,8 @@ def _patch_title_body(api, conn, task_id: str, title, body, board: str) -> None:
         vals.append(body)
         changed.append("body")
     with api.write_txn(conn):
+        if has_review_policy(api):
+            api.guard_task_mutation(conn, task_id, changed)
         conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", (*vals, task_id))
         conn.execute(
             "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'edited', NULL, ?)",
@@ -486,6 +500,8 @@ def _patch_title_body(api, conn, task_id: str, title, body, board: str) -> None:
 
 def _set_priority(api, conn, task_id: str, priority: int, board: str) -> None:
     with api.write_txn(conn):
+        if has_review_policy(api):
+            api.guard_task_mutation(conn, task_id, {"priority": priority})
         conn.execute("UPDATE tasks SET priority = ? WHERE id = ?", (int(priority), task_id))
         conn.execute(
             "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'reprioritized', ?, ?)",
@@ -502,6 +518,13 @@ def _parse_patch_body(body: dict) -> dict:
         # 계약 키지만 PATCH 로 바꿀 길이 없는 것 — 조용히 버리면 클라이언트가 성공으로 오해한다.
         raise RequestError(400, "unsupported_field", ", ".join(unsupported))
     out = {}
+    if "review_policy" in body:
+        if not isinstance(body["review_policy"], dict):
+            raise RequestError(400, "invalid_field", "review_policy must be an object")
+        out["review_policy"] = body["review_policy"]
+        out["expected_revision"] = require_int(body, "expected_revision", minimum=1)
+    elif "expected_revision" in body:
+        raise RequestError(400, "invalid_field", "expected_revision requires review_policy")
     if "title" in body:
         out["title"] = require_str(body, "title")  # 빈 제목 400
     if "body" in body:
@@ -531,6 +554,23 @@ def patch_task_handler(api):
         def work():
             with board_conn(api, slug) as conn:
                 require_task(api, conn, task_id)
+                supported = has_review_policy(api)
+                if "review_policy" in p and not supported:
+                    raise RequestError(428, "review_policy_required")
+                review = api.get_review_state(conn, task_id) if supported else None
+                if review is not None or "review_policy" in p:
+                    if "status" in p and len(p) > 1:
+                        raise RequestError(400, "invalid_field", "Change status separately from task fields")
+                    try:
+                        if "status" in p:
+                            _patch_status(api, conn, task_id, p["status"], None)
+                        elif p:
+                            api.patch_review_task(conn, task_id,
+                                fields={k: v for k, v in p.items() if k not in ("review_policy", "expected_revision")},
+                                policy=p.get("review_policy"), expected_revision=p.get("expected_revision"))
+                    except (ValueError, RuntimeError) as exc:
+                        raise RequestError(409, "invalid_transition", str(exc))
+                    return {"task": task_payload(api, conn, task_id)}
                 status = p.get("status")
                 assignee = p.get("assignee", _MISSING)
                 # 담당자+review 를 함께 주면 request_review 가 구현자를 먼저 기록해야 하므로 assign 을 미룬다.

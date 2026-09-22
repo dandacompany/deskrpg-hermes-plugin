@@ -157,6 +157,8 @@ SPEC = (
 # 않으므로 반쯤 되는 상태가 생기지 않는다. 반대로 이걸 `SPEC` 에 넣으면 `kanban_swarm`
 # 이 없는 구버전 Hermes 에서 칸반·크론까지 전부 죽는다.
 OPTIONAL_SPEC = (
+    ("hermes_cli.kanban_review_policy", ("API_VERSION", "get_review_state", "approve_task",
+        "update_review_policy", "guard_task_mutation", "patch_review_task")),
     # 계획 B — 디바이스 코드 로그인. 대시보드 라우터 모듈이라 fastapi 가 없는 빌드에서는 통째로 빠진다.
     (
         "hermes_cli.web_routers.oauth",

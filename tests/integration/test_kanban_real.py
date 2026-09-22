@@ -164,7 +164,7 @@ async def test_PATCH_제목_본문_우선순위는_바뀌고_사건이_남는다
     assert {"edited", "reprioritized"} <= {e["kind"] for e in detail["events"]}
 
 
-async def test_PATCH_status_갈래_block_unblock_review_reopen_done_archive(client):
+async def test_PATCH_status_갈래_block_unblock_review_reopen_done_archive(client, api):
     await _board(client)
     task = await _task(client)
     tid = task["id"]
@@ -185,6 +185,10 @@ async def test_PATCH_status_갈래_block_unblock_review_reopen_done_archive(clie
     assert (status, body["task"]["status"]) == (200, "scheduled"), body
     status, body = await _patch(client, tid, status="ready")
     assert (status, body["task"]["status"]) == (200, "ready"), body
+    # 최신 Hermes는 legacy 카드도 빈 결과 완료를 거절한다. 실제 완료 근거를 준비한다.
+    with api.connect_closing(board=BOARD) as conn:
+        with api.write_txn(conn):
+            conn.execute("UPDATE tasks SET result = ? WHERE id = ?", ("검증한 작업 결과", tid))
     # ready → done (complete_task)
     status, body = await _patch(client, tid, status="done")
     assert (status, body["task"]["status"]) == (200, "done"), body
