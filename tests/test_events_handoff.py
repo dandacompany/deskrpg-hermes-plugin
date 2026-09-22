@@ -66,6 +66,32 @@ async def test_기증_커서에_a가_없으면_409(aiohttp_client, api):
     assert (await response.json())["error"] == "carrier_cursor_incomplete"
 
 
+@pytest.mark.parametrize("state", [
+    {"k": -1, "d": 0, "c": {}, "a": 0},
+    {"k": 0, "d": -1, "c": {}, "a": 0},
+    {"k": 0, "d": 0, "c": {}, "a": -1},
+    {"k": 0, "d": 0, "c": {"sophie": {"t": None, "o": {"run1": 3}}}, "a": 0},
+    {"k": 0, "d": 0, "c": {"sophie": {"t": None, "o": {"run1": ""}}}, "a": 0},
+    {"k": 0, "d": 0, "c": {"": {"t": None, "o": {}}}, "a": 0},
+])
+async def test_인계에서만_잘못된_해독상태를_거절한다(aiohttp_client, api, state):
+    token = events.encode_cursor(state)
+    assert events.decode_cursor(token) == state  # legacy GET decoder remains permissive
+    client = await client_for(aiohttp_client, api)
+    response = await client.post("/deskrpg/events/handoff", json=payload(carrier_cursor=token))
+    assert response.status == 400
+    assert (await response.json())["error"] == "invalid_handoff_cursor"
+
+
+async def test_대상_커서도_음수_위치를_거절한다(aiohttp_client, api):
+    client = await client_for(aiohttp_client, api)
+    source = events.encode_cursor({"k": 0, "d": 0, "c": {}, "a": 0})
+    target = events.encode_cursor({"k": -1, "d": 0, "c": {}})
+    response = await client.post("/deskrpg/events/handoff", json=payload(target, source))
+    assert response.status == 400
+    assert (await response.json())["error"] == "invalid_handoff_cursor"
+
+
 async def test_보드와_입력_인증을_검사한다(aiohttp_client, api):
     source = events.encode_cursor({"k": 1, "d": 2, "c": {}, "a": 3})
     client = await client_for(aiohttp_client, api)

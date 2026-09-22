@@ -152,6 +152,29 @@ def _is_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _valid_handoff_state(state: dict) -> bool:
+    """Handoff is stricter than the legacy GET decoder because it persists copied positions.
+
+    Keep status values as nonempty strings: Hermes can introduce a new status without
+    making a cursor produced by this plugin unusable for handoff.
+    """
+    if any(state[key] < 0 for key in ("k", "d")):
+        return False
+    if "a" in state and state["a"] < 0:
+        return False
+    for profile, part in state["c"].items():
+        if not isinstance(profile, str) or not profile:
+            return False
+        if set(part) != {"t", "o"}:
+            return False
+        for execution, status in part["o"].items():
+            if not isinstance(execution, str) or not execution:
+                return False
+            if not isinstance(status, str) or not status:
+                return False
+    return True
+
+
 # ---------------------------------------------------------------------------
 # E3 — 칸반 tail
 # ---------------------------------------------------------------------------
@@ -977,6 +1000,8 @@ def handoff_handler(api):
                 target = decode_cursor(target_token) if target_token is not None else None
             except RequestError as exc:
                 raise RequestError(400, "invalid_handoff_cursor") from exc
+            if not _valid_handoff_state(source) or (target is not None and not _valid_handoff_state(target)):
+                raise RequestError(400, "invalid_handoff_cursor")
             if "a" not in source:
                 raise RequestError(409, "carrier_cursor_incomplete")
             if target is None:
