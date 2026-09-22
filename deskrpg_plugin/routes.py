@@ -122,6 +122,7 @@ ROUTES = [
     ("GET", "/deskrpg/kanban/profiles", "kanban_profiles", Scope.DEFAULT),
     # ---- 0.6.0 사건 (소유자 키, spec §6) ------------------------------------------------
     ("GET", "/deskrpg/events", "events", Scope.DEFAULT),
+    ("POST", "/deskrpg/events/handoff", "events_handoff", Scope.DEFAULT),
     # ---- 0.6.0 크론 (프로필 키, spec §7) ------------------------------------------------
     # 프로필 프리픽스 미러는 Hermes 가 자기 라우트에만 만들어 주므로 여기 직접 적는다(C1).
     ("GET", "/p/{profile}/deskrpg/cron/jobs", "cron_list_jobs", Scope.PROFILE),
@@ -226,6 +227,7 @@ _HANDLERS = {
     "kanban_profiles": lambda api: _kanban_ops.profiles_handler(api),
     # 사건
     "events": lambda api: _events.events_handler(api),
+    "events_handoff": lambda api: _events.handoff_handler(api),
     # 크론
     "cron_list_jobs": lambda api: _cron.list_jobs_handler(api),
     "cron_create_job": lambda api: _cron.create_job_handler(api),

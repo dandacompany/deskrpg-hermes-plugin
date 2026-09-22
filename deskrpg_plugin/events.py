@@ -32,7 +32,7 @@ from . import artifacts_store as _artifacts
 from . import cron as _cron
 from . import cron_results
 from . import deleted_log
-from .common import RequestError, board_conn, guarded, log_event, parse_board_slug, run_blocking
+from .common import BOARD_SLUG_RE, RequestError, board_conn, guarded, log_event, parse_board_slug, read_json_object, run_blocking
 
 logger = logging.getLogger("deskrpg_plugin")
 
@@ -945,6 +945,45 @@ def events_handler(api):
                              include_card_proposals=include_card_proposals)
             log_event("events.tail", board=slug, count=len(result["events"]), has_more=result["has_more"])
             return result
+
+        return web.json_response(await run_blocking(work))
+
+    return handler
+
+
+def handoff_handler(api):
+    """Transfer global positions without reading or consuming any events."""
+
+    @guarded
+    async def handler(request):
+        body = await read_json_object(request)
+        if set(body) != {"board", "board_cursor", "carrier_cursor"}:
+            raise RequestError(400, "invalid_body")
+        slug = body["board"]
+        if not isinstance(slug, str) or not BOARD_SLUG_RE.fullmatch(slug):
+            raise RequestError(400, "invalid_board")
+        target_token = body["board_cursor"]
+        source_token = body["carrier_cursor"]
+        if target_token is not None and not isinstance(target_token, str):
+            raise RequestError(400, "invalid_body")
+        if not isinstance(source_token, str):
+            raise RequestError(400, "invalid_body")
+
+        def work():
+            if not api.board_exists(slug):
+                raise RequestError(404, "board_not_found")
+            try:
+                source = decode_cursor(source_token)
+                target = decode_cursor(target_token) if target_token is not None else None
+            except RequestError as exc:
+                raise RequestError(400, "invalid_handoff_cursor") from exc
+            if "a" not in source:
+                raise RequestError(409, "carrier_cursor_incomplete")
+            if target is None:
+                with board_conn(api, slug) as conn:
+                    target = {"k": max_event_id(conn), "d": deleted_log_position(api, slug)}
+            return {"cursor": encode_cursor({"k": target["k"], "d": target["d"],
+                                             "c": source["c"], "a": source["a"]})}
 
         return web.json_response(await run_blocking(work))
 

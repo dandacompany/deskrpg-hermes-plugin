@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from deskrpg_plugin import deleted_log
+from deskrpg_plugin import deleted_log, events
 from deskrpg_plugin import contract_fields as cf
 
 pytestmark = pytest.mark.integration
@@ -39,6 +39,22 @@ async def _events(client, cursor=None, limit=None):
     resp = await client.get(url)
     assert resp.status == 200, await resp.text()
     return await resp.json()
+
+
+async def test_실제_Hermes_보드에서_커서_인계는_보드_위치를_보존한다(client):
+    await _board(client)
+    await _task(client, "인계 전 카드")
+    target = (await _events(client))["cursor"]
+    target_state = events.decode_cursor(target)
+    donor_c = {"sophie": {"t": "2026-09-14T10:00:00+09:00", "o": {"run1": "running"}}}
+    donor = events.encode_cursor({"k": 99, "d": 88, "c": donor_c, "a": 7})
+    resp = await client.post("/deskrpg/events/handoff", json={
+        "board": BOARD, "board_cursor": target, "carrier_cursor": donor,
+    })
+    assert resp.status == 200, await resp.text()
+    assert events.decode_cursor((await resp.json())["cursor"]) == {
+        "k": target_state["k"], "d": target_state["d"], "c": donor_c, "a": 7,
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 # 쓰므로 늘 된다.
 # `kanban_attachment_list` = `GET /deskrpg/kanban/attachments?board=` (보드 전체 첨부, 결과물 갤러리용).
 CAPABILITIES = (
-    "kanban", "cron", "events", "artifacts", "kanban_views", "card_proposals", "worker_plugin",
+    "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin",
     "kanban_attachment_list",
 )
 
@@ -298,6 +298,7 @@ PLUGIN_EVENT_OPTIONAL = frozenset({"board", "task_id", "profile", "job_id", "run
 PLUGIN_EVENT_KEYS = PLUGIN_EVENT_REQUIRED | PLUGIN_EVENT_OPTIONAL
 
 EVENTS_PAGE_KEYS = frozenset({"events", "cursor", "has_more"})
+EVENT_HANDOFF_KEYS = frozenset({"cursor"})
 
 TASK_STATUS_PAYLOAD_KEYS = frozenset({"from", "to", "parent_count", "title", "assignee"})
 CRON_RUN_STARTED_PAYLOAD_KEYS = frozenset({"job_id", "job_name", "profile", "session_id", "started_at"})
