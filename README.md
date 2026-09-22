@@ -15,7 +15,8 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref v0.13.0
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.13.1 | cut -f1)
+hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
 ```
@@ -46,4 +47,6 @@ New cards default to human approval. An explicitly delegated task can be approve
 
 ## Release
 
-0.13.0 adds native per-task human and independent-agent approvals, submission-bound receipts, authenticated human display names, and capability gating. The runtime distribution excludes development instructions and test scaffolding. The source master retains CI tests.
+0.13.1 adds native per-task human and independent-agent approvals, submission-bound receipts, authenticated human display names, and capability gating. The runtime distribution excludes development instructions and test scaffolding. The source master retains CI tests.
+
+0.13.1 corrects installation instructions for Hermes releases that require a full commit SHA in `--ref`. Runtime approval behavior is unchanged from 0.13.0.
