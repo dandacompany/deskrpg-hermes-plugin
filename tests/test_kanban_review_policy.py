@@ -1,5 +1,6 @@
 """혼합 승인 계약: 미지원 코어를 광고하지 않고 승인 주체를 본문에서 받지 않는다."""
 from unittest.mock import Mock
+from urllib.parse import quote
 
 import pytest
 
@@ -111,3 +112,41 @@ async def test_보호_카드_상태와_조건_동시_편집은_부분_쓰기_없
     assert response.status == 400
     fake_api.patch_review_task.assert_not_called()
     assert not kanban.calls.get("complete_task")
+
+
+@pytest.mark.parametrize("name", ["곽지호 + 운영자", "가" * 200])
+async def test_승인_표시이름은_URL_헤더에서_복원한다(fake_api, kanban, aiohttp_client, name):
+    task = _task(kanban)
+    enable(fake_api)
+    client = await _client(aiohttp_client, fake_api)
+    response = await _post(client, task.id, "approve", {"submission_id": "s1", "request_id": "r1"}, headers={"X-DeskRPG-User-Id": "user-1", "X-DeskRPG-User-Name": quote(name, safe="")})
+    assert response.status == 200, await response.text()
+    assert fake_api.approve_task.call_args.kwargs["actor_name"] == name
+
+
+@pytest.mark.parametrize("name", ["가" * 201, "", "%FF"])
+async def test_잘못된_승인_표시이름은_쓰기_전에_거절한다(fake_api, kanban, aiohttp_client, name):
+    task = _task(kanban)
+    enable(fake_api)
+    client = await _client(aiohttp_client, fake_api)
+    response = await _post(client, task.id, "approve", {"submission_id": "s1", "request_id": "r1"}, headers={"X-DeskRPG-User-Id": "user-1", "X-DeskRPG-User-Name": quote(name, safe="%")})
+    assert response.status == 400
+    fake_api.approve_task.assert_not_called()
+
+
+async def test_표시이름_본문_위조는_거절한다(fake_api, kanban, aiohttp_client):
+    task = _task(kanban)
+    enable(fake_api)
+    client = await _client(aiohttp_client, fake_api)
+    response = await _post(client, task.id, "approve", {"submission_id": "s1", "request_id": "r1", "actor_name": "위조"}, headers={"X-DeskRPG-User-Id": "user-1"})
+    assert response.status == 400
+    fake_api.approve_task.assert_not_called()
+
+
+async def test_사용자_이름_헤더는_소유자_인증을_대체하지_않는다(fake_api, kanban, aiohttp_client):
+    task = _task(kanban)
+    enable(fake_api)
+    client = await _client(aiohttp_client, fake_api, authorized=False)
+    response = await _post(client, task.id, "approve", {"submission_id": "s1", "request_id": "r1"}, headers={"X-DeskRPG-User-Id": "user-1", "X-DeskRPG-User-Name": "Dante"})
+    assert response.status == 401
+    fake_api.approve_task.assert_not_called()

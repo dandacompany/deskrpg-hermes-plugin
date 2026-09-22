@@ -1,5 +1,6 @@
 """패치된 Hermes에서 HTTP→정본 승인 왕복. 구버전은 명시적 기능 부재 계약을 검사한다."""
 import os
+from urllib.parse import quote
 
 import pytest
 
@@ -8,7 +9,7 @@ from tests.integration.test_kanban_real import BOARD, B, _board, _task
 
 pytestmark = pytest.mark.integration
 POLICY = {"version": 1, "mode": "human", "reviewer_profile": None}
-HEADERS = {"X-DeskRPG-User-Id": "channel-member"}
+HEADERS = {"X-DeskRPG-User-Id": "channel-member", "X-DeskRPG-User-Name": quote("곽지호 + 운영자", safe="")}
 
 
 async def test_실제_코어의_사람_승인_수정_무효화_멱등_계약(client, api, profile):
@@ -45,5 +46,6 @@ async def test_실제_코어의_사람_승인_수정_무효화_멱등_계약(cli
         approved = (await response.json())["task"]
         assert approved["status"] == "done"
         assert approved["review"]["approval"]["actor_id"] == "deskrpg:channel-member"
+        assert approved["review"]["approval"]["actor_name"] == "곽지호 + 운영자"
     response = await client.patch(f"/deskrpg/kanban/tasks/{tid}{B}", json={"body":"승인 뒤 변경"})
     assert response.status == 409

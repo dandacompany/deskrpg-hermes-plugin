@@ -16,6 +16,8 @@ specify/decompose 는 보조 LLM 을 부른다. 타임아웃은 Hermes 인자(`t
 `conn` 을 받지 않고 현재 보드를 스스로 열므로 `scoped_current_board(slug)` 로 보드를 고정한다.
 """
 
+from urllib.parse import unquote
+
 from aiohttp import web
 
 from .common import (
@@ -189,7 +191,7 @@ def action_handler(api, name: str):
             else:
                 body = await read_json_object(request) if request.can_read_body else {}
                 user_id = request.headers.get("X-DeskRPG-User-Id", "").strip()
-                payload, extra = await run_blocking(_run_simple_action, api, slug, task_id, name, body, actor, user_id)
+                payload, extra = await run_blocking(_run_simple_action, api, slug, task_id, name, body, actor, user_id, request.headers.get("X-DeskRPG-User-Name"))
         except RequestError as exc:
             # 상태 코드만 남기고 `guarded` 에 넘긴다 — 응답 변환은 한 곳에서.
             log_event(f"kanban.{name}", board=slug_or_none(request), task_id=task_id, status=str(exc.status))
@@ -200,7 +202,7 @@ def action_handler(api, name: str):
     return handler
 
 
-def _run_simple_action(api, slug, task_id, name, body, actor, user_id=""):
+def _run_simple_action(api, slug, task_id, name, body, actor, user_id="", encoded_user_name=None):
     with open_board(api, slug) as conn:
         require_task(api, conn, task_id)
         try:
@@ -210,9 +212,18 @@ def _run_simple_action(api, slug, task_id, name, body, actor, user_id=""):
                     raise RequestError(400, "invalid_field", "Only submission_id and request_id are accepted")
                 if not user_id or len(user_id) > 200:
                     raise RequestError(400, "approval_actor_required", "Authenticated DeskRPG user header is required")
+                metadata = {}
+                if encoded_user_name is not None:
+                    try:
+                        actor_name = unquote(encoded_user_name, errors="strict")
+                    except UnicodeDecodeError:
+                        raise RequestError(400, "invalid_actor_name", "User name must be URL-encoded UTF-8") from None
+                    if not actor_name.strip() or len(actor_name) > 200:
+                        raise RequestError(400, "invalid_actor_name", "User name must contain 1 to 200 characters")
+                    metadata["actor_name"] = actor_name.strip()
                 api.approve_task(conn, task_id, actor_id=f"deskrpg:{user_id}",
                                  submission_id=require_str(body, "submission_id"),
-                                 request_id=require_str(body, "request_id"))
+                                 request_id=require_str(body, "request_id"), **metadata)
                 extra = {}
             else:
                 extra = _SIMPLE[name](api, conn, task_id, body, actor)
