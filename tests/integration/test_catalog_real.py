@@ -1,9 +1,4 @@
-"""실제 `hermes_cli.auth` 위의 카탈로그 인증 판정 — Hermes 는 NPC(프로필)마다 로그인한다.
-
-default 홈에만 Codex 로그인이 있을 때 프로필 카탈로그가 "인증됨" 을 주면, 화면은 고를 수 있게 하고
-실제 대화는 "No Codex credentials stored" 로 실패한다(2026-09-17 Hostinger VPS 실측). 판정은 실제
-대화가 자격증명을 찾는 곳, 즉 **요청한 프로필의 auth.json** 과 같아야 한다.
-"""
+"""Catalog authentication follows the pinned Hermes profile runtime inheritance policy."""
 
 import base64
 import json

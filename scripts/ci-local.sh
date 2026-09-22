@@ -31,9 +31,12 @@ fi
 
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
+# Git hooks export repository-local paths; child Hermes git operations must not inherit them.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
 VENV="$ROOT/.ci-venv"
 HERMES_SRC="$ROOT/.ci-hermes"
 REF="$(tr -d '[:space:]' < "$ROOT/.hermes-ref")"
+REPO="$(tr -d '[:space:]' < "$ROOT/.hermes-repo")"
 FULL=0
 [ "${1:-}" = "--full" ] && FULL=1
 
@@ -56,8 +59,9 @@ fi
 say "Hermes 소스 ($REF)"
 if [ ! -d "$HERMES_SRC/.git" ]; then
   git clone --filter=blob:none --no-checkout \
-    https://github.com/NousResearch/hermes-agent.git "$HERMES_SRC"
+    "$REPO" "$HERMES_SRC"
 fi
+git -C "$HERMES_SRC" remote set-url origin "$REPO"
 git -C "$HERMES_SRC" fetch --depth 1 origin "$REF"
 git -C "$HERMES_SRC" checkout --quiet "$REF"
 
@@ -79,10 +83,10 @@ print("tests ok:", paths)
 GUARD
 
 say "통합 스위트 (CI 의 integration 잡)"
-HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m integration tests/integration
+HERMES_REVIEW_POLICY_REQUIRED=1 HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m integration tests/integration
 
 say "실제 Hermes 환경에서 단위 스위트 재실행"
 # 가짜만으로는 통과하는 테스트를 여기서 잡는다.
-HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q
+HERMES_REVIEW_POLICY_REQUIRED=1 HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q
 
 printf '\n\033[1mCI 와 동일한 검사를 전부 통과했다.\033[0m\n'
