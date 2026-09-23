@@ -91,7 +91,7 @@ async def test_force_는_주의_판정에서만_붙는다(aiohttp_client, fake_a
 
 async def test_잘못된_identifier_는_400(aiohttp_client, fake_api, monkeypatch):
     client, _ = await _client(aiohttp_client, fake_api, monkeypatch)
-    for bad in ("", "a b", "x\n--force", "a" * 600):
+    for bad in ("", "a b", "x\n--force", "a" * 600, "--force", "-x", "--category=../x"):
         resp = await client.post("/p/sophie/deskrpg/skills/hub/installs", json={"identifier": bad})
         assert resp.status == 400, bad
 
@@ -156,3 +156,12 @@ async def test_hermes_가_0_으로_끝나도_설치되지_않았으면_실패다
     await skill_jobs.TABLE.wait(job)
     got = await (await client.get(f"/p/sophie/deskrpg/skills/hub/installs/{job}")).json()
     assert got["state"] == "failed" and "Not installed" in got["outputTail"]
+
+
+async def test_플래그처럼_보이는_이름은_하위_프로세스로_가지_않는다(aiohttp_client, fake_api, monkeypatch):
+    client, calls = await _client(aiohttp_client, fake_api, monkeypatch)
+    fake_api.skills.seed("sophie", "--force", source="hub")
+    for path, body in (("uninstall", {"name": "--force"}), ("update", {"name": "--force"})):
+        resp = await client.post(f"/p/sophie/deskrpg/skills/hub/{path}", json=body)
+        assert resp.status == 400 and (await resp.json())["error"] == "invalid_name"
+    assert calls == []

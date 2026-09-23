@@ -21,12 +21,19 @@ from .cron import resolve_profile_home
 from .picker import _home_scope
 from .skills_common import locate
 
-_IDENT_RE = re.compile(r"^[^\s\x00-\x1f\x7f]{1,512}$")
+# 첫 글자 `-` 금지 — 하위 프로세스 argv 의 위치 인자라 `--force`·`--category=…` 같은 플래그로 읽히면 안 된다.
+_IDENT_RE = re.compile(r"^[^\s\x00-\x1f\x7f-][^\s\x00-\x1f\x7f]{0,511}$")
 
 
 def _ident(value) -> str:
     if not isinstance(value, str) or not _IDENT_RE.fullmatch(value):
         raise RequestError(400, "invalid_identifier", "identifier")
+    return value
+
+
+def _skill_name(value) -> str:
+    if not isinstance(value, str) or not _IDENT_RE.fullmatch(value):
+        raise RequestError(400, "invalid_name", "name")
     return value
 
 
@@ -154,7 +161,7 @@ def uninstall_handler(api):
     async def handler(request):
         profile = request.match_info["profile"]
         home = resolve_profile_home(api, profile)
-        name = require_str(await read_json_object(request), "name")
+        name = _skill_name(require_str(await read_json_object(request), "name"))
         await run_blocking(_require_hub, api, home, name)
         job = skill_jobs.TABLE.start(api, api.normalize_profile_name(profile), "hub_update",
                                      ["skills", "uninstall", name, "--yes"],
@@ -170,7 +177,7 @@ def update_handler(api):
         home = resolve_profile_home(api, profile)
         name = require_str(await read_json_object(request), "name", required=False, default=None)
         if name is not None:
-            await run_blocking(_require_hub, api, home, name)
+            await run_blocking(_require_hub, api, home, _skill_name(name))
         argv = ["skills", "update"] + ([name] if name else [])
         job = skill_jobs.TABLE.start(api, api.normalize_profile_name(profile), "hub_update", argv)
         return web.json_response({"jobId": job}, status=202)
