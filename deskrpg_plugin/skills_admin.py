@@ -9,6 +9,9 @@
 
 from __future__ import annotations
 
+import datetime as _dt
+import re
+import shutil
 from pathlib import Path
 
 from aiohttp import web
@@ -17,6 +20,7 @@ from . import config as _config
 from .common import (
     RequestError,
     guarded,
+    log_event,
     read_json_object,
     require_bool,
     require_str,
@@ -28,6 +32,7 @@ from .picker import _disabled, _home_scope, _load_config
 from .skills_common import (
     MAX_EDIT_BYTES,
     SkillRef,
+    actor_of,
     classify,
     is_editable,
     require_skill,
@@ -249,5 +254,138 @@ def bulk_enabled_handler(api):
         if set(enable) & set(disable):
             raise RequestError(400, "invalid_field", "enable/disable overlap")
         return web.json_response(await run_blocking(_set_disabled, api, home, enable, disable))
+
+    return handler
+
+
+# ---- 생애주기 — 고정·보관·보관함·복원·영구 삭제 ---------------------------------------------
+
+# 보관함 안의 폴더 이름. 경로 구분자·`..` 로 시작하는 이름을 막는다(복원·영구 삭제 공용).
+_ARCHIVE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+
+def _require_local(ref: SkillRef) -> None:
+    if ref.source != "local":
+        raise RequestError(400, "skill_not_local", ref.source)
+
+
+def _require_archive_name(name: str) -> None:
+    if not _ARCHIVE_NAME_RE.fullmatch(name):
+        raise RequestError(400, "invalid_name", name)
+
+
+def _pin(api, home, name, pinned):
+    with _home_scope(api, home):
+        _require_local(require_skill(api, name))
+        if not api.set_pinned(name, pinned):
+            raise RequestError(400, "lifecycle_rejected", "pin did not land")
+        return {"name": name, "pinned": pinned}
+
+
+def _archive(api, home, name, actor):
+    with _home_scope(api, home):
+        _require_local(require_skill(api, name))
+        with user_write(api):
+            ok, message = api.archive_skill(name)
+        if not ok:
+            raise RequestError(400, "lifecycle_rejected", str(message)[:500])
+    # Hermes `archive_skill` 이 자체 ledger 를 남기므로 evidence 로 넘길 자리가 없다 — 누가 했는지는 로그로만.
+    log_event("skill_archive", skill_id=name, actor_id=actor)
+    return {"name": name}
+
+
+def _archived(api, home):
+    with _home_scope(api, home):
+        root = Path(api._archive_dir())
+        out = []
+        for name in api.list_archived_skill_names():
+            p = root / name
+            ts = p.stat().st_mtime if p.exists() else None
+            out.append({"name": name,
+                        "archivedAt": _dt.datetime.fromtimestamp(ts, _dt.timezone.utc).isoformat() if ts else None})
+        return {"archived": out}
+
+
+def _restore(api, home, name):
+    _require_archive_name(name)
+    with _home_scope(api, home):
+        with user_write(api):
+            ok, message = api.restore_skill(name)
+        if not ok:
+            if "not found" in str(message):
+                raise RequestError(404, "archived_not_found", name)
+            raise RequestError(400, "lifecycle_rejected", str(message)[:500])
+        return {"name": name}
+
+
+def _purge(api, home, name, actor):
+    """보관된 스킬 하나를 지운다 — Hermes `curator purge`(TTL 일괄)와 같은 부품: capture_before → rmtree → append_entry."""
+    _require_archive_name(name)
+    with _home_scope(api, home):
+        root = Path(api._archive_dir()).resolve()
+        target = root / name
+        if not target.is_dir() or target.is_symlink() or target.resolve().parent != root:
+            raise RequestError(404, "archived_not_found", name)
+        before = api.capture_before(target, complete_package=True, skill=name)
+        shutil.rmtree(target)
+        entry = api.append_entry("purge", name, before=before or [], after=[], actor="user",
+                                 evidence={"reason": "deskrpg_single_purge", "deskrpgUserId": actor})
+        return {"name": name, "ledgerId": entry}
+
+
+def pinned_handler(api):
+    """`PUT /p/{profile}/deskrpg/skills/{name}/pinned`"""
+
+    @guarded
+    async def handler(request):
+        home = resolve_profile_home(api, request.match_info["profile"])
+        pinned = require_bool(await read_json_object(request), "pinned")
+        return web.json_response(await run_blocking(_pin, api, home, request.match_info["name"], pinned))
+
+    return handler
+
+
+def archive_handler(api):
+    """`POST /p/{profile}/deskrpg/skills/{name}/archive`"""
+
+    @guarded
+    async def handler(request):
+        home = resolve_profile_home(api, request.match_info["profile"])
+        return web.json_response(
+            await run_blocking(_archive, api, home, request.match_info["name"], actor_of(request)))
+
+    return handler
+
+
+def archive_list_handler(api):
+    """`GET /p/{profile}/deskrpg/skills/archive`"""
+
+    @guarded
+    async def handler(request):
+        home = resolve_profile_home(api, request.match_info["profile"])
+        return web.json_response(await run_blocking(_archived, api, home))
+
+    return handler
+
+
+def restore_handler(api):
+    """`POST /p/{profile}/deskrpg/skills/archive/{name}/restore`"""
+
+    @guarded
+    async def handler(request):
+        home = resolve_profile_home(api, request.match_info["profile"])
+        return web.json_response(await run_blocking(_restore, api, home, request.match_info["name"]))
+
+    return handler
+
+
+def purge_handler(api):
+    """`DELETE /p/{profile}/deskrpg/skills/archive/{name}`"""
+
+    @guarded
+    async def handler(request):
+        home = resolve_profile_home(api, request.match_info["profile"])
+        return web.json_response(
+            await run_blocking(_purge, api, home, request.match_info["name"], actor_of(request)))
 
     return handler

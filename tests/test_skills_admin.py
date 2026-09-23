@@ -238,3 +238,68 @@ async def test_일괄_켜기_끄기와_필수_스킬_거절(aiohttp_client, fake
     assert (await bad.json())["error"] == "essential_skill"
     cfg = yaml.safe_load((fake_api.get_profile_dir("sophie") / "config.yaml").read_text(encoding="utf-8"))
     assert sorted(cfg["skills"]["disabled"]) == ["b", "c"]  # 전체 거절 — 일부만 반영하지 않는다
+
+
+async def test_고정은_로컬만_된다(aiohttp_client, fake_api):
+    _profile(fake_api)
+    fake_api.skills.seed("sophie", "weekly")
+    fake_api.skills.seed("sophie", "pdf-tools", source="hub")
+    client = await _client(aiohttp_client, fake_api)
+    ok = await _put(client, "/p/sophie/deskrpg/skills/weekly/pinned", {"pinned": True})
+    assert ok.status == 200
+    bad = await _put(client, "/p/sophie/deskrpg/skills/pdf-tools/pinned", {"pinned": True})
+    assert bad.status == 400 and (await bad.json())["error"] == "skill_not_local"
+
+
+async def test_보관_보관함_복원(aiohttp_client, fake_api):
+    _profile(fake_api)
+    fake_api.skills.seed("sophie", "weekly")
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.post("/p/sophie/deskrpg/skills/weekly/archive", headers={"X-DeskRPG-Actor": "u-1"})).status == 200
+    listed = await (await client.get("/p/sophie/deskrpg/skills/archive")).json()
+    assert [a["name"] for a in listed["archived"]] == ["weekly"]
+    assert listed["archived"][0]["archivedAt"]
+    assert (await client.post("/p/sophie/deskrpg/skills/archive/weekly/restore")).status == 200
+    assert (await (await client.get("/p/sophie/deskrpg/skills/archive")).json())["archived"] == []
+
+
+async def test_hub_스킬_보관은_hermes_사유로_거절(aiohttp_client, fake_api):
+    _profile(fake_api)
+    fake_api.skills.seed("sophie", "pdf-tools", source="hub")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post("/p/sophie/deskrpg/skills/pdf-tools/archive")
+    assert resp.status == 400
+    assert (await resp.json())["error"] == "skill_not_local"
+
+
+async def test_영구_삭제는_보관된_것만_ledger_를_남기고_지운다(aiohttp_client, fake_api):
+    _profile(fake_api)
+    fake_api.skills.seed("sophie", "weekly")
+    client = await _client(aiohttp_client, fake_api)
+    not_archived = await client.delete("/p/sophie/deskrpg/skills/archive/weekly")
+    assert not_archived.status == 404
+    await client.post("/p/sophie/deskrpg/skills/weekly/archive")
+    resp = await client.delete("/p/sophie/deskrpg/skills/archive/weekly", headers={"X-DeskRPG-Actor": "u-7"})
+    assert resp.status == 200
+    entry = fake_api.skills.ledger[-1]
+    assert entry["action"] == "purge" and entry["actor"] == "user"
+    assert entry["evidence"] == {"reason": "deskrpg_single_purge", "deskrpgUserId": "u-7"}
+    assert not (fake_api.get_profile_dir("sophie") / "skills" / ".archive" / "weekly").exists()
+
+
+async def test_영구_삭제_이름에_경로를_넣을_수_없다(aiohttp_client, fake_api):
+    _profile(fake_api)
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.delete("/p/sophie/deskrpg/skills/archive/..%2F..%2Fconfig.yaml")
+    assert resp.status in (400, 404)
+    assert (fake_api.get_profile_dir("sophie") / "config.yaml").exists()
+
+
+async def test_복원_이름에도_경로를_넣을_수_없다(aiohttp_client, fake_api):
+    _profile(fake_api)
+    called = []
+    fake_api.restore_skill = lambda name: called.append(name) or (True, "")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.post("/p/sophie/deskrpg/skills/archive/..%2F..%2Fx/restore")
+    assert resp.status in (400, 404)
+    assert called == []
