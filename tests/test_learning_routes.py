@@ -95,6 +95,7 @@ async def test_스킬_노드_삭제는_로컬_보관이고_hub_는_거절(aiohtt
     h = sha256_text((base / "SKILL.md").read_text(encoding="utf-8"))
     ok = await client.delete("/p/sophie/deskrpg/learning/node", json={"id": "weekly", "baseHash": h})
     assert (await ok.json())["result"] == "archived"
+    assert not base.exists()
     hub_md = (fake_api.get_profile_dir("sophie") / "skills" / "pdf-tools" / "SKILL.md").read_text(encoding="utf-8")
     bad = await client.delete("/p/sophie/deskrpg/learning/node",
                               json={"id": "pdf-tools", "baseHash": sha256_text(hub_md)})
@@ -166,3 +167,17 @@ async def test_없는_노드는_404(aiohttp_client, fake_api, monkeypatch):
     for node_id in ("nope", "memory:memory:5"):
         resp = await client.get(f"/p/sophie/deskrpg/learning/node?id={node_id}")
         assert resp.status == 404 and (await resp.json())["error"] == "node_not_found", node_id
+
+
+async def test_고정된_스킬_노드는_보관하지_않고_고정_해제_뒤에는_보관된다(aiohttp_client, fake_api, monkeypatch):
+    client = await _client(aiohttp_client, fake_api, monkeypatch)
+    base = fake_api.skills.seed("sophie", "weekly")
+    h = sha256_text((base / "SKILL.md").read_text(encoding="utf-8"))
+    fake_api.skills.usage[_home(fake_api)] = {"weekly": {"pinned": True}}
+    resp = await client.delete("/p/sophie/deskrpg/learning/node", json={"id": "weekly", "baseHash": h})
+    assert resp.status == 409 and await resp.json() == {"error": "skill_pinned", "detail": "weekly"}
+    assert (base / "SKILL.md").exists()
+    fake_api.skills.usage[_home(fake_api)]["weekly"]["pinned"] = False
+    ok = await client.delete("/p/sophie/deskrpg/learning/node", json={"id": "weekly", "baseHash": h})
+    assert (await ok.json())["result"] == "archived"
+    assert not base.exists()

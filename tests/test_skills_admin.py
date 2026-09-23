@@ -303,3 +303,17 @@ async def test_복원_이름에도_경로를_넣을_수_없다(aiohttp_client, f
     resp = await client.post("/p/sophie/deskrpg/skills/archive/..%2F..%2Fx/restore")
     assert resp.status in (400, 404)
     assert called == []
+
+
+async def test_고정된_스킬은_보관하지_않고_고정_해제_뒤에는_보관된다(aiohttp_client, fake_api):
+    _profile(fake_api)
+    fake_api.skills.seed("sophie", "weekly")
+    client = await _client(aiohttp_client, fake_api)
+    assert (await _put(client, "/p/sophie/deskrpg/skills/weekly/pinned", {"pinned": True})).status == 200
+    resp = await client.post("/p/sophie/deskrpg/skills/weekly/archive")
+    assert resp.status == 409 and await resp.json() == {"error": "skill_pinned", "detail": "weekly"}
+    archived = lambda: client.get("/p/sophie/deskrpg/skills/archive")  # noqa: E731
+    assert (await (await archived()).json())["archived"] == []
+    assert (await _put(client, "/p/sophie/deskrpg/skills/weekly/pinned", {"pinned": False})).status == 200
+    assert (await client.post("/p/sophie/deskrpg/skills/weekly/archive")).status == 200
+    assert [a["name"] for a in (await (await archived()).json())["archived"]] == ["weekly"]

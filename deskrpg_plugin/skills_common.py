@@ -58,6 +58,12 @@ def require_skill(api, name: str) -> SkillRef:
     return ref
 
 
+def require_unpinned(api, name: str) -> None:
+    """고정된 스킬은 보관하지 않는다 — Hermes 에서 pin 은 사용자 삭제도 막는다(`learning_mutations._delete_skill`)."""
+    if (api.load_usage() or {}).get(name, {}).get("pinned"):
+        raise RequestError(409, "skill_pinned", name)
+
+
 def is_editable(ref: SkillRef, rel: str) -> bool:
     if ref.source != "local":
         return False

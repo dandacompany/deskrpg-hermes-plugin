@@ -36,6 +36,7 @@ from .skills_common import (
     classify,
     is_editable,
     require_skill,
+    require_unpinned,
     resolve_editable_path,
     sha256_text,
     user_write,
@@ -285,6 +286,7 @@ def _pin(api, home, name, pinned):
 def _archive(api, home, name, actor):
     with _home_scope(api, home):
         _require_local(require_skill(api, name))
+        require_unpinned(api, name)
         with user_write(api):
             ok, message = api.archive_skill(name)
         if not ok:

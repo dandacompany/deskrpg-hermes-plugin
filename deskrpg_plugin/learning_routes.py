@@ -24,7 +24,7 @@ from . import skill_jobs
 from .common import RequestError, guarded, read_json_object, require_bool, require_str, run_blocking
 from .cron import resolve_profile_home
 from .picker import _home_scope
-from .skills_common import actor_of, locate, sha256_text, user_write
+from .skills_common import actor_of, locate, require_unpinned, sha256_text, user_write
 
 _LOG_LOCK = threading.Lock()
 MEMORY_LOG = ("plugin-data", "deskrpg", "memory_deleted.jsonl")
@@ -133,6 +133,7 @@ def _node_delete(api, home, node_id, base_hash, actor):
             raise RequestError(409, "node_changed", node_id)
         if kind == "skill":
             _require_local(ref)
+            require_unpinned(api, node_id)
             with user_write(api):
                 ok, message = api.archive_skill(node_id)
             if not ok:
