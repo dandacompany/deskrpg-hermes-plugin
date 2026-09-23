@@ -76,6 +76,19 @@ def has_tool_provider_symbols(api) -> bool:
     return has_toolset_symbols(api) and _has(api, _TOOL_PROVIDER_SYMBOLS)
 
 
+def has_review_policy(api) -> bool:
+    """버전과 전체 정책 계약이 함께 있어야 보호된 쓰기를 허용한다."""
+    import inspect
+
+    names = ("get_review_state", "approve_task", "update_review_policy", "guard_task_mutation", "patch_review_task")
+    if getattr(api, "API_VERSION", None) != 1 or not all(callable(getattr(api, n, None)) for n in names):
+        return False
+    try:
+        return "review_policy" in inspect.signature(api.create_task).parameters
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
 def has_initial_status(api) -> bool:
     """이 Hermes 빌드의 `create_task` 가 `initial_status` 를 받는가.
 
@@ -121,6 +134,8 @@ def capabilities(api) -> tuple[str, ...]:
     capability 문자열이 가용성을 말하게 한다.
     """
     extra = []
+    if has_review_policy(api):
+        extra.append("kanban_review_policy_v1")
     if getattr(api, "create_swarm", None) is not None:
         extra.append("swarm")
     if has_toolset_symbols(api):
@@ -181,7 +196,7 @@ KANBAN_TASK_REQUIRED = frozenset({"id", "title", "status"})
 KANBAN_TASK_OPTIONAL = frozenset({
     "body", "assignee", "priority", "tenant", "created_at", "latest_summary",
     "comment_count", "link_counts", "progress", "warnings", "started_at",
-    "worker_pid", "last_heartbeat_at",
+    "worker_pid", "last_heartbeat_at", "review",
 })
 KANBAN_TASK_KEYS = KANBAN_TASK_REQUIRED | KANBAN_TASK_OPTIONAL
 
@@ -241,7 +256,7 @@ CREATE_TASK_OPTIONAL = frozenset({
     "body", "assignee", "tenant", "priority", "workspace_kind", "workspace_path", "parents",
     "triage", "idempotency_key", "max_runtime_seconds", "skills", "goal_mode",
     "goal_max_turns", "model_override", "provider_override", "reasoning_effort", "project_id",
-    "initial_status",
+    "initial_status", "review_policy",
 })
 
 # 생성 시점에만 지정할 수 있는 상태. Hermes 의 `VALID_INITIAL_STATUSES` 와 같아야 한다
@@ -251,7 +266,7 @@ INITIAL_STATUSES = ("running", "blocked")
 CREATE_TASK_KEYS = CREATE_TASK_REQUIRED | CREATE_TASK_OPTIONAL
 
 # PATCH — CreateTaskBody 에서 idempotency_key 를 뺀 전부가 선택이고 status 가 더 붙는다.
-UPDATE_TASK_KEYS = (CREATE_TASK_KEYS - {"idempotency_key"}) | frozenset({"status"})
+UPDATE_TASK_KEYS = (CREATE_TASK_KEYS - {"idempotency_key"}) | frozenset({"status", "expected_revision"})
 
 CREATE_BOARD_REQUIRED = frozenset({"slug", "name"})
 CREATE_BOARD_OPTIONAL = frozenset({"default_workdir"})

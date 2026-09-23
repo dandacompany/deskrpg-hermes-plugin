@@ -62,6 +62,16 @@ def hermes_env(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     import hermes_constants
 
+    # Scratch housekeeping inspects host processes; it is outside this HTTP contract
+    # suite and must not reap or wait on processes outside the isolated test home.
+    monkeypatch.setattr(hermes_constants, "_scratch_pruned_once", True)
+    # These databases are newly created in this process. Keep the deleted-WAL
+    # guard active, but do not enumerate unrelated macOS processes/file mounts.
+    import hermes_state_dbfile
+
+    if hasattr(hermes_state_dbfile, "_darwin_all_pids"):
+        monkeypatch.setattr(hermes_state_dbfile, "_darwin_all_pids", lambda _lib: [os.getpid()])
+
     resolved = Path(hermes_constants.get_hermes_home()).resolve()
     assert resolved == home.resolve(), f"Hermes 홈이 임시 폴더가 아니다: {resolved}"
     real_home = Path.home() / ".hermes"

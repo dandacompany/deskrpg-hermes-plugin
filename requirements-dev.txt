@@ -3,3 +3,6 @@ pytest-asyncio>=0.23
 pytest-aiohttp>=1.0
 PyYAML>=6
 aiohttp>=3.9
+
+# The pinned Hermes auth catalog probes Bedrock; avoid lazy pip installs during tests.
+boto3==1.42.89

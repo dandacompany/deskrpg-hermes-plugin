@@ -159,6 +159,9 @@ def task_payload(api, conn, task_id: str) -> dict:
     d = task_dict(task, latest_summary=api.latest_summary(conn, task_id))
     link_counts, comment_counts, progress = rollups(conn)
     diagnostics = compute_diagnostics(api, conn, task_ids=[task_id]).get(task_id)
+    from .contract_fields import has_review_policy
+
+    d["review"] = api.get_review_state(conn, task_id) if has_review_policy(api) else None
     decorate(d, task_id, link_counts, comment_counts, progress, diagnostics)
     return project(d, KANBAN_TASK_FULL_KEYS)
 

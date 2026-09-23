@@ -23,6 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       HERMES_INTEGRATION_REQUIRED: "1"
+      HERMES_REVIEW_POLICY_REQUIRED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -40,7 +41,7 @@ jobs:
           HERMES_REF="$(tr -d '[:space:]' < .hermes-ref)"
           echo "Hermes ref: $HERMES_REF"
           git clone --filter=blob:none --no-checkout \
-            https://github.com/NousResearch/hermes-agent.git hermes-src
+            "$(tr -d '[:space:]' < .hermes-repo)" hermes-src
           git -C hermes-src fetch --depth 1 origin "$HERMES_REF"
           git -C hermes-src checkout "$HERMES_REF"
           pip install -e hermes-src

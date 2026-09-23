@@ -12,3 +12,8 @@ docs/
 # ci-local.sh 작업 산출물
 .ci-venv/
 .ci-hermes/
+
+# Local provider instructions are not public runtime files.
+AGENTS.md
+CLAUDE.md
+GEMINI.md
