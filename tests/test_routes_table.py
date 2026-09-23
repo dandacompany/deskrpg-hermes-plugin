@@ -32,6 +32,15 @@ EXPECTED_ROUTES = {
     ("GET", "/p/{profile}/deskrpg/skills/hub/installs/{job_id}", _PROFILE),
     ("POST", "/p/{profile}/deskrpg/skills/hub/uninstall", _PROFILE),
     ("POST", "/p/{profile}/deskrpg/skills/hub/update", _PROFILE),
+    # 0.15.0 — curator 상태·일시정지·실행·실행 작업 조회, 학습 관계도·노드 조회·편집·삭제.
+    ("GET", "/p/{profile}/deskrpg/curator", _PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/curator/paused", _PROFILE),
+    ("POST", "/p/{profile}/deskrpg/curator/runs", _PROFILE),
+    ("GET", "/p/{profile}/deskrpg/curator/runs/{job_id}", _PROFILE),
+    ("GET", "/p/{profile}/deskrpg/learning/graph", _PROFILE),
+    ("GET", "/p/{profile}/deskrpg/learning/node", _PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/learning/node", _PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/learning/node", _PROFILE),
     ("GET", "/p/{profile}/deskrpg/skills", _PROFILE),
     # 0.15.0 NPC 스킬 관리 — 스킬 CRUD
     ("GET", "/p/{profile}/deskrpg/skills/{name}", _PROFILE),
@@ -122,8 +131,8 @@ EXPECTED_ROUTES = {
 
 
 def test_라우트_테이블이_스펙의_예순여덟_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 86
-    assert len(routes.ROUTES) == 86, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+    assert len(EXPECTED_ROUTES) == 94
+    assert len(routes.ROUTES) == 94, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
@@ -133,9 +142,9 @@ def test_소유자_라우트는_41_개_프로필_라우트는_27_개다():
         by_scope[scope] = by_scope.get(scope, 0) + 1
     # 소유자: 기존 4 + 워커 플러그인 1 + 칸반 21 + 보드 첨부 목록 1 + 뷰 묶음 조회 2 + 스웜 2 + 사건 1 + 아티팩트 6 + 카드 제안 3 = 41 ·
     # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 + 0.10.0 도구 프로바이더 2
-    #   + 0.15.0 스킬 CRUD 11 + 스킬 Hub 6 = 44.
+    #   + 0.15.0 스킬 CRUD 11 + 스킬 Hub 6 + curator·관계도 8 = 52.
     assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 21 + 1 + 2 + 2 + 2 + 6 + 3,
-                        routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11 + 6}
+                        routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11 + 6 + 8}
 
 
 def test_OAuth_취소_행이_연결_끊기_행보다_앞에_있다():
@@ -264,3 +273,15 @@ def test_get_skills_라우트는_capability_와_같은_심볼_집합을_본다(f
     paths = [p for _m, p, _h, _s in routes.routes_for(fake_api)]
     assert "/p/{profile}/deskrpg/skills" not in paths
     assert "profile_skills" not in capabilities(fake_api)
+
+
+def test_hub_curator_관계도_라우트는_profile_skill_admin_과_같은_심볼_집합을_본다(fake_api):
+    from deskrpg_plugin.contract_fields import capabilities
+
+    names = ("/skills/hub/", "/curator", "/learning/")
+    all_paths = [p for _m, p, _h, _s in routes.routes_for(fake_api)]
+    assert sum(any(n in p for n in names) for p in all_paths) == 14
+    fake_api.build_learning_graph = None
+    paths = [p for _m, p, _h, _s in routes.routes_for(fake_api)]
+    assert not [p for p in paths if any(n in p for n in names)]
+    assert "profile_skill_admin" not in capabilities(fake_api)

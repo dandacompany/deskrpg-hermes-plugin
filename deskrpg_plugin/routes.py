@@ -32,6 +32,7 @@ from . import events as _events
 from . import artifacts_routes as _artifacts_routes
 from . import card_proposal_routes as _card_proposal_routes
 from . import skills_hub_routes as _skills_hub
+from . import learning_routes as _learning
 from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
@@ -82,6 +83,15 @@ ROUTES = [
     ("GET", "/p/{profile}/deskrpg/skills/hub/installs/{job_id}", "skill_hub_job", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/skills/hub/uninstall", "skill_hub_uninstall", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/skills/hub/update", "skill_hub_update", Scope.PROFILE),
+    # 0.15.0 — curator 상태·제어와 학습 관계도.
+    ("GET", "/p/{profile}/deskrpg/curator", "curator_status", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/curator/paused", "curator_paused", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/curator/runs", "curator_run", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/curator/runs/{job_id}", "curator_job", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/learning/graph", "learning_graph", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/learning/node", "learning_node_get", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/learning/node", "learning_node_put", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/learning/node", "learning_node_delete", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/skills", "get_skills", Scope.PROFILE),
     # ---- 0.15.0 NPC 스킬 관리 (프로필 키) — 고정 세그먼트 행이 {name} 행보다 위 ----
     ("POST", "/p/{profile}/deskrpg/skills", "skill_create", Scope.PROFILE),
@@ -291,6 +301,15 @@ _HANDLERS = {
     "skill_hub_job": lambda api: _skills_hub.job_handler(api),
     "skill_hub_uninstall": lambda api: _skills_hub.uninstall_handler(api),
     "skill_hub_update": lambda api: _skills_hub.update_handler(api),
+    # curator·학습 관계도 (0.15.0)
+    "curator_status": lambda api: _learning.curator_handler(api),
+    "curator_paused": lambda api: _learning.curator_paused_handler(api),
+    "curator_run": lambda api: _learning.curator_run_handler(api),
+    "curator_job": lambda api: _learning.curator_job_handler(api),
+    "learning_graph": lambda api: _learning.graph_handler(api),
+    "learning_node_get": lambda api: _learning.node_get_handler(api),
+    "learning_node_put": lambda api: _learning.node_put_handler(api),
+    "learning_node_delete": lambda api: _learning.node_delete_handler(api),
 }
 
 
@@ -500,6 +519,14 @@ _OPTIONAL_ROUTES = {
     "skill_hub_job": _contract_fields.has_skill_admin_symbols,
     "skill_hub_uninstall": _contract_fields.has_skill_admin_symbols,
     "skill_hub_update": _contract_fields.has_skill_admin_symbols,
+    "curator_status": _contract_fields.has_skill_admin_symbols,
+    "curator_paused": _contract_fields.has_skill_admin_symbols,
+    "curator_run": _contract_fields.has_skill_admin_symbols,
+    "curator_job": _contract_fields.has_skill_admin_symbols,
+    "learning_graph": _contract_fields.has_skill_admin_symbols,
+    "learning_node_get": _contract_fields.has_skill_admin_symbols,
+    "learning_node_put": _contract_fields.has_skill_admin_symbols,
+    "learning_node_delete": _contract_fields.has_skill_admin_symbols,
 }
 
 
