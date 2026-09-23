@@ -372,3 +372,16 @@ async def test_꺼도_이미_걸린_링크와_활성화_항목은_지우지_않�
     assert _link(fake_api, "sophie").is_symlink()
     assert _config(fake_api, "sophie")["plugins"]["enabled"] == ["deskrpg"]
     assert body["worker_plugin"] == {"missing": [], "propagation": "disabled"}
+
+
+async def test_켜짐_판정은_호출마다_다시_읽는다(aiohttp_client, fake_api):
+    # DeskRPG 는 게이트웨이를 재시작하지 않고 호스트에서 플래그를 쓴 뒤 곧바로 적용을 부른다 — 캐시하면 409 가 남는다.
+    _profile(fake_api, "sophie")
+    client = await _client(aiohttp_client, fake_api)
+    assert (await client.post("/deskrpg/worker-plugin", json={"profiles": ["sophie"]})).status == 409
+
+    _root_config(fake_api, {"plugins": {"entries": {"deskrpg": {"worker_propagation": True}}}})
+
+    resp = await client.post("/deskrpg/worker-plugin", json={"profiles": ["sophie"]})
+    assert resp.status == 200
+    assert (await (await client.get("/deskrpg/info")).json())["worker_plugin"]["propagation"] == "enabled"
