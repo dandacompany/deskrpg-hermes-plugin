@@ -157,6 +157,39 @@ def _load(path):
     return data
 
 
+def _save(path, data: dict) -> None:
+    """백업을 남기고 원자적으로 저장한다. `put_handler` 와 `write_skills_disabled` 가 같이 쓴다."""
+    if path.is_file():
+        # 같은 초에 두 번 써도 백업이 서로 덮어쓰지 않도록 마이크로초까지
+        # 찍는다(identity.py 와 동일한 방식) — 백업의 존재 이유가 옛 내용
+        # 보존인데 충돌로 지워지면 목적이 무색해진다.
+        backup = path.with_name(
+            f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+            f"-{time.time_ns() % 1_000_000:06d}"
+        )
+        # 원자적으로, 0600 으로 쓴다 — 백업은 원본의 **완전한 사본**이라
+        # config.yaml 에 인라인 키가 있으면 그 키가 그대로 들어간다.
+        # `write_text` 로 쓰면 umask(보통 022)를 타 0644 가 되고, 원본이
+        # 0600 이어도 사본만 세상에 열린다. 백업은 저장할 때마다 쌓인다.
+        envfile.write_text_atomic(backup, path.read_text(encoding="utf-8"))
+    # `write_text` 는 자리에서 잘라 쓴다 — 쓰는 도중 끊기면(디스크 가득·강제
+    # 종료) 반쯤 쓴 YAML 이 남아 그 프로필이 뜨지 않는다. 임시 파일에 다 쓰고
+    # `os.replace` 로 갈아 끼우면 실패해도 원본이 손대지 않은 채 남는다.
+    envfile.write_text_atomic(
+        path, yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
+    )
+
+
+def write_skills_disabled(home, names: list[str]) -> None:
+    """`skills.disabled` 만 바꿔 저장한다. 다른 키는 그대로. 읽기 실패는 `ConfigUnreadable` 로 올린다."""
+    path = home / CONFIG_FILENAME
+    data = _load(path)
+    block = dict(data.get("skills") or {})
+    block["disabled"] = sorted(set(names))
+    data["skills"] = block
+    _save(path, data)
+
+
 def _apply_enabled_toolsets(api, data: dict, enabled: set) -> None:
     """`platform_toolsets.{api_server,cron,cli}` 에 켠 툴셋을 쓴다 — Hermes 의 `hermes tools` 저장과 같게.
 
@@ -348,20 +381,6 @@ def put_handler(api):
             if unknown_names:
                 raise web.HTTPBadRequest(reason=f"unknown skills: {', '.join(unknown_names)}")
 
-        if path.is_file():
-            # 같은 초에 두 번 써도 백업이 서로 덮어쓰지 않도록 마이크로초까지
-            # 찍는다(identity.py 와 동일한 방식) — 백업의 존재 이유가 옛 내용
-            # 보존인데 충돌로 지워지면 목적이 무색해진다.
-            backup = path.with_name(
-                f"{path.name}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
-                f"-{time.time_ns() % 1_000_000:06d}"
-            )
-            # 원자적으로, 0600 으로 쓴다 — 백업은 원본의 **완전한 사본**이라
-            # config.yaml 에 인라인 키가 있으면 그 키가 그대로 들어간다.
-            # `write_text` 로 쓰면 umask(보통 022)를 타 0644 가 되고, 원본이
-            # 0600 이어도 사본만 세상에 열린다. 백업은 저장할 때마다 쌓인다.
-            envfile.write_text_atomic(backup, path.read_text(encoding="utf-8"))
-
         model_block = dict(existing_model or {})
         if payload.get("clearBaseUrl"):
             # Hermes 의 clear_model_endpoint_credentials(clear_base_url=True) 와 같은 결과다.
@@ -390,12 +409,7 @@ def put_handler(api):
             else:
                 data.pop("reasoning_effort", None)
 
-        # `write_text` 는 자리에서 잘라 쓴다 — 쓰는 도중 끊기면(디스크 가득·강제
-        # 종료) 반쯤 쓴 YAML 이 남아 그 프로필이 뜨지 않는다. 임시 파일에 다 쓰고
-        # `os.replace` 로 갈아 끼우면 실패해도 원본이 손대지 않은 채 남는다.
-        envfile.write_text_atomic(
-            path, yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
-        )
+        _save(path, data)
 
         return web.json_response(
             {
