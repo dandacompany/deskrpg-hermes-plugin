@@ -135,3 +135,16 @@ async def test_멀티바이트_경계에서_잘려도_4096바이트를_넘지_�
     await table.wait(job)
     tail = table.get("sophie", job)["outputTail"]
     assert len(tail.encode()) <= 4096 and tail.endswith("가")
+
+
+async def test_종료_코드가_0이어도_확인이_거짓이면_failed(fake_api):
+    spawn, _ = _spawn_recorder([FakeProc(b"Not installed: blocked", 0), FakeProc(b"Installed", 0)])
+    table = JobTable(spawn=spawn)
+    job = table.start(fake_api, "sophie", "hub_install", ["skills", "install", "x", "--yes"], verify=lambda: False)
+    await table.wait(job)
+    got = table.get("sophie", job)
+    assert got["state"] == "failed" and got["exitCode"] == 0
+    assert "Not installed" in got["outputTail"] and "[deskrpg]" in got["outputTail"]
+    ok = table.start(fake_api, "sophie", "hub_install", ["skills", "install", "x", "--yes"], verify=lambda: True)
+    await table.wait(ok)
+    assert table.get("sophie", ok)["state"] == "succeeded"

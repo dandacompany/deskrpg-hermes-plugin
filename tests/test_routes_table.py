@@ -25,6 +25,13 @@ EXPECTED_ROUTES = {
     ("GET", "/p/{profile}/deskrpg/catalog", _PROFILE),
     # 0.9.0 — 직원 설정 피커: 프로필 홈 스코프의 툴셋·스킬 목록.
     ("GET", "/p/{profile}/deskrpg/toolsets", _PROFILE),
+    # 0.15.0 — 스킬 Hub(검색·미리보기·설치·설치 작업 조회·삭제·업데이트).
+    ("GET", "/p/{profile}/deskrpg/skills/hub/search", _PROFILE),
+    ("GET", "/p/{profile}/deskrpg/skills/hub/preview", _PROFILE),
+    ("POST", "/p/{profile}/deskrpg/skills/hub/installs", _PROFILE),
+    ("GET", "/p/{profile}/deskrpg/skills/hub/installs/{job_id}", _PROFILE),
+    ("POST", "/p/{profile}/deskrpg/skills/hub/uninstall", _PROFILE),
+    ("POST", "/p/{profile}/deskrpg/skills/hub/update", _PROFILE),
     ("GET", "/p/{profile}/deskrpg/skills", _PROFILE),
     # 0.15.0 NPC 스킬 관리 — 스킬 CRUD
     ("GET", "/p/{profile}/deskrpg/skills/{name}", _PROFILE),
@@ -115,8 +122,8 @@ EXPECTED_ROUTES = {
 
 
 def test_라우트_테이블이_스펙의_예순여덟_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 80
-    assert len(routes.ROUTES) == 80, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+    assert len(EXPECTED_ROUTES) == 86
+    assert len(routes.ROUTES) == 86, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
@@ -125,8 +132,10 @@ def test_소유자_라우트는_41_개_프로필_라우트는_27_개다():
     for _m, _p, _h, scope in routes.ROUTES:
         by_scope[scope] = by_scope.get(scope, 0) + 1
     # 소유자: 기존 4 + 워커 플러그인 1 + 칸반 21 + 보드 첨부 목록 1 + 뷰 묶음 조회 2 + 스웜 2 + 사건 1 + 아티팩트 6 + 카드 제안 3 = 41 ·
-    # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 + 0.10.0 도구 프로바이더 2 + 0.15.0 스킬 CRUD 11 = 38.
-    assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 21 + 1 + 2 + 2 + 2 + 6 + 3, routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11}
+    # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 + 0.10.0 도구 프로바이더 2
+    #   + 0.15.0 스킬 CRUD 11 + 스킬 Hub 6 = 44.
+    assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 21 + 1 + 2 + 2 + 2 + 6 + 3,
+                        routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11 + 6}
 
 
 def test_OAuth_취소_행이_연결_끊기_행보다_앞에_있다():
@@ -148,6 +157,17 @@ def test_고정_세그먼트_카드_라우트가_action_와일드카드보다_�
         "/deskrpg/kanban/tasks/{id}/log",
     ):
         assert paths.index(fixed) < wildcard, f"{fixed} 가 와일드카드 뒤에 있다"
+
+
+def test_스킬_고정_세그먼트는_이름_와일드카드보다_먼저다():
+    # `/skills/hub/search` 는 `/skills/{name}/file` 과 세그먼트 수가 같다. aiohttp 는 등록 순서대로 첫 매치를
+    # 고르므로 고정 행이 뒤에 오면 `hub`·`archive`·`enabled` 가 스킬 이름으로 잡힌다.
+    paths = [p for _m, p, _h, _s in routes.ROUTES]
+    first_wild = min(i for i, p in enumerate(paths) if p.startswith("/p/{profile}/deskrpg/skills/{name}"))
+    fixed = [p for p in paths if p.startswith("/p/{profile}/deskrpg/skills/hub/")]
+    assert len(fixed) == 6
+    for p in (*fixed, "/p/{profile}/deskrpg/skills/archive", "/p/{profile}/deskrpg/skills/enabled"):
+        assert paths.index(p) < first_wild, f"{p} 가 스킬 이름 와일드카드 뒤에 있다"
 
 
 def test_모든_행의_핸들러_이름이_팩토리_매핑에_있다(fake_api):

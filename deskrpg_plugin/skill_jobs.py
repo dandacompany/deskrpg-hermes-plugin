@@ -17,6 +17,9 @@ from .common import RequestError, log_event
 
 TAIL_BYTES = 4096
 DONE_TTL_SECONDS = 3600
+# Hermes `skills install`/`uninstall` 은 차단·가져오기 실패에도 종료 코드 0 으로 끝난다(`do_install` 이 return 만 한다).
+# 그래서 작업마다 결과 확인 함수(`verify`)를 받아, 0 으로 끝나도 확인이 거짓이면 실패로 적는다.
+UNVERIFIED_NOTE = "\n[deskrpg] command exited 0 but the expected change is not present"
 
 _SECRET_PATTERNS = (
     (re.compile(r"(sk-[A-Za-z0-9_-]{12,})"), "***"),
@@ -62,7 +65,8 @@ class JobTable:
     def _busy(self, profile: str) -> bool:
         return any(v["profile"] == profile and v["state"] == "running" for v in self._jobs.values())
 
-    def start(self, api, profile: str, kind: str, argv: list[str]) -> str:
+    def start(self, api, profile: str, kind: str, argv: list[str], verify=None) -> str:
+        """`verify` 는 끝난 뒤 워커 스레드에서 부르는 동기 함수(`() -> bool`). 거짓이면 종료 코드 0 이어도 failed."""
         self._gc()
         if self._busy(profile):
             raise RequestError(409, "job_busy", profile)
@@ -73,11 +77,11 @@ class JobTable:
         job_id = secrets.token_hex(8)
         self._jobs[job_id] = {"jobId": job_id, "profile": profile, "kind": kind, "state": "running",
                               "exitCode": None, "outputTail": "", "doneAt": None}
-        self._tasks[job_id] = asyncio.get_running_loop().create_task(self._run(job_id, cmd, env))
+        self._tasks[job_id] = asyncio.get_running_loop().create_task(self._run(job_id, cmd, env, verify))
         log_event("skill_job_start", profile=profile, kind=kind, job_id=job_id)
         return job_id
 
-    async def _run(self, job_id: str, cmd: list[str], env: dict) -> None:
+    async def _run(self, job_id: str, cmd: list[str], env: dict, verify=None) -> None:
         job = self._jobs[job_id]
         try:
             proc = await self._spawn(*cmd, env=env)
@@ -85,7 +89,15 @@ class JobTable:
             code = proc.returncode
         except Exception as exc:  # noqa: BLE001 — 실행 실패도 작업 결과로 남긴다
             out, code = f"spawn failed: {type(exc).__name__}".encode(), -1
-        job.update(state="succeeded" if code == 0 else "failed", exitCode=code,
+        ok = code == 0
+        if ok and verify is not None:
+            try:
+                ok = bool(await asyncio.to_thread(verify))
+            except Exception:  # noqa: BLE001 — 확인하지 못한 것은 성공으로 적지 않는다
+                ok = False
+            if not ok:
+                out = (out or b"") + UNVERIFIED_NOTE.encode()
+        job.update(state="succeeded" if ok else "failed", exitCode=code,
                    outputTail=_tail(out or b""), doneAt=self._clock())
         log_event("skill_job_done", profile=job["profile"], kind=job["kind"], job_id=job_id, status=job["state"])
 

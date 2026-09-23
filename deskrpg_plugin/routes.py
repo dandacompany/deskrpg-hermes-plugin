@@ -31,6 +31,7 @@ from . import cron as _cron
 from . import events as _events
 from . import artifacts_routes as _artifacts_routes
 from . import card_proposal_routes as _card_proposal_routes
+from . import skills_hub_routes as _skills_hub
 from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
@@ -74,6 +75,13 @@ ROUTES = [
     ("GET", "/p/{profile}/deskrpg/config", "get_config", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/catalog", "get_catalog", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets", "get_toolsets", Scope.PROFILE),
+    # 0.15.0 — Hub(검색·미리보기·설치·삭제·업데이트). 고정 세그먼트라 `/skills/{name}` 와일드카드 행보다 위에 둔다.
+    ("GET", "/p/{profile}/deskrpg/skills/hub/search", "skill_hub_search", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/skills/hub/preview", "skill_hub_preview", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/skills/hub/installs", "skill_hub_install", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/skills/hub/installs/{job_id}", "skill_hub_job", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/skills/hub/uninstall", "skill_hub_uninstall", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/skills/hub/update", "skill_hub_update", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/skills", "get_skills", Scope.PROFILE),
     # ---- 0.15.0 NPC 스킬 관리 (프로필 키) — 고정 세그먼트 행이 {name} 행보다 위 ----
     ("POST", "/p/{profile}/deskrpg/skills", "skill_create", Scope.PROFILE),
@@ -276,6 +284,13 @@ _HANDLERS = {
     "card_proposal_resolve": lambda api: _card_proposal_routes.resolve_handler(api),
     "card_proposal_unresolve": lambda api: _card_proposal_routes.unresolve_handler(api),
     "card_proposal_record_task": lambda api: _card_proposal_routes.record_task_handler(api),
+    # 스킬 Hub (0.15.0)
+    "skill_hub_search": lambda api: _skills_hub.search_handler(api),
+    "skill_hub_preview": lambda api: _skills_hub.preview_handler(api),
+    "skill_hub_install": lambda api: _skills_hub.install_handler(api),
+    "skill_hub_job": lambda api: _skills_hub.job_handler(api),
+    "skill_hub_uninstall": lambda api: _skills_hub.uninstall_handler(api),
+    "skill_hub_update": lambda api: _skills_hub.update_handler(api),
 }
 
 
@@ -478,6 +493,13 @@ _OPTIONAL_ROUTES = {
     "oauth_poll": _contract_fields.has_oauth_symbols,
     "oauth_cancel": _contract_fields.has_oauth_symbols,
     "oauth_disconnect": _contract_fields.has_oauth_symbols,
+    # 0.15.0 — 스킬 관리 라우트 전부가 `profile_skill_admin` capability 와 같은 판정을 쓴다.
+    "skill_hub_search": _contract_fields.has_skill_admin_symbols,
+    "skill_hub_preview": _contract_fields.has_skill_admin_symbols,
+    "skill_hub_install": _contract_fields.has_skill_admin_symbols,
+    "skill_hub_job": _contract_fields.has_skill_admin_symbols,
+    "skill_hub_uninstall": _contract_fields.has_skill_admin_symbols,
+    "skill_hub_update": _contract_fields.has_skill_admin_symbols,
 }
 
 
