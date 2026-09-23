@@ -47,6 +47,28 @@ _OAUTH_SYMBOLS = (
     "_oauth_sessions", "_oauth_sessions_lock", "_oauth_profile_name", "clear_provider_auth",
 )
 
+# 0.15.0 — NPC 스킬 관리(spec §3.1). `_hermes_api.OPTIONAL_SPEC` 의 0.15.0 블록과 같은 집합이다.
+_SKILL_ADMIN_SYMBOLS = (
+    "_find_all_skills", "_sort_skills",
+    "load_usage", "activity_count", "latest_activity_at", "is_curator_managed",
+    "is_hub_installed", "is_bundled", "set_pinned", "archive_skill", "restore_skill",
+    "list_archived_skill_names", "_archive_dir", "_find_skill_dir", "_find_external_skill_dir",
+    "capture_before", "append_entry", "set_ledger_actor", "reset_ledger_actor",
+    "_create_skill", "_edit_skill", "_write_file", "_find_skill",
+    "is_external_skill_path", "clear_skills_system_prompt_cache",
+    "load_state", "is_enabled", "is_paused", "set_paused", "get_interval_hours",
+    "get_min_idle_hours", "get_stale_after_days", "get_archive_after_days",
+    "build_learning_graph", "node_detail", "edit_node", "delete_node", "parse_node_kind",
+    "create_source_router", "parallel_search_sources", "_resolve_source_meta_and_bundle",
+    "quarantine_bundle", "scan_skill", "should_allow_install",
+    "_profile_action_environment", "_dashboard_spawn_executable",
+)
+
+
+def has_skill_admin_symbols(api) -> bool:
+    """`profile_skill_admin` capability 와 스킬 관리 라우트 전부가 같은 판정을 쓴다."""
+    return _has(api, _SKILL_ADMIN_SYMBOLS) and has_skill_symbols(api)
+
 
 def _has(api, names) -> bool:
     return all(getattr(api, n, None) is not None for n in names)
@@ -142,6 +164,8 @@ def capabilities(api) -> tuple[str, ...]:
         extra.append("profile_toolsets")
     if has_skill_symbols(api):
         extra.append("profile_skills")
+    if has_skill_admin_symbols(api):
+        extra.append("profile_skill_admin")
     if _has(api, ("PROVIDER_REGISTRY",)):
         extra.append("profile_clone")
         extra.append("profile_provider_keys")

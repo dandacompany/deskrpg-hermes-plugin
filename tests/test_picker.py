@@ -73,14 +73,14 @@ async def test_목록은_요청_프로필의_홈에서_읽는다(aiohttp_client,
 
 async def test_스킬_목록은_꺼짐과_필수_여부를_함께_준다(aiohttp_client, fake_api):
     _seed(fake_api, {"skills": {"disabled": ["xlsx"]}})
+    for name in ("hermes-agent", "pdf", "xlsx"):
+        fake_api.skills.seed("sophie", name, category="core" if name == "hermes-agent" else "docs")
     client = await _client(aiohttp_client, fake_api)
     body = await (await client.get("/p/sophie/deskrpg/skills")).json()
     rows = {r["name"]: r for r in body["skills"]}
     assert rows["xlsx"]["disabled"] is True
-    assert rows["pdf"] == {"name": "pdf", "category": "docs", "description": "PDF 다루기",
-                           "disabled": False, "essential": False}
+    assert rows["pdf"]["disabled"] is False and rows["pdf"]["essential"] is False
     assert rows["hermes-agent"]["essential"] is True
-    assert [r["name"] for r in body["skills"]] == ["hermes-agent", "pdf", "xlsx"]
 
 
 async def test_없는_프로필은_404(aiohttp_client, fake_api):

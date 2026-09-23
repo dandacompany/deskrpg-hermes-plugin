@@ -197,12 +197,36 @@ OPTIONAL_SPEC = (
     # 툴셋 목록이 구독 기능 판정을 한 번만 계산하는 데 쓴다. 없으면 툴셋마다 Hermes 가 다시 계산한다.
     ("hermes_cli.nous_subscription", ("get_nous_subscription_features",)),
     ("tools.skills_tool", ("_find_all_skills", "_sort_skills")),
-    ("agent.skill_utils", ("ESSENTIAL_SKILLS", "parse_config_string_list")),
+    ("agent.skill_utils", ("ESSENTIAL_SKILLS", "parse_config_string_list", "is_external_skill_path")),
     # `_plugin_aliases` 는 복제가 설정의 프로바이더 id 를 Hermes 와 같이 정식 id 로 푸는 데 쓴다.
     (
         "hermes_cli.auth",
         ("PROVIDER_REGISTRY", "_plugin_aliases", "clear_provider_auth"),
     ),
+    # 0.15.0 — NPC 스킬 관리. 한 릴리스로 함께 나가므로 하나라도 없으면 profile_skill_admin 전체가 빠진다.
+    (
+        "tools.skill_usage",
+        (
+            "load_usage", "activity_count", "latest_activity_at", "is_curator_managed",
+            "is_hub_installed", "is_bundled", "set_pinned", "archive_skill", "restore_skill",
+            "list_archived_skill_names", "_archive_dir", "_find_skill_dir", "_find_external_skill_dir",
+        ),
+    ),
+    ("tools.skill_ledger", ("capture_before", "append_entry", "set_ledger_actor", "reset_ledger_actor")),
+    ("tools.skill_manager_tool", ("_create_skill", "_edit_skill", "_write_file", "_find_skill")),
+    ("agent.prompt_builder", ("clear_skills_system_prompt_cache",)),
+    (
+        "agent.curator",
+        ("load_state", "is_enabled", "is_paused", "set_paused", "get_interval_hours",
+         "get_min_idle_hours", "get_stale_after_days", "get_archive_after_days"),
+    ),
+    ("agent.learning_graph", ("build_learning_graph",)),
+    ("agent.learning_mutations", ("node_detail", "edit_node", "delete_node", "parse_node_kind")),
+    ("tools.skills_hub_search", ("create_source_router", "parallel_search_sources")),
+    ("hermes_cli.skills_hub", ("_resolve_source_meta_and_bundle",)),
+    ("tools.skills_hub_install", ("quarantine_bundle",)),
+    ("tools.skills_guard", ("scan_skill", "should_allow_install")),
+    ("hermes_cli.web_server_gateway", ("_profile_action_environment", "_dashboard_spawn_executable")),
 )
 
 REQUIRED = tuple(name for _module, names in SPEC for name in names)

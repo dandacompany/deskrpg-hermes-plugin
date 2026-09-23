@@ -37,7 +37,7 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
     # fake_api 는 스웜·피커 심볼을 모두 갖춘 빌드를 흉내 낸다 — capability 에 다 붙는다.
     assert body["capabilities"] == [
         "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin", "kanban_attachment_list", "swarm",
-        "profile_toolsets", "profile_skills", "profile_clone", "profile_provider_keys",
+        "profile_toolsets", "profile_skills", "profile_skill_admin", "profile_clone", "profile_provider_keys",
         "profile_oauth", "profile_tool_providers", "initial_status",
     ]
     assert "artifacts" in body["capabilities"] and isinstance(body["artifact_max_bytes"], int)
@@ -224,3 +224,16 @@ async def test_initial_status_능력은_Hermes_가_받을_때만_광고한다(ai
     client = await _client(aiohttp_client, fake_api)
     caps = (await (await client.get("/deskrpg/info")).json())["capabilities"]
     assert "initial_status" not in caps
+
+
+def test_스킬_관리_심볼이_다_있으면_profile_skill_admin_을_광고한다(fake_api):
+    from deskrpg_plugin.contract_fields import capabilities
+
+    assert "profile_skill_admin" in capabilities(fake_api)
+
+
+def test_스킬_관리_심볼이_하나라도_없으면_광고하지_않는다(fake_api):
+    from deskrpg_plugin.contract_fields import capabilities
+
+    fake_api.build_learning_graph = None
+    assert "profile_skill_admin" not in capabilities(fake_api)

@@ -231,6 +231,9 @@ def fake_api(tmp_path):
         apply_provider_selection=_fake_apply_provider_selection,
     )
     _add_automation_fakes(api, tmp_path)
+    from tests.fakes_skills import install_fake_skills
+
+    install_fake_skills(api)
     return api
 
 
