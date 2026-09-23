@@ -14,6 +14,11 @@ collect_directory_manifests`), 활성화도 **그 홈의** `config.yaml` `plugin
    설치·갱신 때만 돌므로(로드 때는 없다) 링크된 디렉터리가 걸리지 않는다.
 2. `<프로필>/config.yaml` 의 `plugins.enabled` 에 `deskrpg`.
 
+**운영자가 켤 때만 전파한다(0.16.0).** 루트(게이트웨이) `config.yaml` 의
+`plugins.entries.deskrpg.worker_propagation: true` 또는 환경변수 `DESKRPG_WORKER_PROPAGATION=1`.
+기본은 꺼짐이고 플러그인은 이 값을 **읽기만** 한다 — 스스로 켜는 경로는 없다. 꺼져 있으면 소유자 라우트는
+409 이고 프로필 생성은 적용을 건너뛴다. 이미 걸린 링크·활성화 항목은 지우지 않는다(`report` 는 계속 보고).
+
 **자동으로 고치지 않는다.** 게이트웨이 기동 때 몰래 설정을 바꾸면 원인이 숨는다. 상태는 `report` 가
 보이고(`/deskrpg/info`), 고치는 것은 명시 호출(`ensure`)뿐이다 — 새 프로필 생성과 소유자 라우트.
 운영자가 `plugins.disabled` 에 넣었으면 그 뜻을 존중해 켜지 않는다. 이미 있는 실제 디렉터리(사본)는
@@ -32,6 +37,18 @@ from . import config as _config
 from . import envfile
 
 PLUGIN_KEY = "deskrpg"
+PROPAGATION_ENV = "DESKRPG_WORKER_PROPAGATION"
+PROPAGATION_CONFIG_KEY = "worker_propagation"
+DISABLED_ERROR = "worker_propagation_disabled"
+_TRUTHY = {"1", "true", "yes", "on"}
+
+DISABLED_DETAIL = (
+    "Worker propagation is off. When enabled, this plugin symlinks itself into every profile's "
+    "plugins/deskrpg and adds 'deskrpg' to that profile's plugins.enabled, so kanban workers and cron "
+    "runs load it too. Enable it on the gateway host with "
+    "'hermes config set plugins.entries.deskrpg.worker_propagation true' "
+    "(or set DESKRPG_WORKER_PROPAGATION=1) and restart the gateway."
+)
 
 
 class EnsureFailed(Exception):
@@ -45,6 +62,39 @@ class EnsureFailed(Exception):
 def plugin_root() -> Path:
     """이 플러그인이 설치된 디렉터리(`plugin.yaml` 이 있는 곳) — 링크의 대상."""
     return Path(__file__).resolve().parent.parent
+
+
+def _root_home(api) -> Path:
+    """게이트웨이 루트 홈. 프로필 홈 스코프 안에서 불려도 루트를 가리킨다(`artifacts_store` 와 같은 규칙)."""
+    home = Path(api.get_hermes_home())
+    if home.parent.name == "profiles":
+        home = home.parent.parent
+    return home
+
+
+def _truthy(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    return isinstance(value, str) and value.strip().lower() in _TRUTHY
+
+
+def propagation_enabled(api) -> bool:
+    """운영자가 워커 전파를 켰는가. 환경변수 또는 루트 config 의 플러그인 항목. 읽기만 한다.
+
+    루트 config 를 읽을 수 없으면 꺼진 것으로 본다 — 모르면 쓰지 않는 쪽이 안전하다.
+    """
+    if _truthy(os.environ.get(PROPAGATION_ENV, "")):
+        return True
+    try:
+        data = _config._load(_root_home(api) / _config.CONFIG_FILENAME)
+    except (_config.ConfigUnreadable, OSError):
+        return False
+    node = data
+    for key in ("plugins", "entries", PLUGIN_KEY, PROPAGATION_CONFIG_KEY):
+        if not isinstance(node, dict):
+            return False
+        node = node.get(key)
+    return _truthy(node)
 
 
 def _link_path(api, name: str) -> Path:
@@ -109,7 +159,7 @@ def report(api) -> dict:
         st = status(api, name)
         if st["link"] != "linked" or not st["enabled"]:
             missing.append(st)
-    return {"missing": missing}
+    return {"missing": missing, "propagation": "enabled" if propagation_enabled(api) else "disabled"}
 
 
 def _ensure_link(link: Path) -> str:
@@ -166,6 +216,9 @@ def ensure_handler(api):
     from .common import run_blocking
 
     async def handler(request):
+        if not await run_blocking(propagation_enabled, api):
+            # 아무것도 쓰지 않는다 — 켜는 것은 운영자 설정뿐이다.
+            return web.json_response({"error": DISABLED_ERROR, "detail": DISABLED_DETAIL}, status=409)
         names = None
         if request.can_read_body:
             try:

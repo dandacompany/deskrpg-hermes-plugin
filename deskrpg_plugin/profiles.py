@@ -112,7 +112,11 @@ def create_handler(api):
         # 칸반 워커·크론은 이 프로필 홈으로 뜬다 — 여기에 플러그인이 없으면 워커가 만든 결과물이
         # 하나도 안 쌓인다(worker_plugin 모듈 주석). 실패해도 프로필은 이미 있으므로 201 로 말한다.
         try:
-            body["workerPlugin"] = await asyncio.to_thread(worker_plugin.ensure, api, name)
+            if not await asyncio.to_thread(worker_plugin.propagation_enabled, api):
+                # 운영자가 켜지 않았다 — 프로필은 만들고 워커 적용만 건너뛴다(기본 꺼짐).
+                body["workerPlugin"] = {"skipped": "propagation_disabled"}
+            else:
+                body["workerPlugin"] = await asyncio.to_thread(worker_plugin.ensure, api, name)
         except worker_plugin.EnsureFailed as exc:
             body["workerPluginError"] = exc.reason
             logger.warning("[deskrpg] 워커 플러그인 준비 실패: %s — %s", name, exc.reason)

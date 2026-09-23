@@ -5,6 +5,7 @@ Hermes 는 사용자 플러그인을 **로드하는 홈의** `plugins/` 에서�
 설치하면 워커에는 훅도 `artifact_save` 도 없다. 오류도 로그도 없이 결과물이 쌓이지 않는다.
 """
 import os
+from pathlib import Path
 
 import pytest
 import yaml
@@ -29,6 +30,17 @@ def _profile(fake_api, name, config=None):
 
 def _link(fake_api, name):
     return fake_api.get_profile_dir(name) / "plugins" / worker_plugin.PLUGIN_KEY
+
+
+@pytest.fixture
+def propagation_on(monkeypatch):
+    """운영자가 워커 전파를 켠 게이트웨이. 기본은 꺼짐이다(conftest 가 환경변수를 지운다)."""
+    monkeypatch.setenv(worker_plugin.PROPAGATION_ENV, "1")
+
+
+def _root_config(fake_api, data):
+    (Path(fake_api.get_hermes_home()) / "config.yaml").write_text(
+        yaml.safe_dump(data, allow_unicode=True), encoding="utf-8")
 
 
 def _config(fake_api, name):
@@ -171,7 +183,7 @@ def test_config_는_원자적으로_0600_으로_쓰고_백업을_남긴다(fake_
 # ── 라우트 ──────────────────────────────────────────────────────────────────
 
 
-async def test_info_는_워커에서_안_뜨는_프로필을_보고한다(aiohttp_client, fake_api):
+async def test_info_는_워커에서_안_뜨는_프로필을_보고한다(aiohttp_client, fake_api, propagation_on):
     _profile(fake_api, "sophie")
     _profile(fake_api, "oliver")
     worker_plugin.ensure(fake_api, "oliver")
@@ -182,6 +194,7 @@ async def test_info_는_워커에서_안_뜨는_프로필을_보고한다(aiohtt
     assert "worker_plugin" in body["capabilities"]
     assert body["worker_plugin"] == {
         "missing": [{"profile": "sophie", "link": "missing", "enabled": False, "disabled": False}],
+        "propagation": "enabled",
     }
 
 
@@ -198,7 +211,7 @@ async def test_info_는_판정이_실패해도_500_이_아니다(aiohttp_client,
     assert (await resp.json())["worker_plugin"] is None
 
 
-async def test_소유자_라우트는_지정한_프로필만_고친다(aiohttp_client, fake_api):
+async def test_소유자_라우트는_지정한_프로필만_고친다(aiohttp_client, fake_api, propagation_on):
     _profile(fake_api, "sophie")
     _profile(fake_api, "oliver")
     client = await _client(aiohttp_client, fake_api)
@@ -212,7 +225,7 @@ async def test_소유자_라우트는_지정한_프로필만_고친다(aiohttp_c
     assert not _link(fake_api, "oliver").exists()
 
 
-async def test_소유자_라우트는_본문이_없으면_전부를_고치고_실패를_프로필별로_말한다(aiohttp_client, fake_api):
+async def test_소유자_라우트는_본문이_없으면_전부를_고치고_실패를_프로필별로_말한다(aiohttp_client, fake_api, propagation_on):
     _profile(fake_api, "sophie")
     broken = _profile(fake_api, "oliver")
     (broken / "config.yaml").write_text("plugins: [x\n", encoding="utf-8")
@@ -227,7 +240,7 @@ async def test_소유자_라우트는_본문이_없으면_전부를_고치고_�
     assert results["oliver"] == {"profile": "oliver", "error": "config_unreadable"}
 
 
-async def test_소유자_라우트는_없는_프로필을_프로필별_실패로_말한다(aiohttp_client, fake_api):
+async def test_소유자_라우트는_없는_프로필을_프로필별_실패로_말한다(aiohttp_client, fake_api, propagation_on):
     client = await _client(aiohttp_client, fake_api)
     resp = await client.post("/deskrpg/worker-plugin", json={"profiles": ["ghost"]})
     assert resp.status == 200
@@ -235,13 +248,13 @@ async def test_소유자_라우트는_없는_프로필을_프로필별_실패로
 
 
 @pytest.mark.parametrize("payload", [{"profiles": "sophie"}, {"profiles": [1]}, ["sophie"]])
-async def test_소유자_라우트는_잘못된_본문을_400_으로_거절한다(aiohttp_client, fake_api, payload):
+async def test_소유자_라우트는_잘못된_본문을_400_으로_거절한다(aiohttp_client, fake_api, propagation_on, payload):
     client = await _client(aiohttp_client, fake_api)
     resp = await client.post("/deskrpg/worker-plugin", json=payload)
     assert resp.status == 400
 
 
-async def test_프로필을_만들면_워커에서도_뜨게_해_둔다(aiohttp_client, fake_api):
+async def test_프로필을_만들면_워커에서도_뜨게_해_둔다(aiohttp_client, fake_api, propagation_on):
     client = await _client(aiohttp_client, fake_api)
 
     resp = await client.post("/deskrpg/profiles", json={"name": "mia"})
@@ -252,7 +265,7 @@ async def test_프로필을_만들면_워커에서도_뜨게_해_둔다(aiohttp_
     assert _link(fake_api, "mia").is_symlink()
 
 
-async def test_워커_준비가_실패해도_프로필_생성은_201_이다(aiohttp_client, fake_api, monkeypatch):
+async def test_워커_준비가_실패해도_프로필_생성은_201_이다(aiohttp_client, fake_api, propagation_on, monkeypatch):
     def boom(_api, name):
         raise worker_plugin.EnsureFailed("config_unreadable")
 
@@ -265,3 +278,97 @@ async def test_워커_준비가_실패해도_프로필_생성은_201_이다(aioh
     body = await resp.json()
     assert body["workerPluginError"] == "config_unreadable"
     assert "workerPlugin" not in body
+
+
+# ── 옵트인 — 워커 전파는 운영자가 켤 때만 ─────────────────────────────────────
+
+
+def test_워커_전파는_기본으로_꺼져_있다(fake_api):
+    assert worker_plugin.propagation_enabled(fake_api) is False
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("1", True), ("true", True), ("YES", True), ("On", True),
+    ("0", False), ("", False), ("no", False), ("enabled", False),
+])
+def test_환경변수로_켠다(fake_api, monkeypatch, value, expected):
+    monkeypatch.setenv(worker_plugin.PROPAGATION_ENV, value)
+    assert worker_plugin.propagation_enabled(fake_api) is expected
+
+
+@pytest.mark.parametrize("flag,expected", [(True, True), (False, False), ("true", True), (None, False)])
+def test_루트_config_의_플러그인_항목으로_켠다(fake_api, flag, expected):
+    _root_config(fake_api, {"plugins": {"entries": {"deskrpg": {"worker_propagation": flag}}}})
+    assert worker_plugin.propagation_enabled(fake_api) is expected
+
+
+def test_루트_config_를_읽을_수_없으면_꺼진_것으로_본다(fake_api):
+    (Path(fake_api.get_hermes_home()) / "config.yaml").write_text("plugins: [x\n", encoding="utf-8")
+    assert worker_plugin.propagation_enabled(fake_api) is False
+
+
+def test_프로필_config_의_플래그는_보지_않는다(fake_api):
+    # 켜는 곳은 게이트웨이(루트) 설정 하나다 — 프로필이 스스로 켤 수 없다.
+    _profile(fake_api, "sophie", {"plugins": {"entries": {"deskrpg": {"worker_propagation": True}}}})
+    assert worker_plugin.propagation_enabled(fake_api) is False
+
+
+async def test_info_는_전파가_꺼져_있음을_알린다(aiohttp_client, fake_api):
+    _profile(fake_api, "sophie")
+    client = await _client(aiohttp_client, fake_api)
+
+    body = await (await client.get("/deskrpg/info")).json()
+
+    assert body["worker_plugin"]["propagation"] == "disabled"
+    assert [m["profile"] for m in body["worker_plugin"]["missing"]] == ["sophie"]
+
+
+async def test_꺼져_있으면_소유자_라우트는_409_이고_아무것도_쓰지_않는다(aiohttp_client, fake_api):
+    d = _profile(fake_api, "sophie", {"plugins": {"enabled": []}})
+    before = (d / "config.yaml").read_text(encoding="utf-8")
+    client = await _client(aiohttp_client, fake_api)
+
+    resp = await client.post("/deskrpg/worker-plugin", json={"profiles": ["sophie"]})
+
+    assert resp.status == 409
+    body = await resp.json()
+    assert body["error"] == "worker_propagation_disabled"
+    assert "hermes config set plugins.entries.deskrpg.worker_propagation true" in body["detail"]
+    assert "DESKRPG_WORKER_PROPAGATION=1" in body["detail"]
+    assert not _link(fake_api, "sophie").exists()
+    assert (d / "config.yaml").read_text(encoding="utf-8") == before
+
+
+async def test_꺼져_있으면_프로필은_만들고_워커_적용은_건너뛴다(aiohttp_client, fake_api):
+    client = await _client(aiohttp_client, fake_api)
+
+    resp = await client.post("/deskrpg/profiles", json={"name": "mia"})
+
+    assert resp.status == 201
+    body = await resp.json()
+    assert body["workerPlugin"] == {"skipped": "propagation_disabled"}
+    assert not _link(fake_api, "mia").exists()
+
+
+async def test_루트_config_로_켜면_소유자_라우트가_적용한다(aiohttp_client, fake_api):
+    _root_config(fake_api, {"plugins": {"entries": {"deskrpg": {"worker_propagation": True}}}})
+    _profile(fake_api, "sophie")
+    client = await _client(aiohttp_client, fake_api)
+
+    resp = await client.post("/deskrpg/worker-plugin", json={"profiles": ["sophie"]})
+
+    assert resp.status == 200
+    assert _link(fake_api, "sophie").is_symlink()
+
+
+async def test_꺼도_이미_걸린_링크와_활성화_항목은_지우지_않는다(aiohttp_client, fake_api):
+    _profile(fake_api, "sophie")
+    worker_plugin.ensure(fake_api, "sophie")
+    client = await _client(aiohttp_client, fake_api)
+
+    assert (await client.post("/deskrpg/worker-plugin")).status == 409
+    body = await (await client.get("/deskrpg/info")).json()
+
+    assert _link(fake_api, "sophie").is_symlink()
+    assert _config(fake_api, "sophie")["plugins"]["enabled"] == ["deskrpg"]
+    assert body["worker_plugin"] == {"missing": [], "propagation": "disabled"}

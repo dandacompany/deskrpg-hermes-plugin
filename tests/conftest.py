@@ -542,3 +542,9 @@ def 공용_config_에_core_worktree_가_생기지_않는다():
             "지우기 전에 어느 테스트가 그랬는지 먼저 찾아라 — "
             "`git config --unset core.worktree` 로 복구한다."
         )
+
+
+@pytest.fixture(autouse=True)
+def _worker_propagation_off(monkeypatch):
+    """개발자 셸에 켜 둔 값이 테스트 결과를 바꾸지 않게 — 워커 전파는 기본 꺼짐에서 시작한다."""
+    monkeypatch.delenv("DESKRPG_WORKER_PROPAGATION", raising=False)
