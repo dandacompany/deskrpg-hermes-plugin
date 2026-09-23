@@ -15,7 +15,7 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.13.1 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.14.0 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -46,6 +46,8 @@ Stop the gateway and back up its kanban databases before replacing core code. In
 New cards default to human approval. An explicitly delegated task can be approved by a different AI profile. Approvals bind to the submitted result; generic status changes cannot substitute for approval. AI reviewers must inspect the actual submitted text or artifacts; this does not guarantee the semantic quality of an AI review. Existing cards are not converted automatically.
 
 ## Release
+
+0.14.0 adds `POST /deskrpg/events/handoff` and the `event_cursor_handoff` capability. When DeskRPG archives the project whose board carries a channel's event stream, the plugin merges the old carrier's global position into the new board's cursor so no card, cron or artifact event is lost across the handoff. DeskRPG 2026.922.3 and later requires this capability before archiving a carrier board; older DeskRPG versions ignore the route.
 
 0.13.1 adds native per-task human and independent-agent approvals, submission-bound receipts, authenticated human display names, and capability gating. The runtime distribution excludes development instructions and test scaffolding. The source master retains CI tests.
 
