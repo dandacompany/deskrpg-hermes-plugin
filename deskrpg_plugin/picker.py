@@ -107,12 +107,20 @@ def skill_rows(api, home) -> list[dict]:
     essential = set(getattr(api, "ESSENTIAL_SKILLS", None) or ())
     with _home_scope(api, home):
         found = api._sort_skills(api._find_all_skills(skip_disabled=True))
-    return [
-        {"name": s["name"], "category": s.get("category") or "", "description": s.get("description") or "",
-         "disabled": s["name"] in disabled and s["name"] not in essential,
-         "essential": s["name"] in essential}
-        for s in found
-    ]
+        rows = [
+            {"name": s["name"], "category": s.get("category") or "", "description": s.get("description") or "",
+             "disabled": s["name"] in disabled and s["name"] not in essential,
+             "essential": s["name"] in essential}
+            for s in found
+        ]
+        # 0.15.0 심볼이 없는 빌드는 예전 행 그대로.
+        from .contract_fields import has_skill_admin_symbols
+
+        if has_skill_admin_symbols(api):
+            from .skills_admin import enrich_rows
+
+            rows = enrich_rows(api, rows)
+    return rows
 
 
 def known_skill_names(api, home) -> set[str]:

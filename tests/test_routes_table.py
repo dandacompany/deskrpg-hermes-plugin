@@ -26,6 +26,9 @@ EXPECTED_ROUTES = {
     # 0.9.0 — 직원 설정 피커: 프로필 홈 스코프의 툴셋·스킬 목록.
     ("GET", "/p/{profile}/deskrpg/toolsets", _PROFILE),
     ("GET", "/p/{profile}/deskrpg/skills", _PROFILE),
+    # 0.15.0 NPC 스킬 관리 — 스킬 CRUD
+    ("GET", "/p/{profile}/deskrpg/skills/{name}", _PROFILE),
+    ("GET", "/p/{profile}/deskrpg/skills/{name}/file", _PROFILE),
     # 0.10.0 — 도구별 프로바이더 선택·키 입력. 대시보드 도구 설정 심볼이 없는 빌드에서는 라우트가 없다.
     ("GET", "/p/{profile}/deskrpg/toolsets/{toolset}/providers", _PROFILE),
     ("PUT", "/p/{profile}/deskrpg/toolsets/{toolset}/provider", _PROFILE),
@@ -103,8 +106,8 @@ EXPECTED_ROUTES = {
 
 
 def test_라우트_테이블이_스펙의_예순여덟_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 69
-    assert len(routes.ROUTES) == 69, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+    assert len(EXPECTED_ROUTES) == 71
+    assert len(routes.ROUTES) == 71, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
@@ -113,8 +116,8 @@ def test_소유자_라우트는_41_개_프로필_라우트는_27_개다():
     for _m, _p, _h, scope in routes.ROUTES:
         by_scope[scope] = by_scope.get(scope, 0) + 1
     # 소유자: 기존 4 + 워커 플러그인 1 + 칸반 21 + 보드 첨부 목록 1 + 뷰 묶음 조회 2 + 스웜 2 + 사건 1 + 아티팩트 6 + 카드 제안 3 = 41 ·
-    # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 + 0.10.0 도구 프로바이더 2 = 27.
-    assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 21 + 1 + 2 + 2 + 2 + 6 + 3, routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2}
+    # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 + 0.10.0 도구 프로바이더 2 + 0.15.0 스킬 CRUD 2 = 29.
+    assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 21 + 1 + 2 + 2 + 2 + 6 + 3, routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 2}
 
 
 def test_OAuth_취소_행이_연결_끊기_행보다_앞에_있다():

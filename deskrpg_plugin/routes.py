@@ -17,6 +17,7 @@ from . import worker_plugin as _worker_plugin
 from . import config as _config
 from . import catalog as _catalog
 from . import picker as _picker
+from . import skills_admin as _skills_admin
 from . import tool_providers as _tool_providers
 from . import provider_keys as _provider_keys
 from . import oauth as _oauth
@@ -74,6 +75,9 @@ ROUTES = [
     ("GET", "/p/{profile}/deskrpg/catalog", "get_catalog", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets", "get_toolsets", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/skills", "get_skills", Scope.PROFILE),
+    # ---- 0.15.0 NPC 스킬 관리 (프로필 키) — 고정 세그먼트 행이 {name} 행보다 위 ----
+    ("GET", "/p/{profile}/deskrpg/skills/{name}", "skill_detail", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/skills/{name}/file", "skill_file_get", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets/{toolset}/providers", "get_tool_providers", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/toolsets/{toolset}/provider", "put_tool_provider", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", "put_provider_key", Scope.PROFILE),
@@ -190,6 +194,8 @@ _HANDLERS = {
     "get_catalog": lambda api: _catalog.get_handler(api),
     "get_toolsets": lambda api: _picker.toolsets_handler(api),
     "get_skills": lambda api: _picker.skills_handler(api),
+    "skill_detail": lambda api: _skills_admin.detail_handler(api),
+    "skill_file_get": lambda api: _skills_admin.file_get_handler(api),
     "get_tool_providers": lambda api: _tool_providers.providers_handler(api),
     "put_tool_provider": lambda api: _tool_providers.select_handler(api),
     "put_provider_key": lambda api: _provider_keys.put_handler(api),
@@ -435,6 +441,8 @@ _OPTIONAL_ROUTES = {
     "kanban_blackboard": "latest_blackboard",
     "get_toolsets": _contract_fields.has_toolset_symbols,
     "get_skills": _contract_fields.has_skill_symbols,
+    "skill_detail": _contract_fields.has_skill_admin_symbols,
+    "skill_file_get": _contract_fields.has_skill_admin_symbols,
     "get_tool_providers": _contract_fields.has_tool_provider_symbols,
     "put_tool_provider": _contract_fields.has_tool_provider_symbols,
     "put_provider_key": "PROVIDER_REGISTRY",
