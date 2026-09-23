@@ -1,6 +1,6 @@
 name: deskrpg
 version: 0.15.0
-description: "DeskRPG 전용 라우트를 Hermes API Server 에 등록한다 — 프로필 목록·생성·삭제, SOUL.md 읽기/쓰기, 칸반·크론·사건(events) 스트림, 아티팩트 저장소와 artifact_save 도구."
+description: "DeskRPG backend — adds DeskRPG routes to the Hermes API Server: profile list/create/delete, SOUL.md read/write, kanban, cron and event streams, NPC skill management, an artifact store and the artifact_save tool. Install it through the DeskRPG setup wizard."
 author: Dante Labs
 kind: standalone
 requires_hermes: ">=0.21.1"

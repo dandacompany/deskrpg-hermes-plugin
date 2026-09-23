@@ -110,4 +110,4 @@ def delete_profile_tree(profile: str, profile_dir: Path, home: Path | None = Non
         raise ProfileHasService(service_unit_name(profile), unit)
 
     shutil.rmtree(profile_dir)
-    logger.warning("[deskrpg] 프로필 디렉토리 삭제: %s", profile)
+    logger.warning("[deskrpg] profile directory deleted: %s", profile)

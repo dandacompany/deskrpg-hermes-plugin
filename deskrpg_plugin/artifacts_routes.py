@@ -166,7 +166,7 @@ def _parse_range(header: str, size: int):
         raise RequestError(416, "range_not_satisfiable")
     spec = header[6:]
     if "," in spec:
-        raise RequestError(416, "range_not_satisfiable", "단일 범위만 받는다")
+        raise RequestError(416, "range_not_satisfiable", "only a single range is supported")
     start_s, _, end_s = spec.partition("-")
     try:
         if start_s == "":
@@ -350,7 +350,7 @@ def add_version_handler(api):
                     # 링크 편집은 URL 한 줄만 받는다 — 저장본은 정리한 URL. 파일명은 기존 버전 것을 잇는다.
                     url = links.canonical_url(data.decode("utf-8", "replace").strip())
                     if url is None:
-                        raise RequestError(422, "artifact_incomplete", "link 는 http(s) 주소 한 줄이어야 한다")
+                        raise RequestError(422, "artifact_incomplete", "a link must be a single http(s) URL")
                     head = store.list_versions(conn, artifact_id)[-1]
                     body, name, mime = links.url_blob(url), head["filename"], links.LINK_MIME
                     # 정체성·요약은 새 URL 로 옮기고 제목은 사람이 보던 그대로 둔다(store 의 UPDATE 규칙).
@@ -384,7 +384,7 @@ def rework_handler(api):
     @guarded
     async def handler(request):
         # 3번 스펙(수정 루프)에서 구현한다. 라우트는 계약 자리를 잡아 두기 위해 지금 둔다(결정 0005 의 견적 501 과 같은 이유).
-        raise RequestError(501, "not_implemented", "rework 는 아직 구현되지 않았다")
+        raise RequestError(501, "not_implemented", "rework is not implemented yet")
 
     return handler
 

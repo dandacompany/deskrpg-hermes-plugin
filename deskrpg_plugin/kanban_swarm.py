@@ -24,11 +24,11 @@ from .kanban_common import actor_from_request, open_board, require_task
 def _worker_specs(api, raw_workers):
     """본문의 워커 배열을 `SwarmWorkerSpec` 목록으로. 프로필 존재까지 여기서 본다."""
     if not isinstance(raw_workers, list) or not raw_workers:
-        raise RequestError(400, "workers_required", "워커가 최소 한 명 필요하다")
+        raise RequestError(400, "workers_required", "at least one worker is required")
     specs = []
     for index, raw in enumerate(raw_workers):
         if not isinstance(raw, dict):
-            raise RequestError(400, "invalid_field", f"workers[{index}] 는 객체여야 한다")
+            raise RequestError(400, "invalid_field", f"workers[{index}] must be an object")
         profile = require_str(raw, "profile")
         title = require_str(raw, "title")
         _require_profile(api, profile)

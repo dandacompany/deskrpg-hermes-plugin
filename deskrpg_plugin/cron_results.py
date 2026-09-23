@@ -176,7 +176,7 @@ def output_file_text(api, job_id, started_at, finished_at=None, *, window_s=SESS
         _stamp, chosen = max(candidates, key=lambda item: item[0])
         return chosen.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
-        logger.debug("[deskrpg] 크론 출력 파일 읽기 실패 job_id=%s: %s", job_id, exc)
+        logger.debug("[deskrpg] cron output file read failed job_id=%s: %s", job_id, exc)
         return ""
 
 
@@ -281,7 +281,7 @@ def cron_runs_for_job(api, profile_home, job_id, limit, *, now=None):
             executions = api.list_executions(job_id=job_id, limit=EXECUTIONS_PAGE_LIMIT)
         except Exception as exc:
             # 장부를 못 읽어도 이력은 보여 준다 — 상태만 unknown 으로 떨어진다.
-            logger.warning("[deskrpg] 크론 실행 장부 읽기 실패 job_id=%s: %s", job_id, exc)
+            logger.warning("[deskrpg] cron run ledger read failed job_id=%s: %s", job_id, exc)
             executions = []
 
     sdb = open_session_db(api, home)

@@ -146,12 +146,12 @@ def normalize_updates(updates: dict, profile_home) -> dict:
     skills: 리스트 · enabled: bool · schedule/prompt/name: 비어 있지 않은 문자열.
     """
     if not isinstance(updates, dict):
-        raise RequestError(400, "invalid_field", "updates 는 JSON 객체여야 한다")
+        raise RequestError(400, "invalid_field", "updates must be a JSON object")
     unknown = sorted(set(updates) - UPDATE_ALLOWED_KEYS)
     if unknown:
-        raise RequestError(400, "invalid_field", f"허용되지 않는 updates 키: {', '.join(unknown)}")
+        raise RequestError(400, "invalid_field", f"updates keys not allowed: {', '.join(unknown)}")
     if not updates:
-        raise RequestError(400, "invalid_field", "updates 가 비어 있다")
+        raise RequestError(400, "invalid_field", "updates is empty")
 
     normalized = {}
     for key in ("schedule", "prompt", "name"):
@@ -161,24 +161,24 @@ def normalize_updates(updates: dict, profile_home) -> dict:
         if key in updates:
             value = updates[key]
             if value is not None and not isinstance(value, str):
-                raise RequestError(400, "invalid_field", f"{key} 는 문자열 또는 null 이어야 한다")
+                raise RequestError(400, "invalid_field", f"{key} must be a string or null")
             normalized[key] = optional_text(value)
     if "script" in updates:
         value = updates["script"]
         if value is not None and not isinstance(value, str):
-            raise RequestError(400, "invalid_field", "script 는 문자열 또는 null 이어야 한다")
+            raise RequestError(400, "invalid_field", "script must be a string or null")
         normalized["script"] = normalize_script(value, profile_home)
     if "deliver" in updates:
         value = updates["deliver"]
         if value is not None and not isinstance(value, str):
-            raise RequestError(400, "invalid_field", "deliver 는 문자열이어야 한다")
+            raise RequestError(400, "invalid_field", "deliver must be a string")
         normalized["deliver"] = optional_text(value) or "local"
     if "skills" in updates:
         value = updates["skills"]
         if value is not None and not isinstance(value, (str, list)):
-            raise RequestError(400, "invalid_field", "skills 는 문자열 배열이어야 한다")
+            raise RequestError(400, "invalid_field", "skills must be an array of strings")
         if isinstance(value, list) and not all(isinstance(v, str) for v in value):
-            raise RequestError(400, "invalid_field", "skills 는 문자열 배열이어야 한다")
+            raise RequestError(400, "invalid_field", "skills must be an array of strings")
         normalized["skills"] = string_list(value)
     if "enabled" in updates:
         normalized["enabled"] = require_bool(updates, "enabled")
@@ -198,15 +198,15 @@ def reconcile_provider(api, profile_name):
         external = not isinstance(provider, api.InProcessCronScheduler)
         if external and _profile_count(api) > 1:
             logger.warning(
-                "[deskrpg] 크론 프로바이더 재조정 건너뜀 profile=%s: 외부 프로바이더 '%s' 는 프로필 구분이 없어 "
-                "다른 프로필의 일회성 잡을 해제할 수 있다",
+                "[deskrpg] cron provider reconcile skipped profile=%s: external provider '%s' is not profile-aware "
+                "and could release another profile's one-shot jobs",
                 profile_name,
                 getattr(provider, "name", type(provider).__name__),
             )
             return
         provider.on_jobs_changed()
     except Exception:
-        logger.debug("[deskrpg] 크론 프로바이더 재조정 실패 profile=%s", profile_name, exc_info=True)
+        logger.debug("[deskrpg] cron provider reconcile failed profile=%s", profile_name, exc_info=True)
 
 
 def _profile_count(api) -> int:
@@ -272,7 +272,7 @@ def parse_create_body(body: dict, profile_home) -> dict:
         # Hermes 의 normalize_repeat_value 가 int·'forever'·'once'·숫자 문자열을 받는다. bool 은 int 의
         # 하위 타입이라 따로 거른다.
         if isinstance(repeat, bool) or not isinstance(repeat, (int, str)):
-            raise RequestError(400, "invalid_field", "repeat 는 정수 또는 문자열이어야 한다")
+            raise RequestError(400, "invalid_field", "repeat must be an integer or a string")
         spec["repeat"] = repeat
     return spec
 
@@ -586,7 +586,7 @@ def instantiate_blueprint_handler(api):
             if values is None:
                 values = {}
             if not isinstance(values, dict):
-                raise RequestError(400, "invalid_field", "values 는 JSON 객체여야 한다")
+                raise RequestError(400, "invalid_field", "values must be a JSON object")
             resolve_profile_home(api, profile)
             blueprint = api.get_blueprint(key)
             if blueprint is None:

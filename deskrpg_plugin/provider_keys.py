@@ -66,7 +66,7 @@ def put_handler(api):
             await run_blocking(envfile.upsert_lines, home / ".env", {name: f"{name}={value}"})
         except OSError as exc:
             raise RequestError(500, "env_write_failed", type(exc).__name__) from None
-        logger.info("[deskrpg] 프로바이더 키 설정: %s → %s", provider_id, name)
+        logger.info("[deskrpg] provider key set: %s -> %s", provider_id, name)
         return web.json_response({"configured": True, "envVar": name})
 
     return handler
@@ -84,7 +84,7 @@ def delete_handler(api):
             removed = await run_blocking(envfile.remove_keys, home / ".env", names)
         except OSError as exc:
             raise RequestError(500, "env_write_failed", type(exc).__name__) from None
-        logger.info("[deskrpg] 프로바이더 키 제거: %s (%d개)", provider_id, len(removed))
+        logger.info("[deskrpg] provider keys removed: %s (%d)", provider_id, len(removed))
         return web.json_response({"configured": False, "removed": removed})
 
     return handler

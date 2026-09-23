@@ -62,7 +62,7 @@ def _parse_max(request) -> int:
     except ValueError:
         raise RequestError(400, "invalid_max", raw)
     if value < 1:
-        raise RequestError(400, "invalid_max", "max 는 1 이상이어야 한다")
+        raise RequestError(400, "invalid_max", "max must be 1 or greater")
     return value
 
 
@@ -157,7 +157,7 @@ def _validated_limit(key: str, body: dict):
         return None
     value = body[key]
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise RequestError(400, "invalid_field", f"{key} 는 1 이상의 정수여야 한다")
+        raise RequestError(400, "invalid_field", f"{key} must be an integer of 1 or greater")
     return value
 
 

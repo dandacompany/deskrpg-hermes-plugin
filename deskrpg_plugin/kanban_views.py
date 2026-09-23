@@ -48,9 +48,9 @@ def _query_int(request, key: str, default: int, *, minimum: int | None = None, m
     try:
         value = int(raw)
     except ValueError:
-        raise RequestError(400, "invalid_query", f"{key} 는 정수여야 한다: {raw!r}")
+        raise RequestError(400, "invalid_query", f"{key} must be an integer: {raw!r}")
     if minimum is not None and value < minimum:
-        raise RequestError(400, "invalid_query", f"{key} 는 {minimum} 이상이어야 한다: {value}")
+        raise RequestError(400, "invalid_query", f"{key} must be {minimum} or greater: {value}")
     if maximum is not None and value > maximum:
         value = maximum
     return value
@@ -103,7 +103,7 @@ def runs_handler(api):
         to_ts = _query_int(request, "to", now)
         from_ts = _query_int(request, "from", to_ts - RUNS_WINDOW_DEFAULT_SECONDS)
         if from_ts > to_ts:
-            raise RequestError(400, "invalid_query", f"from 이 to 보다 뒤다: {from_ts} > {to_ts}")
+            raise RequestError(400, "invalid_query", f"from is after to: {from_ts} > {to_ts}")
         limit = _query_int(request, "limit", RUNS_LIMIT_DEFAULT, minimum=1, maximum=RUNS_LIMIT_MAX)
 
         def work():

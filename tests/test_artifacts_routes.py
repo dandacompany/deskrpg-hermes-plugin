@@ -301,7 +301,7 @@ async def test_쓰는_중_연결이_끊기면_두_번째_응답을_보내지_않
         await asyncio.sleep(0.01)
     resp.close()
     assert opened and opened[0].closed
-    assert "핸들러 예외" not in caplog.text
+    assert "handler exception" not in caplog.text
     assert "artifact.content_aborted" in caplog.text
 
 

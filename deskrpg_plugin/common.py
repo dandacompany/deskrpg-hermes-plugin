@@ -71,7 +71,7 @@ def guarded(fn):
         except RequestError as exc:
             return exc.response()
         except Exception as exc:  # noqa: BLE001 — 마지막 방어선. 내용은 로그에만, 그것도 타입만.
-            logger.exception("[deskrpg] 핸들러 예외: %s", type(exc).__name__)
+            logger.exception("[deskrpg] handler exception: %s", type(exc).__name__)
             return json_error(500, "internal_error", type(exc).__name__)
 
     return wrapper
@@ -90,9 +90,9 @@ def parse_board_slug(request) -> str:
     """
     slug = request.query.get("board")
     if slug is None or slug == "":
-        raise RequestError(400, "board_required", "?board=<slug> 가 필요하다")
+        raise RequestError(400, "board_required", "?board=<slug> is required")
     if not BOARD_SLUG_RE.fullmatch(slug):
-        raise RequestError(400, "invalid_board", f"보드 슬러그 형식이 아니다: {slug!r}")
+        raise RequestError(400, "invalid_board", f"not a valid board slug: {slug!r}")
     return slug
 
 
@@ -129,7 +129,7 @@ _MISSING = object()
 def _field(body: dict, key: str, required: bool):
     """값이 있으면 그 값, 없으면(키 부재·null) `_MISSING`. 필수인데 없으면 400."""
     if not isinstance(body, dict):
-        raise RequestError(400, "invalid_body", "JSON 객체가 필요하다")
+        raise RequestError(400, "invalid_body", "a JSON object is required")
     value = body.get(key, _MISSING)
     if value is _MISSING or value is None:
         if required:
@@ -143,7 +143,7 @@ def require_str(body: dict, key: str, *, required: bool = True, default=None, al
     if value is _MISSING:
         return default
     if not isinstance(value, str) or (not allow_empty and not value.strip()):
-        raise RequestError(400, "invalid_field", f"{key} 는 비어 있지 않은 문자열이어야 한다")
+        raise RequestError(400, "invalid_field", f"{key} must be a non-empty string")
     return value
 
 
@@ -153,9 +153,9 @@ def require_int(body: dict, key: str, *, required: bool = True, default=None, mi
         return default
     # bool 은 int 의 하위 타입이라 따로 걸러야 한다 — `true` 가 1 로 통과하면 안 된다.
     if isinstance(value, bool) or not isinstance(value, int):
-        raise RequestError(400, "invalid_field", f"{key} 는 정수여야 한다")
+        raise RequestError(400, "invalid_field", f"{key} must be an integer")
     if minimum is not None and value < minimum:
-        raise RequestError(400, "invalid_field", f"{key} 는 {minimum} 이상이어야 한다")
+        raise RequestError(400, "invalid_field", f"{key} must be {minimum} or greater")
     return value
 
 
@@ -164,7 +164,7 @@ def require_bool(body: dict, key: str, *, required: bool = True, default=None):
     if value is _MISSING:
         return default
     if not isinstance(value, bool):
-        raise RequestError(400, "invalid_field", f"{key} 는 true/false 여야 한다")
+        raise RequestError(400, "invalid_field", f"{key} must be true or false")
     return value
 
 
@@ -173,7 +173,7 @@ def require_str_list(body: dict, key: str, *, required: bool = True, default=Non
     if value is _MISSING:
         return default
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
-        raise RequestError(400, "invalid_field", f"{key} 는 문자열 배열이어야 한다")
+        raise RequestError(400, "invalid_field", f"{key} must be an array of strings")
     return value
 
 
@@ -182,9 +182,9 @@ async def read_json_object(request) -> dict:
     try:
         body = await request.json()
     except Exception:
-        raise RequestError(400, "invalid_json", "본문이 JSON 이 아니다")
+        raise RequestError(400, "invalid_json", "body is not JSON")
     if not isinstance(body, dict):
-        raise RequestError(400, "invalid_body", "JSON 객체가 필요하다")
+        raise RequestError(400, "invalid_body", "a JSON object is required")
     return body
 
 

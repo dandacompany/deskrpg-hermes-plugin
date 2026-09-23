@@ -28,7 +28,7 @@ def resolve_handler(api):
         body = await read_json_object(request)
         choice = require_str(body, "choice")
         if choice not in CHOICES:
-            raise RequestError(400, "invalid_field", f"choice 는 {', '.join(CHOICES)} 중 하나여야 한다")
+            raise RequestError(400, "invalid_field", f"choice must be one of {', '.join(CHOICES)}")
         task_id = require_str(body, "task_id", required=False, default=None)
 
         def work():
@@ -63,7 +63,7 @@ def unresolve_handler(api):
                 raise RequestError(404, "card_proposal_not_found", proposal_id)
             if not store.unresolve(api, proposal_id):
                 raise RequestError(409, "card_proposal_not_unresolvable",
-                                   "해소되지 않았거나 카드가 이미 기록됐다")
+                                   "not resolved, or a card is already recorded")
             return {"resolved": False}
 
         result = await run_blocking(work)
@@ -92,7 +92,7 @@ def record_task_handler(api):
                 raise RequestError(404, "card_proposal_not_found", proposal_id)
             if not store.record_task(api, proposal_id, task_id):
                 raise RequestError(409, "card_proposal_task_not_recordable",
-                                   "해소되지 않았거나, 카드 갈래가 아니거나, 카드가 이미 기록됐다")
+                                   "not resolved, not resolved as a card, or a card is already recorded")
             return {"recorded": True}
 
         result = await run_blocking(work)

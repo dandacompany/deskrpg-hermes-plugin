@@ -21,9 +21,10 @@ TOOLSET = "deskrpg"
 TOOL_SCHEMA = {
     "name": TOOL_NAME,
     "description": (
-        "사용자의 말에서 '지금 이 대화에서 끝내기보다 업무 카드로 남겨 추적하는 편이 나은 요청'을 "
-        "발견했을 때 부른다. 이 도구는 카드를 만들지 않는다 — 사용자에게 보여 줄 제안만 기록하고, "
-        "등록 여부는 사용자가 버튼으로 고른다. 단순 질문·잡담·즉답 가능한 부탁에는 부르지 않는다."
+        "Call when the user's message contains a request that is better tracked as a work card than finished "
+        "in this conversation. This tool does not create a card — it only records a proposal shown to the user, "
+        "who decides with a button whether to register it. Do not call it for simple questions, small talk or "
+        "requests you can answer right away."
     ),
     "parameters": {
         "type": "object",
@@ -31,11 +32,11 @@ TOOL_SCHEMA = {
         "properties": {
             "title": {"type": "string", "maxLength": 200},
             "summary": {"type": "string", "maxLength": 600,
-                        "description": "1~2문장. 무엇을 하는 일이고 왜 카드로 남기는가"},
+                        "description": "1-2 sentences: what the work is and why it should be a card"},
             "body": {"type": "string", "maxLength": 4000,
-                     "description": "카드 본문. 없으면 summary 를 쓴다"},
+                     "description": "card body. summary is used when omitted"},
             "acceptance": {"type": "string", "maxLength": 1000,
-                           "description": "무엇이 참이면 끝인가"},
+                           "description": "what must be true for it to be done"},
         },
         "additionalProperties": False,
     },
@@ -56,7 +57,7 @@ def make_handler(api):
         try:
             return _propose(api, args if isinstance(args, dict) else {}, kwargs)
         except Exception as exc:  # noqa: BLE001 — 도구는 예외를 밖으로 내지 않는다
-            logger.exception("[deskrpg] propose_kanban_card 예외: %s", type(exc).__name__)
+            logger.exception("[deskrpg] propose_kanban_card exception: %s", type(exc).__name__)
             return _err("internal_error", type(exc).__name__)
 
     return handler
@@ -66,7 +67,7 @@ def _propose(api, args: dict, kwargs: dict) -> str:
     title, summary = _str(args, "title", 200), _str(args, "summary", 600)
     missing = [name for name, value in (("title", title), ("summary", summary)) if not value]
     if missing:
-        return _err("invalid_arguments", f"{', '.join(missing)} 는 필수다")
+        return _err("invalid_arguments", f"{', '.join(missing)} is required")
     # 담당은 모델이 고르지 않는다 — 제안한 프로필이 담당 기본값이고 그 판정은 DeskRPG 가 한다.
     # 프로필도 모델 인자가 아니라 실행 중인 홈(또는 Hermes 가 준 kwargs)에서 읽는다.
     profile = str(kwargs.get("profile") or "").strip() or context.current_profile(api)

@@ -20,7 +20,7 @@ def register(ctx) -> None:
 
     def _wire(native, adapter) -> None:
         if native is None:
-            logger.warning("[deskrpg] api_server 가 native app 을 주지 않았다 — 등록을 건너뛴다")
+            logger.warning("[deskrpg] api_server did not provide a native app — skipping registration")
             return
         from .routes import attach
 
@@ -37,7 +37,7 @@ def _register_artifacts(ctx, api) -> None:
     except Exception as exc:  # noqa: BLE001 — 이 임포트 실패로 라우트까지 끌려 내려가면 안 된다
         # 로더(plugins_loader.py)는 register(ctx) 가 던지면 이 호출로 만든 등록을 전부(라우트
         # 포함) 폐기한다 — 그래서 이 import 도 개별 단계와 똑같이 감싸고 그냥 돌아간다.
-        logger.warning("[deskrpg] 아티팩트 모듈 import 실패: %s", type(exc).__name__)
+        logger.warning("[deskrpg] artifact module import failed: %s", type(exc).__name__)
         return
 
     steps = (
@@ -49,13 +49,13 @@ def _register_artifacts(ctx, api) -> None:
         ("prompt", lambda: ctx.register_system_prompt_section(
             artifacts_prompt.SECTION_ID, artifacts_prompt.SECTION_TEXT, position="after_memory")),
         ("skill", lambda: ctx.register_skill("artifact", artifacts_prompt.SKILL_PATH,
-                                              description="결과물을 DeskRPG 아티팩트로 저장하는 규칙")),
+                                              description="Rules for saving results as DeskRPG artifacts")),
     )
     for name, step in steps:
         try:
             step()
         except Exception as exc:  # noqa: BLE001 — 한 등록의 실패가 다른 등록을 막지 않는다
-            logger.warning("[deskrpg] 아티팩트 %s 등록 실패: %s", name, type(exc).__name__)
+            logger.warning("[deskrpg] artifact %s registration failed: %s", name, type(exc).__name__)
 
 
 def _register_card_proposal(ctx, api) -> None:
@@ -64,7 +64,7 @@ def _register_card_proposal(ctx, api) -> None:
     try:
         from . import card_proposal_prompt, card_proposal_tool
     except Exception as exc:  # noqa: BLE001 — 이 임포트 실패로 라우트까지 끌려 내려가면 안 된다
-        logger.warning("[deskrpg] 카드 제안 모듈 import 실패: %s", type(exc).__name__)
+        logger.warning("[deskrpg] card proposal module import failed: %s", type(exc).__name__)
         return
 
     steps = (
@@ -80,4 +80,4 @@ def _register_card_proposal(ctx, api) -> None:
         try:
             step()
         except Exception as exc:  # noqa: BLE001 — 한 등록의 실패가 다른 등록을 막지 않는다
-            logger.warning("[deskrpg] 카드 제안 %s 등록 실패: %s", name, type(exc).__name__)
+            logger.warning("[deskrpg] card proposal %s registration failed: %s", name, type(exc).__name__)

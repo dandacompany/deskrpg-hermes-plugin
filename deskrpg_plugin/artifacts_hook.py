@@ -54,7 +54,7 @@ def record_capture_failure(api, *, tool_name: str, reason: str) -> None:
             store._append_event(conn, int(time.time()), "artifact.capture_failed",
                                 {"tool_name": tool_name, "reason": reason})
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[deskrpg] capture_failed 사건 기록 실패: %s", type(exc).__name__)
+        logger.warning("[deskrpg] failed to record capture_failed event: %s", type(exc).__name__)
 
 
 def make_hook(api):
@@ -63,7 +63,7 @@ def make_hook(api):
         try:
             _capture(api, tool_name or "", result, session_id or "")
         except Exception as exc:  # noqa: BLE001 — 마지막 방어선
-            logger.exception("[deskrpg] 아티팩트 훅 예외: %s", type(exc).__name__)
+            logger.exception("[deskrpg] artifact hook exception: %s", type(exc).__name__)
             record_capture_failure(api, tool_name=tool_name or "", reason=type(exc).__name__)
 
     return hook
@@ -113,7 +113,7 @@ def _capture(api, tool_name: str, result, session_id: str) -> None:
         if ctx is None:
             ctx = context.resolve_context(api, session_id=session_id)
         meta = store.ArtifactMeta(
-            kind=policy.kind_for_filename(source.name), title=source.name, summary=f"`{tool_name}` 이 만든 파일",
+            kind=policy.kind_for_filename(source.name), title=source.name, summary=f"File created by `{tool_name}`",
             filename=source.name, mime=policy.mime_for_filename(source.name), profile=ctx.profile,
             source_kind=ctx.source_kind, session_id=ctx.session_id, created_by=f"agent:{ctx.profile}",
             captured_via="hook", board=ctx.board, task_id=ctx.task_id, origin_path=str(source),
@@ -125,7 +125,7 @@ def _capture(api, tool_name: str, result, session_id: str) -> None:
                       tool=tool_name, deduped=out.deduped)
             saved += 1
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[deskrpg] 아티팩트 승격 실패: %s", type(exc).__name__)
+            logger.warning("[deskrpg] artifact promotion failed: %s", type(exc).__name__)
             record_capture_failure(api, tool_name=tool_name, reason=type(exc).__name__)
 
 
@@ -185,11 +185,11 @@ class _TurnWriter:
             log_event(event, artifact_id=out.artifact_id, version=out.version, kind=meta.kind, deduped=out.deduped)
             return True
         except sqlite3.OperationalError as exc:
-            logger.warning("[deskrpg] 아티팩트 저장 중단(레지스트리): %s", type(exc).__name__)
+            logger.warning("[deskrpg] artifact save aborted (registry): %s", type(exc).__name__)
             self.reasons.append(type(exc).__name__)
             self.stopped = True
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[deskrpg] 아티팩트 저장 실패: %s", type(exc).__name__)
+            logger.warning("[deskrpg] artifact save failed: %s", type(exc).__name__)
             self.reasons.append(type(exc).__name__)
         return False
 
@@ -222,7 +222,7 @@ def make_response_hook(api):
         try:
             _capture_response(api, assistant_response, session_id or "")
         except Exception as exc:  # noqa: BLE001 — 마지막 방어선
-            logger.exception("[deskrpg] 응답 아티팩트 훅 예외: %s", type(exc).__name__)
+            logger.exception("[deskrpg] response artifact hook exception: %s", type(exc).__name__)
             record_capture_failure(api, tool_name=RESPONSE_SOURCE, reason=type(exc).__name__)
 
     return hook
@@ -255,7 +255,7 @@ def _capture_response(api, response, session_id: str) -> None:
             attempts += 1
             ctx = writer.context()
             meta = store.ArtifactMeta(
-                kind=found.kind, title=found.title, summary=f"응답 속 {found.language} 코드 블록",
+                kind=found.kind, title=found.title, summary=f"{found.language} code block in the response",
                 filename=found.filename, mime=policy.mime_for_filename(found.filename), profile=ctx.profile,
                 source_kind=ctx.source_kind, session_id=ctx.session_id, created_by=f"agent:{ctx.profile}",
                 captured_via="response", board=ctx.board, task_id=ctx.task_id,

@@ -39,9 +39,9 @@ def _load_config(home) -> dict:
     except _config.ConfigUnreadable as exc:
         # 사유 문자열을 싣지 않는다 — PyYAML 오류는 망가진 줄을 인용하므로 `api_key: "sk-…` 같은
         # 값이 그대로 나간다. 응답은 고정 문구, 로그는 타입 이름, 체인은 끊는다(`from None`).
-        logger.warning("[deskrpg] 피커 config 읽기 실패: %s",
+        logger.warning("[deskrpg] picker config read failed: %s",
                        type(exc.__cause__ or exc).__name__)
-        raise RequestError(409, "config_unreadable", "config.yaml 을 해석할 수 없다") from None
+        raise RequestError(409, "config_unreadable", "config.yaml cannot be parsed") from None
 
 
 def _configurable(api):
@@ -64,7 +64,7 @@ def _features_kwargs(api, cfg) -> dict:
     try:
         return {"features": fn(cfg)}
     except Exception as exc:  # noqa: BLE001 — 목록 전체를 죽이지 않는다
-        logger.warning("[deskrpg] 구독 기능 판정 실패: %s", type(exc).__name__)
+        logger.warning("[deskrpg] subscription feature check failed: %s", type(exc).__name__)
         return {}
 
 
@@ -79,7 +79,7 @@ def toolset_rows(api, home) -> list[dict]:
             try:
                 configured = bool(api._toolset_has_keys(name, cfg, **extra))
             except Exception as exc:  # noqa: BLE001 — 한 툴셋의 판정 실패가 목록을 죽이면 안 된다
-                logger.warning("[deskrpg] 툴셋 키 판정 실패: %s — %s", name, type(exc).__name__)
+                logger.warning("[deskrpg] toolset key check failed: %s — %s", name, type(exc).__name__)
                 configured = None
             row = {"name": name, "label": label, "description": description,
                    "enabled": name in enabled, "configured": configured}

@@ -63,7 +63,7 @@ def _yaml_fault_location(exc) -> str:
     mark = getattr(exc, "problem_mark", None)
     if mark is None:
         return ""
-    return f" ({mark.line + 1}번째 줄 {mark.column + 1}번째 칸)"
+    return f" (line {mark.line + 1}, column {mark.column + 1})"
 
 
 def _value_error(key, value):
@@ -140,20 +140,20 @@ def _load(path):
         # UnicodeDecodeError 의 메시지는 깨진 바이트열을 담는다. `from None` 으로
         # 체인을 끊어 상위 트레이스백에도 원문이 실리지 않게 한다.
         raise ConfigUnreadable(
-            f"config.yaml 을 읽을 수 없다 ({type(exc).__name__})"
+            f"config.yaml cannot be read ({type(exc).__name__})"
         ) from None
 
     try:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise ConfigUnreadable(
-            f"config.yaml 의 YAML 문법이 올바르지 않다{_yaml_fault_location(exc)}"
+            f"config.yaml has invalid YAML syntax{_yaml_fault_location(exc)}"
         ) from None
 
     if data is None:
         return {}
     if not isinstance(data, dict):
-        raise ConfigUnreadable("config.yaml 최상위 구조가 매핑(dict)이 아니다")
+        raise ConfigUnreadable("config.yaml top level is not a mapping (dict)")
     return data
 
 
@@ -248,7 +248,7 @@ def get_handler(api):
             # 500 으로 새지 않는다 — 이 라우트는 설정 화면이 여는 첫 요청이라,
             # 파일이 망가졌다고 화면 자체가 못 뜨면 고칠 방법도 없어진다.
             # 값은 전부 null 로 두고 unreadable 플래그로 "비어있음"과 구분한다.
-            logger.warning("[deskrpg] config 읽기 실패: %s", type(exc).__name__)
+            logger.warning("[deskrpg] config read failed: %s", type(exc).__name__)
             return web.json_response(
                 {
                     "model": None,
@@ -319,7 +319,7 @@ def put_handler(api):
             # 영영 잃는다 — 여기서 거절하는 편이 백업-후-덮어쓰기보다 안전하다.
             # 호출자가 먼저 config.yaml 을 직접 고치거나 지워야 한다.
             logger.warning(
-                "[deskrpg] config 쓰기 거부 — 기존 파일을 해석할 수 없다: %s",
+                "[deskrpg] config write refused — existing file cannot be parsed: %s",
                 type(exc).__name__,
             )
             # 사유는 이제 한 줄 고정 문장이다(원문을 싣지 않으므로) — 그래도
@@ -338,7 +338,7 @@ def put_handler(api):
             # 값을 %r 로 찍지 않는다 — 사용자가 그 자리에 무엇을 적어 두었는지
             # 알 수 없고, 이 파일에는 인라인 키가 들어갈 수 있다.
             logger.warning(
-                "[deskrpg] config 쓰기 거부 — 기존 model 키가 매핑이 아니다: %s",
+                "[deskrpg] config write refused — existing model key is not a mapping: %s",
                 type(existing_model).__name__,
             )
             return web.json_response(

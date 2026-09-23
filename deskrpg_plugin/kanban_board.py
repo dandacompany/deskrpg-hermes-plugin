@@ -83,7 +83,7 @@ def _board_from_query(api, request) -> str:
 def _board_from_path(api, request) -> str:
     slug = request.match_info["slug"]
     if not BOARD_SLUG_RE.fullmatch(slug):
-        raise RequestError(400, "invalid_board", f"보드 슬러그 형식이 아니다: {slug!r}")
+        raise RequestError(400, "invalid_board", f"not a valid board slug: {slug!r}")
     return _require_board(api, slug)
 
 
@@ -98,7 +98,7 @@ def _validate_workdir(path):
     if path is None or path == "":
         return path
     if not os.path.isabs(path) or not os.path.isdir(path):
-        raise RequestError(400, "invalid_workdir", "default_workdir 는 존재하는 절대경로여야 한다")
+        raise RequestError(400, "invalid_workdir", "default_workdir must be an existing absolute path")
     return path
 
 
@@ -160,7 +160,7 @@ def create_board_handler(api):
         _reject_unknown_keys(body, {"slug", "name", "default_workdir"})
         slug = require_str(body, "slug")
         if not BOARD_SLUG_RE.fullmatch(slug):
-            raise RequestError(400, "invalid_board", f"보드 슬러그 형식이 아니다: {slug!r}")
+            raise RequestError(400, "invalid_board", f"not a valid board slug: {slug!r}")
         name = require_str(body, "name")
         workdir = _validate_workdir(require_str(body, "default_workdir", required=False, allow_empty=True))
 
@@ -303,14 +303,14 @@ def _parse_create_body(body: dict) -> dict:
     kind = require_str(body, "workspace_kind", required=False)
     if kind is not None:
         if kind not in WORKSPACE_KINDS:
-            raise RequestError(400, "invalid_field", f"workspace_kind 는 {'|'.join(WORKSPACE_KINDS)} 중 하나여야 한다")
+            raise RequestError(400, "invalid_field", f"workspace_kind must be one of {'|'.join(WORKSPACE_KINDS)}")
         fields["workspace_kind"] = kind
     status = require_str(body, "initial_status", required=False)
     if status is not None:
         # 모르는 값을 Hermes 로 흘리지 않는다 — 거기서는 ValueError 가 되어 400 invalid_task 로
         # 뭉뚱그려지고, 어느 필드가 틀렸는지 부르는 쪽이 알 수 없다.
         if status not in INITIAL_STATUSES:
-            raise RequestError(400, "invalid_field", f"initial_status 는 {'|'.join(INITIAL_STATUSES)} 중 하나여야 한다")
+            raise RequestError(400, "invalid_field", f"initial_status must be one of {'|'.join(INITIAL_STATUSES)}")
         fields["initial_status"] = status
     if "review_policy" in body:
         policy = body["review_policy"]
@@ -459,13 +459,13 @@ def _refused(api, conn, task_id: str, status: str, detail=None) -> RequestError:
         blockers = _parents_blocking_ready(api, conn, task_id)
         if blockers:
             names = ", ".join(f"{p.title!r} ({p.id}, status={p.status})" for p in blockers)
-            return RequestError(409, "invalid_transition", f"부모가 끝나지 않아 ready 로 갈 수 없다 — {names}")
-    return RequestError(409, "invalid_transition", detail or f"현재 상태에서 {status!r} 로 갈 수 없다")
+            return RequestError(409, "invalid_transition", f"cannot move to ready because a parent is not done — {names}")
+    return RequestError(409, "invalid_transition", detail or f"cannot move to {status!r} from the current status")
 
 
 def _patch_status(api, conn, task_id: str, status: str, assignee) -> None:
     if status == "running":
-        raise RequestError(409, "invalid_transition", "running 은 직접 지정할 수 없다 — 디스패처가 잡는다")
+        raise RequestError(409, "invalid_transition", "running cannot be set directly — the dispatcher claims cards")
     try:
         ok = _apply_status(api, conn, task_id, status, assignee)
     except (RuntimeError, ValueError) as exc:
@@ -536,7 +536,7 @@ def _parse_patch_body(body: dict) -> dict:
     if "status" in body:
         status = require_str(body, "status")
         if status not in CARD_STATUSES:
-            raise RequestError(400, "invalid_field", f"status 는 {'|'.join(CARD_STATUSES)} 중 하나여야 한다")
+            raise RequestError(400, "invalid_field", f"status must be one of {'|'.join(CARD_STATUSES)}")
         out["status"] = status
     for key in ("model_override", "provider_override", "reasoning_effort"):
         if key in body:
@@ -655,7 +655,7 @@ def add_comment_handler(api):
                     if c.id == comment_id:
                         log_event("task.comment", board=slug, task_id=task_id, comment_id=comment_id, body_len=len(text))
                         return project(asdict(c), KANBAN_COMMENT_KEYS)
-            raise RuntimeError(f"add_comment 가 돌려준 id {comment_id} 가 목록에 없다")
+            raise RuntimeError(f"the id returned by add_comment {comment_id} is not in the list")
 
         return web.json_response({"comment": await run_blocking(work)}, status=201)
 
@@ -665,7 +665,7 @@ def add_comment_handler(api):
 def link_handler(api, op: str):
     """`op` ∈ add|remove. 순환 400 `link_cycle`, 없는 카드 404. remove 는 `{ok: 실제로 지웠는지}`."""
     if op not in ("add", "remove"):
-        raise ValueError(f"link_handler op 는 add|remove 다: {op!r}")
+        raise ValueError(f"link_handler op must be add|remove: {op!r}")
 
     @guarded
     async def handler(request):

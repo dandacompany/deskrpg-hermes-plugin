@@ -6,11 +6,11 @@ SECTION_ID = "deskrpg.artifacts"
 SKILL_PATH = Path(__file__).resolve().parent.parent / "skills" / "artifact" / "SKILL.md"
 
 SECTION_TEXT = (
-    "## 아티팩트\n"
-    "사용자가 결과물을 \"아티팩트로 저장/보관/등록해\", \"결과물로 남겨\" 라고 하면 `artifact_save` 도구를 부른다. "
-    "저장 전에 산출물을 종류에 맞는 완결된 형태로 만든다 — 웹 페이지는 하나의 완전한 HTML 파일, 데이터는 CSV/JSON, "
-    "보고서는 Markdown, 이미지·미디어는 파일 경로. 이미 저장한 것을 고쳤으면 `supersedes` 에 이전 artifact_id 를 넣고 "
-    "`note` 에 무엇을 바꿨는지 적는다. 사용자가 말하지 않은 중간 산출물은 저장하지 않는다. "
-    "링크를 남기라고 하면 `artifact_save` 에 `kind=link`, `url`, `summary` 만 넘긴다. "
-    "저장 뒤에는 제목과 artifact_id 를 한 줄로 알린다."
+    "## Artifacts\n"
+    "When the user asks to save, keep or register a result as an artifact (in any language), call the `artifact_save` tool. "
+    "Before saving, put the output in the complete form for its kind — a web page is one complete HTML file, data is CSV/JSON, "
+    "a report is Markdown, images and media are file paths. If you revised something already saved, put the previous "
+    "artifact_id in `supersedes` and say what changed in `note`. Do not save intermediate outputs the user did not ask for. "
+    "When asked to keep a link, pass only `kind=link`, `url` and `summary` to `artifact_save`. "
+    "After saving, report the title and artifact_id in one line."
 )

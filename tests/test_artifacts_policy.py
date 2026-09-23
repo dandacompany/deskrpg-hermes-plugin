@@ -88,7 +88,7 @@ def test_data_는_csv_json_이어야_하고_image_media_는_경로여야_한다(
         policy.validate_completeness("data", filename="a.txt", text="1,2", from_path=False)
     with pytest.raises(policy.PolicyError) as e:
         policy.validate_completeness("image", filename="a.png", text="....", from_path=False)
-    assert "경로" in e.value.detail
+    assert "file path" in e.value.detail
     policy.validate_completeness("image", filename="a.png", text=None, from_path=True)
 
 
@@ -123,7 +123,7 @@ def test_상대_경로는_작업_디렉터리와_무관하게_거부되고_절�
     with pytest.raises(policy.PolicyError) as e:
         policy.resolve_source_path(api, "rel.md")
     assert e.value.code == "artifact_path_outside_root"
-    assert "절대 경로" in e.value.detail
+    assert "absolute path" in e.value.detail
 
 
 @pytest.mark.parametrize("name", ["state.db", "kanban.db-wal", "kanban.db-shm", "x.db-journal", "a.sqlite", "b.SQLITE3", "C.DB"])

@@ -72,7 +72,7 @@ def _read(path):
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as exc:
-        raise SoulUnreadable(f"SOUL.md 읽기 실패: {exc}") from exc
+        raise SoulUnreadable(f"failed to read SOUL.md: {exc}") from exc
 
 
 def get_handler(api):

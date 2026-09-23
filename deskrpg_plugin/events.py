@@ -389,7 +389,7 @@ def _open_sdb(api, home):
     try:
         return cron_results.open_session_db(api, home)
     except Exception as exc:
-        logger.debug("[deskrpg] state.db 열기 실패 home=%s: %s", home, exc)
+        logger.debug("[deskrpg] failed to open state.db home=%s: %s", home, exc)
         return None
 
 
@@ -532,7 +532,7 @@ def _fallback_events(api, profile, home, part, tz) -> tuple:
     try:
         jobs = api.list_jobs(include_disabled=True)
     except Exception as exc:
-        logger.debug("[deskrpg] 크론 잡 목록 실패 profile=%s: %s", profile, exc)
+        logger.debug("[deskrpg] cron job list failed profile=%s: %s", profile, exc)
         return [], []
     jobs = sorted(jobs, key=lambda j: str(j.get("last_run_at") or ""))
     events = []
@@ -607,7 +607,7 @@ def cron_tail(api, cursor_c: dict, tz) -> tuple:
                 else:
                     profile_events, candidates = _fallback_events(api, profile, home, part, tz)
         except Exception as exc:
-            logger.warning("[deskrpg] 크론 사건 수집 실패 profile=%s: %s", profile, exc)
+            logger.warning("[deskrpg] cron event collection failed profile=%s: %s", profile, exc)
             continue
         events.extend(profile_events)
         info[profile] = {"t": part.get("t"), "o": dict(part.get("o") or {}), "candidates": candidates}
@@ -638,7 +638,7 @@ def cron_now_positions(api) -> dict:
                         if isinstance(claim, dict) and claim.get("at"):
                             o[f"{job.get('id')}@{claim['at']}"] = "running"
         except Exception as exc:
-            logger.warning("[deskrpg] 크론 위치 조회 실패 profile=%s: %s", profile, exc)
+            logger.warning("[deskrpg] cron cursor lookup failed profile=%s: %s", profile, exc)
             continue
         out[profile] = {"t": t, "o": o}
     return out

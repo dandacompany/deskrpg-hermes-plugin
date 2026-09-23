@@ -70,22 +70,22 @@ def resolve_source_path(api, raw: str) -> Path:
     except (RuntimeError, ValueError):
         is_absolute = False
     if not is_absolute:
-        raise PolicyError("artifact_path_outside_root", "절대 경로가 필요하다 — 상대 경로는 받지 않는다")
+        raise PolicyError("artifact_path_outside_root", "an absolute path is required — relative paths are not accepted")
     try:
         target = Path(raw).expanduser().resolve(strict=True)
     except (OSError, RuntimeError, ValueError):
-        raise PolicyError("artifact_path_outside_root", "파일이 없거나 읽을 수 없다")
+        raise PolicyError("artifact_path_outside_root", "file does not exist or cannot be read")
     if not target.is_file():
-        raise PolicyError("artifact_path_outside_root", "파일이 아니다")
+        raise PolicyError("artifact_path_outside_root", "not a file")
     if not any(target == root or root in target.parents for root in allowed_source_roots(api)):
-        raise PolicyError("artifact_path_outside_root", "게이트웨이 관리 루트 밖의 경로다")
+        raise PolicyError("artifact_path_outside_root", "path is outside the gateway-managed roots")
     if is_sensitive_path(target) or is_sensitive_path(Path(raw)):
-        raise PolicyError("artifact_path_sensitive", "자격증명 파일은 아티팩트로 저장할 수 없다")
+        raise PolicyError("artifact_path_sensitive", "credential files cannot be saved as artifacts")
     if is_database_file(target) or is_database_file(Path(raw)):
-        raise PolicyError("artifact_path_sensitive", "데이터베이스 파일(.db·.sqlite 와 WAL/SHM/저널)은 아티팩트로 저장할 수 없다")
+        raise PolicyError("artifact_path_sensitive", "database files (.db, .sqlite and their WAL/SHM/journal files) cannot be saved as artifacts")
     own = store.artifacts_root(api).resolve()
     if target == own or own in target.parents:
-        raise PolicyError("artifact_path_sensitive", "아티팩트 저장소 안의 파일은 다시 저장할 수 없다")
+        raise PolicyError("artifact_path_sensitive", "files inside the artifact store cannot be saved again")
     return target
 
 
@@ -136,27 +136,27 @@ def mime_for_filename(name: str) -> str:
 
 def validate_completeness(kind: str, *, filename: str, text, from_path: bool) -> None:
     if kind not in KINDS:
-        raise PolicyError("artifact_bad_kind", f"kind 는 {', '.join(KINDS)} 중 하나다")
+        raise PolicyError("artifact_bad_kind", f"kind must be one of {', '.join(KINDS)}")
     if kind == "link":
-        raise PolicyError("artifact_incomplete", "link 는 path·content 가 아니라 url 인자로 저장한다")
+        raise PolicyError("artifact_incomplete", "a link is saved with the url argument, not path or content")
     suffix = Path(filename).suffix.lower()
     body = (text or "").lower()
     if kind == "web" and "<html" not in body and "<!doctype html" not in body:
-        raise PolicyError("artifact_incomplete", "web 은 완전한 HTML 문서여야 한다 — <html> 또는 <!doctype html> 이 없다")
+        raise PolicyError("artifact_incomplete", "web must be a complete HTML document — no <html> or <!doctype html> found")
     if kind == "react":
         if suffix not in (".tsx", ".jsx"):
-            raise PolicyError("artifact_incomplete", "react 는 .tsx 또는 .jsx 파일이어야 한다")
+            raise PolicyError("artifact_incomplete", "react must be a .tsx or .jsx file")
         if "export default" not in body:
-            raise PolicyError("artifact_incomplete", "react 는 기본 내보내기(export default)가 있는 단일 컴포넌트 파일이어야 한다")
+            raise PolicyError("artifact_incomplete", "react must be a single component file with a default export (export default)")
     if kind == "data" and suffix not in (".csv", ".json", ".jsonl"):
-        raise PolicyError("artifact_incomplete", "data 는 CSV 또는 JSON 이어야 한다")
+        raise PolicyError("artifact_incomplete", "data must be CSV or JSON")
     if kind == "document" and suffix not in (".md", ".txt", ".pdf", ".docx", ".doc", ".rtf", ".html"):
-        raise PolicyError("artifact_incomplete", "document 는 md·txt·pdf·docx·html 이어야 한다")
+        raise PolicyError("artifact_incomplete", "document must be md, txt, pdf, docx or html")
     if kind in ("image", "media"):
         if not from_path:
-            raise PolicyError("artifact_incomplete", f"{kind} 는 인라인 본문이 아니라 파일 경로로 넘겨야 한다")
+            raise PolicyError("artifact_incomplete", f"{kind} must be passed as a file path, not inline content")
         if _KIND_BY_EXT.get(suffix) != kind:
             if kind == "image":
-                raise PolicyError("artifact_incomplete", "image 는 png·jpg·gif·webp·svg·bmp 파일이어야 한다")
+                raise PolicyError("artifact_incomplete", "image must be a png, jpg, gif, webp, svg or bmp file")
             else:  # kind == "media"
-                raise PolicyError("artifact_incomplete", "media 는 오디오·비디오 파일(mp3·wav·mp4·webm 등)이어야 한다")
+                raise PolicyError("artifact_incomplete", "media must be an audio or video file (mp3, wav, mp4, webm, ...)")

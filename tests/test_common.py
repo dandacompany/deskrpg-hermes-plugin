@@ -169,7 +169,7 @@ async def test_guarded_는_예상_못_한_예외를_500_internal_error_타입_�
     assert resp.text == '{"error": "internal_error", "detail": "RuntimeError"}'
     assert "secret-token-abc" not in resp.text
     # 로그 메시지 자체에도 타입 이름만 — 트레이스는 exc_info 로 붙는다.
-    assert any(r.getMessage() == "[deskrpg] 핸들러 예외: RuntimeError" and r.exc_info for r in caplog.records)
+    assert any(r.getMessage() == "[deskrpg] handler exception: RuntimeError" and r.exc_info for r in caplog.records)
 
 
 async def test_guarded_는_정상_응답을_그대로_돌려준다():

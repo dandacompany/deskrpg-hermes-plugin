@@ -239,7 +239,7 @@ def _assert_no_duplicate_names():
     for _module, names in (*SPEC, *OPTIONAL_SPEC):
         for name in names:
             if name in seen:
-                raise AssertionError(f"_hermes_api.SPEC 에 같은 이름이 두 번 있다: {name}")
+                raise AssertionError(f"duplicate name in _hermes_api.SPEC: {name}")
             seen.add(name)
 
 
@@ -257,7 +257,7 @@ def load() -> types.SimpleNamespace:
         try:
             module = importlib.import_module(module_path)
         except Exception as exc:  # ImportError 뿐 아니라 초기화 실패도 잡는다
-            raise MissingHermesApi(f"{module_path} 를 임포트할 수 없다: {exc!r}") from exc
+            raise MissingHermesApi(f"{module_path} cannot be imported: {exc!r}") from exc
         for name in names:
             value = getattr(module, name, None)
             if value is None:
@@ -265,7 +265,7 @@ def load() -> types.SimpleNamespace:
             resolved[name] = value
 
     if missing:
-        raise MissingHermesApi("없는 심볼: " + ", ".join(missing))
+        raise MissingHermesApi("missing symbols: " + ", ".join(missing))
 
     for module_path, names in OPTIONAL_SPEC:
         try:

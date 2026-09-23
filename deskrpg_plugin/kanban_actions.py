@@ -47,7 +47,7 @@ def transition_error(detail) -> RequestError:
     return RequestError(409, "invalid_transition", str(detail) if detail else None)
 
 
-def _check(ok, detail="Hermes 가 전이를 거절했다"):
+def _check(ok, detail="Hermes rejected the transition"):
     """Hermes 의 bool 반환을 409 로 바꾼다."""
     if not ok:
         raise transition_error(detail)
@@ -74,12 +74,12 @@ def _do_reassign(api, conn, task_id, body, actor):
     if not api.profile_exists(profile):
         raise RequestError(400, "profile_not_found", profile)
     ok = api.reassign_task(conn, task_id, profile, reclaim_first=reclaim_first)
-    _check(ok, "카드가 실행 중이다 — reclaim_first 로 먼저 되찾아야 한다")
+    _check(ok, "the card is running — reclaim it first with reclaim_first")
     return {}
 
 
 def _do_reclaim(api, conn, task_id, body, actor):
-    _check(api.reclaim_task(conn, task_id, reason=RECLAIM_REASON), "실행 중이 아니라 되찾을 것이 없다")
+    _check(api.reclaim_task(conn, task_id, reason=RECLAIM_REASON), "nothing to reclaim — the card is not running")
     return {}
 
 
@@ -87,7 +87,7 @@ def _do_approve(api, conn, task_id, body, actor):
     result = require_str(body, "result", required=False, allow_empty=True)
     summary = require_str(body, "summary", required=False, allow_empty=True)
     ok = api.complete_task(conn, task_id, result=result, summary=summary)
-    _check(ok, "완료할 수 있는 상태(running/ready/blocked/review)가 아니거나 부모가 끝나지 않았다")
+    _check(ok, "not in a completable status (running/ready/blocked/review), or a parent is not done")
     return {}
 
 
@@ -104,19 +104,19 @@ def _do_request_changes(api, conn, task_id, body, actor):
             _check(ok, info)
             return {"outcome": "changes_requested"}
         # (4) 구현자 run 이 도는 중 — 끊지 않는다. terminate 는 별도 동작이다.
-        raise RequestError(409, "implementer_running", "구현자 run 이 실행 중이다 — 먼저 terminate 하거나 끝나기를 기다린다")
+        raise RequestError(409, "implementer_running", "the implementer run is still running — terminate it first or wait for it to finish")
     # (3) run 없이 review 에 머무는 카드 — 구현자가 새 댓글을 보고 다시 돌도록 연다.
     if task.status == "review":
-        _check(api.reopen_review_task(conn, task_id), "review 카드를 다시 열 수 없다")
+        _check(api.reopen_review_task(conn, task_id), "the review card cannot be reopened")
         return {"outcome": "reopened"}
-    raise transition_error(f"카드가 review 가 아니고(status={task.status}) 활성 run 도 없다")
+    raise transition_error(f"the card is not in review (status={task.status}) and has no active run")
 
 
 def _do_unblock(api, conn, task_id, body, actor):
     comment = require_str(body, "comment", required=False)
     if comment:
         api.add_comment(conn, task_id, actor, comment)
-    _check(api.unblock_task(conn, task_id), "blocked/scheduled 상태가 아니다")
+    _check(api.unblock_task(conn, task_id), "not blocked or scheduled")
     return {}
 
 
@@ -124,12 +124,12 @@ def _do_terminate(api, conn, task_id, body, actor):
     if _active_run(api, conn, task_id) is None:
         raise RequestError(409, "no_active_run", task_id)
     # signal_fn 을 넘기지 않는다 — 기본(os.kill)이 워커 PID 를 SIGTERM→SIGKILL 로 실제 종료한다.
-    _check(api.reclaim_task(conn, task_id, reason=TERMINATE_REASON), "run 을 되찾을 수 있는 상태가 아니다")
+    _check(api.reclaim_task(conn, task_id, reason=TERMINATE_REASON), "the run cannot be reclaimed in this status")
     return {}
 
 
 def _do_archive(api, conn, task_id, body, actor):
-    _check(api.archive_task(conn, task_id), "이미 보관됐다")
+    _check(api.archive_task(conn, task_id), "already archived")
     return {}
 
 
@@ -176,7 +176,7 @@ def _run_llm_action(api, slug: str, task_id: str, name: str, actor: str):
 def action_handler(api, name: str):
     """동작 이름 하나에 대한 aiohttp 핸들러. 모르는 이름은 구성 시점에 거절한다."""
     if name not in KANBAN_TASK_ACTIONS:
-        raise ValueError(f"모르는 칸반 동작: {name!r}")
+        raise ValueError(f"unknown kanban action: {name!r}")
 
     @guarded
     async def handler(request):
@@ -184,7 +184,7 @@ def action_handler(api, name: str):
         try:
             slug = parse_board_slug(request)
             if name == "estimate":
-                raise RequestError(501, "not_implemented", "estimate 는 아직 지원하지 않는다")
+                raise RequestError(501, "not_implemented", "estimate is not supported yet")
             actor = actor_from_request(request)
             if name in ("specify", "decompose"):
                 payload, extra = await run_blocking(_run_llm_action, api, slug, task_id, name, actor)

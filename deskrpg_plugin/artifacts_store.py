@@ -254,7 +254,7 @@ def _resolve_target(conn, meta: ArtifactMeta) -> str | None:
         ).fetchone()
         if row:
             if row["kind"] != meta.kind and "link" in (row["kind"], meta.kind):
-                raise ArtifactKindMismatch(f"supersedes 대상은 {row['kind']} 인데 {meta.kind} 로 저장하려 했다")
+                raise ArtifactKindMismatch(f"the supersedes target is {row['kind']} but this save is {meta.kind}")
             return row["id"]
     row = conn.execute(
         "SELECT id FROM artifacts WHERE session_id=? AND kind=? AND title_norm=? AND deleted_at IS NULL "

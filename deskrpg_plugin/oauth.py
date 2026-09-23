@@ -93,12 +93,12 @@ def start_handler(api):
                 # 디바이스 로그인 지원은 위에서 확인했다 — 여기의 400 은 Hermes 가 이 시작을 거절한 것이다
                 # (예: Nous "이미 로그인됨"·무료 등급 불가).
                 raise RequestError(400, "oauth_start_rejected", detail) from None
-            logger.warning("[deskrpg] OAuth 시작 실패: %s — %s", provider_id, type(exc).__name__)
+            logger.warning("[deskrpg] OAuth start failed: %s — %s", provider_id, type(exc).__name__)
             raise RequestError(502, "oauth_start_failed", detail or type(exc).__name__) from None
         url = str(out.get("verification_url") or "")
         if not url.startswith(("https://", "http://")):
             raise RequestError(502, "oauth_start_failed", "verification url is not http(s)")
-        logger.info("[deskrpg] OAuth 시작: %s (session=%s)", provider_id, str(out.get("session_id"))[:6])
+        logger.info("[deskrpg] OAuth started: %s (session=%s)", provider_id, str(out.get("session_id"))[:6])
         return web.json_response({
             "sessionId": out["session_id"], "userCode": out["user_code"], "verificationUrl": url,
             "expiresIn": int(out.get("expires_in") or 0), "pollInterval": int(out.get("poll_interval") or 5),
@@ -170,7 +170,7 @@ def disconnect_handler(api):
                 return bool(api.clear_provider_auth(provider_id))
 
         cleared = await run_blocking(_clear)
-        logger.info("[deskrpg] OAuth 연결 끊기: %s (cleared=%s)", provider_id, cleared)
+        logger.info("[deskrpg] OAuth disconnected: %s (cleared=%s)", provider_id, cleared)
         return web.json_response({"ok": cleared})
 
     return handler

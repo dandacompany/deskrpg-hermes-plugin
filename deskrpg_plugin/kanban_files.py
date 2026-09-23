@@ -91,7 +91,7 @@ def _decode_cursor(token: str, slug: str) -> tuple:
             raise ValueError
         return data["t"], int(data["i"])
     except (ValueError, KeyError, TypeError, binascii.Error, UnicodeDecodeError):
-        raise RequestError(400, "unknown_cursor", "커서 없이 다시 부른다")
+        raise RequestError(400, "unknown_cursor", "call again without a cursor")
 
 
 def _limit(request) -> int:
@@ -101,9 +101,9 @@ def _limit(request) -> int:
     try:
         value = int(raw)
     except ValueError:
-        raise RequestError(400, "invalid_query", f"limit 는 정수여야 한다: {raw!r}")
+        raise RequestError(400, "invalid_query", f"limit must be an integer: {raw!r}")
     if value < 1:
-        raise RequestError(400, "invalid_query", f"limit 는 1 이상이어야 한다: {value}")
+        raise RequestError(400, "invalid_query", f"limit must be 1 or greater: {value}")
     return min(value, BOARD_ATTACHMENTS_LIMIT_MAX)
 
 
@@ -162,7 +162,7 @@ async def _read_file_part(request, max_bytes: int):
     몇 배를 붙들고 있어선 안 된다. 넘으면 `None` 을 돌려주고 호출자가 413 을 낸다.
     """
     if not (request.content_type or "").startswith("multipart/"):
-        raise RequestError(400, "invalid_body", "multipart/form-data 의 `file` 파트가 필요하다")
+        raise RequestError(400, "invalid_body", "a `file` part in multipart/form-data is required")
     reader = await request.multipart()
     async for part in reader:
         if part.name != "file":
@@ -180,7 +180,7 @@ async def _read_file_part(request, max_bytes: int):
             chunks.append(chunk)
         content_type = part.headers.get("Content-Type") or None
         return part.filename or "", content_type, b"".join(chunks)
-    raise RequestError(400, "missing_file", "multipart 에 `file` 파트가 없다")
+    raise RequestError(400, "missing_file", "the multipart body has no `file` part")
 
 
 def upload_attachment_handler(api):
@@ -302,7 +302,7 @@ def _parse_tail(request) -> int:
     except ValueError:
         raise RequestError(400, "invalid_tail", raw)
     if tail < 1:
-        raise RequestError(400, "invalid_tail", "tail 은 1 이상이어야 한다")
+        raise RequestError(400, "invalid_tail", "tail must be 1 or greater")
     return min(tail, MAX_LOG_TAIL_BYTES)
 
 

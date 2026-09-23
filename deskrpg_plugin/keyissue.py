@@ -66,10 +66,10 @@ def write_key(profile_dir: Path, key: str) -> None:
     try:
         envfile.upsert_lines(profile_dir / ENV_FILENAME, {KEY_NAME: f"{KEY_NAME}={key}"})
     except (OSError, UnicodeDecodeError) as exc:
-        raise KeyIssueFailed(f"{ENV_FILENAME} 쓰기 실패: {type(exc).__name__}") from None
+        raise KeyIssueFailed(f"{ENV_FILENAME} write failed: {type(exc).__name__}") from None
 
     # 값은 절대 찍지 않는다.
-    logger.info("[deskrpg] %s 발급 완료: %s", KEY_NAME, profile_dir.name)
+    logger.info("[deskrpg] %s issued: %s", KEY_NAME, profile_dir.name)
 
 
 def issue(profile_dir: Path) -> str:

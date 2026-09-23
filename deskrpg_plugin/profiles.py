@@ -42,7 +42,7 @@ def list_handler(api):
                     body = soul.read_text(encoding="utf-8")
                 except (OSError, UnicodeDecodeError) as exc:
                     logger.warning(
-                        "[deskrpg] SOUL.md 읽기 실패 — 프로필 %s 의 hasCustomPersona 판정 불가: %s",
+                        "[deskrpg] SOUL.md read failed — cannot decide hasCustomPersona for profile %s: %s",
                         name,
                         exc,
                     )
@@ -92,7 +92,7 @@ def create_handler(api):
         if api.profile_exists(name):
             return web.json_response({"error": "already_exists", "name": name}, status=409)
         api.create_profile(name)
-        logger.info("[deskrpg] 프로필 생성: %s", name)
+        logger.info("[deskrpg] profile created: %s", name)
 
         body = {"name": name}
         # 복제는 키 발급 **앞**에 한다 — 복제가 `.env` 에 모델 키를 쓰고, 키 발급이 그 위에
@@ -107,7 +107,7 @@ def create_handler(api):
                 body["needsLogin"] = cloned["needsLogin"]
             except cloneprofile.CloneFailed as exc:
                 body["cloneError"] = exc.reason
-                logger.warning("[deskrpg] 프로필 복제 실패: %s — %s", name, exc.reason)
+                logger.warning("[deskrpg] profile clone failed: %s — %s", name, exc.reason)
 
         # 칸반 워커·크론은 이 프로필 홈으로 뜬다 — 여기에 플러그인이 없으면 워커가 만든 결과물이
         # 하나도 안 쌓인다(worker_plugin 모듈 주석). 실패해도 프로필은 이미 있으므로 201 로 말한다.
@@ -119,10 +119,10 @@ def create_handler(api):
                 body["workerPlugin"] = await asyncio.to_thread(worker_plugin.ensure, api, name)
         except worker_plugin.EnsureFailed as exc:
             body["workerPluginError"] = exc.reason
-            logger.warning("[deskrpg] 워커 플러그인 준비 실패: %s — %s", name, exc.reason)
+            logger.warning("[deskrpg] worker plugin setup failed: %s — %s", name, exc.reason)
         except OSError as exc:
             body["workerPluginError"] = type(exc).__name__
-            logger.warning("[deskrpg] 워커 플러그인 준비 실패: %s — %s", name, type(exc).__name__)
+            logger.warning("[deskrpg] worker plugin setup failed: %s — %s", name, type(exc).__name__)
 
         # Hermes 는 빈 .env 를 씨딩할 뿐이라, 키를 발급하지 않으면 이 프로필은
         # 아무도 말을 걸 수 없는 상태로 태어난다(keyissue 모듈 주석 참조).
@@ -135,7 +135,7 @@ def create_handler(api):
         except keyissue.KeyIssueFailed as exc:
             body["keyIssued"] = False
             body["keyError"] = exc.reason
-            logger.warning("[deskrpg] 키 발급 실패: %s — %s", name, exc.reason)
+            logger.warning("[deskrpg] key issue failed: %s — %s", name, exc.reason)
         return web.json_response(body, status=201)
 
     return handler
@@ -185,21 +185,21 @@ def delete_handler(api):
         except safedelete.ProfileHasService as exc:
             # 아무것도 지우지 않았다. 지웠다면 고아 유닛이 남고, Hermes 에게
             # 맡겼다면 게이트웨이가 죽었을 것이다 — 사람에게 넘긴다.
-            logger.warning("[deskrpg] 삭제 거절 — 전용 서비스 있음: %s (%s)", name, exc.unit)
+            logger.warning("[deskrpg] delete refused — profile has its own service: %s (%s)", name, exc.unit)
             return web.json_response(
                 {
                     "error": "profile_has_service",
                     "name": name,
                     "unit": exc.unit,
                     "reason": (
-                        f"프로필 '{name}' 은 자기 서비스({exc.unit})를 갖고 있어 "
-                        f"여기서 지울 수 없습니다. 셸에서 정리하세요: "
+                        f"Profile '{name}' has its own service ({exc.unit}), so it cannot be "
+                        f"deleted here. Remove it from a shell: "
                         f"hermes profile delete {name}"
                     ),
                 },
                 status=409,
             )
-        logger.warning("[deskrpg] 프로필 삭제: %s (wrapper=%s)", name, wrapper_removed)
+        logger.warning("[deskrpg] profile deleted: %s (wrapper=%s)", name, wrapper_removed)
         return web.json_response(
             {"name": name, "removed": {"profileDir": True, "wrapperScript": wrapper_removed}}
         )

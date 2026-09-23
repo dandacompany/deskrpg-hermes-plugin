@@ -68,7 +68,7 @@ def _aliases(api) -> dict:
     try:
         return dict(fn() or {})
     except Exception as exc:  # noqa: BLE001 — 별칭을 못 읽으면 소문자 맞춤만 한다
-        logger.warning("[deskrpg] 프로바이더 별칭 읽기 실패: %s", type(exc).__name__)
+        logger.warning("[deskrpg] failed to read provider aliases: %s", type(exc).__name__)
         return {}
 
 
@@ -170,7 +170,7 @@ def clone_from_default(api, target_name: str, *, key_scope: str = "referenced") 
         source_cfg = _config._load(source / _config.CONFIG_FILENAME)
         target_cfg = _config._load(target / _config.CONFIG_FILENAME)
     except _config.ConfigUnreadable:
-        raise CloneFailed("config.yaml 을 해석할 수 없다") from None
+        raise CloneFailed("config.yaml cannot be parsed") from None
 
     config_keys = sorted(k for k in CONFIG_KEYS if k in source_cfg and source_cfg[k] not in (None, "", {}, []))
     try:
@@ -186,9 +186,9 @@ def clone_from_default(api, target_name: str, *, key_scope: str = "referenced") 
         if lines:
             envfile.upsert_lines(target / ENV_FILENAME, lines)
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
-        raise CloneFailed(f"복제 중 파일 오류: {type(exc).__name__}") from None
+        raise CloneFailed(f"file error during clone: {type(exc).__name__}") from None
 
-    logger.info("[deskrpg] 프로필 복제: %s ← default (config %d개, env %d개, 범위 %s)",
+    logger.info("[deskrpg] profile clone: %s <- default (config %d keys, env %d keys, scope %s)",
                 target_name, len(config_keys), len(lines), key_scope)
     return {"configKeys": config_keys, "envKeys": sorted(lines),
             "needsLogin": _needs_login(api, source_cfg.get("model")), "keyScope": key_scope}

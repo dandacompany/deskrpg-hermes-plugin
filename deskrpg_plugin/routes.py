@@ -196,13 +196,13 @@ def _assert_scope_matches_path():
         has_profile_var = PROFILE_PATH_VAR in path
         if scope is Scope.PROFILE and not has_profile_var:
             raise AssertionError(
-                f"{method} {path} ({handler_name}) 은 Scope.PROFILE 인데 "
-                f"경로에 {PROFILE_PATH_VAR} 가 없다 — 인증이 default 키로 내려앉는다"
+                f"{method} {path} ({handler_name}) is Scope.PROFILE but "
+                f"the path has no {PROFILE_PATH_VAR} — authentication would fall back to the default key"
             )
         if scope is Scope.DEFAULT and has_profile_var:
             raise AssertionError(
-                f"{method} {path} ({handler_name}) 은 Scope.DEFAULT 인데 "
-                f"경로에 {PROFILE_PATH_VAR} 가 있다 — 프로필 키로 인증되어야 할 수 있다"
+                f"{method} {path} ({handler_name}) is Scope.DEFAULT but "
+                f"the path has {PROFILE_PATH_VAR} — it may need profile-key authentication"
             )
 
 
@@ -318,7 +318,7 @@ def _assert_every_route_has_a_handler():
     # 그래도 import 시점이 더 이르다 — 테스트 수집만으로 걸린다.
     missing = [name for _m, _p, name, _s in ROUTES if name not in _HANDLERS]
     if missing:
-        raise AssertionError(f"ROUTES 에 있지만 _HANDLERS 에 없는 핸들러: {missing}")
+        raise AssertionError(f"handlers in ROUTES but missing from _HANDLERS: {missing}")
 
 
 _assert_every_route_has_a_handler()
@@ -417,7 +417,7 @@ def _info_worker_plugin(api):
     try:
         return _worker_plugin.report(api)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[deskrpg] 워커 플러그인 판정 실패: %s", type(exc).__name__)
+        logger.warning("[deskrpg] worker plugin check failed: %s", type(exc).__name__)
         return None
 
 

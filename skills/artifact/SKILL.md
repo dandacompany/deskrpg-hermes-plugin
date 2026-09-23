@@ -1,44 +1,44 @@
 ---
 name: artifact
-description: 결과물을 DeskRPG 아티팩트로 저장하는 규칙과 artifact_save 호출 예시. 사용자가 아티팩트 저장·보관·등록을 말할 때 읽는다.
+description: Rules and artifact_save call examples for saving results as DeskRPG artifacts. Read it when the user asks to save, keep or register an artifact.
 ---
 
-# 아티팩트 저장
+# Saving artifacts
 
-`artifact_save` 는 사용자가 결과물을 남기라고 할 때만 부른다. 훅이 산출 도구의 파일을 자동으로 잡으므로, 말하지 않은 중간 산출물은 저장하지 않는다.
+Call `artifact_save` only when the user asks to keep a result. A hook already captures files from output tools, so do not save intermediate outputs the user did not ask for.
 
-## 종류별 완결 조건
+## What "complete" means per kind
 
-| kind | 넘기는 것 | 조건 |
+| kind | What to pass | Condition |
 | --- | --- | --- |
-| document | `content`+`filename`(.md/.txt) 또는 `path`(.pdf/.docx) | 보고서는 제목·요약·본문이 있는 Markdown |
-| web | `content`+`filename`(.html) | `<!doctype html>` 로 시작하는 **하나의 완전한** HTML. 외부 스크립트 없이 |
-| react | `content`+`filename`(.tsx) | `export default` 컴포넌트 하나(.tsx/.jsx). DeskRPG 뷰어에서 바로 실행되려면 import 는 react 만 쓴다 — 도구가 거부하지는 않는다 |
-| data | `content`+`filename`(.csv/.json/.jsonl) | 헤더 행이 있는 CSV, 배열 JSON, 또는 한 줄에 객체 하나인 JSONL |
-| image / media | `path`(절대 경로) | 워크스페이스에 이미 있는 파일 |
-| file | `path`(절대 경로) 또는 `content`+`filename` | 위 어디에도 맞지 않는 결과물(.zip 등)을 형식 검사 없이 그대로 남기는 탈출구. 맞는 kind 가 있으면 그걸 쓴다 |
-| link | `url`(http/https) | 결과물이 웹에 있는 경우(배포 주소, 공유 문서, 업로드 결과). `path`·`content`·`filename` 은 넘기지 않는다. `title` 을 빼면 주소의 마지막 조각이 제목이 된다 |
+| document | `content`+`filename` (.md/.txt) or `path` (.pdf/.docx) | A report is Markdown with a title, a summary and a body |
+| web | `content`+`filename` (.html) | **One complete** HTML file starting with `<!doctype html>`, without external scripts |
+| react | `content`+`filename` (.tsx) | One `export default` component (.tsx/.jsx). To run directly in the DeskRPG viewer, import only react — the tool does not reject other imports |
+| data | `content`+`filename` (.csv/.json/.jsonl) | CSV with a header row, a JSON array, or JSONL with one object per line |
+| image / media | `path` (absolute path) | A file that already exists in the workspace |
+| file | `path` (absolute path) or `content`+`filename` | An escape hatch that keeps a result that fits none of the above (.zip etc.) without format checks. Use the matching kind when there is one |
+| link | `url` (http/https) | The result lives on the web (a deployed URL, a shared document, an upload). Do not pass `path`, `content` or `filename`. Without `title`, the last segment of the URL becomes the title |
 
-`path` 는 항상 **절대 경로**다(`/…` 또는 `~/…`). 상대 경로는 거부된다.
+`path` is always an **absolute path** (`/…` or `~/…`). Relative paths are rejected.
 
-## 예시
-
-```json
-{"kind":"document","title":"9월 3주 AI 동향","summary":"주간 조사 요약. 편집장 검토용","content":"# 9월 3주 AI 동향\n…","filename":"ai-weekly-w38.md"}
-```
-
-개선본은 `supersedes` 로 잇는다:
+## Examples
 
 ```json
-{"kind":"document","title":"9월 3주 AI 동향","summary":"…","content":"…","filename":"ai-weekly-w38.md","supersedes":"<이전 artifact_id>","note":"출처 링크 3건 보강"}
+{"kind":"document","title":"AI trends, week 3 of September","summary":"Weekly research summary for the editor's review","content":"# AI trends, week 3 of September\n…","filename":"ai-weekly-w38.md"}
 ```
 
-링크:
+Link a revised version with `supersedes`:
 
 ```json
-{"kind":"link","title":"9월 보고서 공유본","summary":"편집장 검토용 공유 링크","url":"https://docs.example.com/d/abc"}
+{"kind":"document","title":"AI trends, week 3 of September","summary":"…","content":"…","filename":"ai-weekly-w38.md","supersedes":"<previous artifact_id>","note":"Added three source links"}
 ```
 
-## 실패 응답
+A link:
 
-`{"error":"artifact_incomplete","detail":"…"}` 가 오면 detail 대로 고쳐 다시 부른다. `artifact_path_outside_root` 면 경로가 절대 경로인지 먼저 확인하고(상대 경로는 거부된다), 그래도 루트 밖이면 파일을 워크스페이스로 옮기거나 `content` 로 넘긴다. `artifact_too_large` 면 압축·분할·요약 중 하나를 고른다. `artifact_path_sensitive` 면 자격증명·설정 파일(.env, auth.json, config.yaml 등)은 아티팩트로 저장할 수 없다 — 그 파일을 저장하려 하지 말고, 필요한 내용만 새 문서로 정리해 `content` 로 저장한다(비밀값은 옮기지 않는다). 데이터베이스 파일(.db·.sqlite·.sqlite3 와 -wal/-shm/-journal)과 이미 아티팩트 저장소 안에 있는 파일도 같은 오류로 거부된다 — DB 내용이 필요하면 조회 결과를 CSV/JSON 으로 뽑아 `data` 로 저장하고, 이미 저장된 아티팩트를 고친 것이면 `supersedes` 로 새 버전을 만든다.
+```json
+{"kind":"link","title":"September report (shared copy)","summary":"Shared link for the editor's review","url":"https://docs.example.com/d/abc"}
+```
+
+## Error responses
+
+If you get `{"error":"artifact_incomplete","detail":"…"}`, fix what the detail says and call again. For `artifact_path_outside_root`, first check that the path is absolute (relative paths are rejected); if it is still outside the root, move the file into the workspace or pass it as `content`. For `artifact_too_large`, compress, split or summarize. For `artifact_path_sensitive`, credential and settings files (.env, auth.json, config.yaml etc.) cannot be saved as artifacts — do not try to save that file; write only the needed content into a new document and save it as `content` (never copy secret values). Database files (.db, .sqlite, .sqlite3 and -wal/-shm/-journal) and files already inside the artifact store are rejected with the same error — if you need database contents, export the query result as CSV/JSON and save it as `data`; if you revised an artifact that is already saved, create a new version with `supersedes`.

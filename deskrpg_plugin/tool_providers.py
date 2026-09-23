@@ -84,7 +84,7 @@ def _provider_rows(api, home, profile: str, toolset: str) -> tuple[list[dict], d
             try:
                 active = bool(api._is_provider_active(prov, cfg, force_fresh=True))
             except Exception as exc:  # noqa: BLE001 — 한 행의 판정 실패가 목록을 죽이지 않는다
-                logger.warning("[deskrpg] 프로바이더 활성 판정 실패: %s", type(exc).__name__)
+                logger.warning("[deskrpg] provider active check failed: %s", type(exc).__name__)
                 active = False
             # 키 행이 아닌 부분(설치·구독)은 Hermes 판정을 따른다. 키가 있는 행에 설치 훅이 붙어 있으면
             # 키 판정과 섞이지 않게 키 없는 사본으로 묻는다.
@@ -93,7 +93,7 @@ def _provider_rows(api, home, profile: str, toolset: str) -> tuple[list[dict], d
                     {**prov, "env_vars": []}, cfg, is_active=active, **features
                 )
             except Exception as exc:  # noqa: BLE001
-                logger.warning("[deskrpg] 프로바이더 준비 판정 실패: %s", type(exc).__name__)
+                logger.warning("[deskrpg] provider readiness check failed: %s", type(exc).__name__)
                 hermes_status = "ready"
             if hermes_status in _CLI_STATUSES:
                 status, setup = hermes_status, "cli"
@@ -207,7 +207,7 @@ def select_handler(api):
             is_set = await run_blocking(_select, api, home, profile, toolset, payload["provider"], env)
         except OSError as exc:
             raise RequestError(500, "config_write_failed", type(exc).__name__) from None
-        logger.info("[deskrpg] 도구 프로바이더 선택: %s → %s", toolset, payload["provider"])
+        logger.info("[deskrpg] tool provider selected: %s -> %s", toolset, payload["provider"])
         return web.json_response({"provider": payload["provider"], "isSet": is_set})
 
     return handler
