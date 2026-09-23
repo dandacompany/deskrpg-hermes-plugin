@@ -15,7 +15,7 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.14.0 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.15.0 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -46,6 +46,8 @@ Stop the gateway and back up its kanban databases before replacing core code. In
 New cards default to human approval. An explicitly delegated task can be approved by a different AI profile. Approvals bind to the submitted result; generic status changes cannot substitute for approval. AI reviewers must inspect the actual submitted text or artifacts; this does not guarantee the semantic quality of an AI review. Existing cards are not converted automatically.
 
 ## Release
+
+0.15.0 adds NPC skill management (capability `profile_skill_admin`, routes under `/p/{profile}/deskrpg/skills`, `/curator` and `/learning`): skill list with provenance, usage and pin state; detail and file tree; editing `SKILL.md`, `references/` and `templates/` through Hermes' own write path with optimistic concurrency (`baseHash`); creating skills; per-skill and bulk enable/disable; pin, archive, restore and single-skill purge from the archive (ledger-recorded; pinned skills cannot be archived); Skills Hub search, preview with scan verdict, and install/uninstall/update as background jobs (one per profile); curator status, pause/resume and run; and the learning graph, whose memory nodes are only returned on request (`includeMemory=1`) and are edited or deleted only against a content hash. Deleted memory chunks are kept in `plugin-data/deskrpg/memory_deleted.jsonl` (0600) because Hermes has no undo for them.
 
 0.14.0 adds `POST /deskrpg/events/handoff` and the `event_cursor_handoff` capability. When DeskRPG archives the project whose board carries a channel's event stream, the plugin merges the old carrier's global position into the new board's cursor so no card, cron or artifact event is lost across the handoff. DeskRPG 2026.922.3 and later requires this capability before archiving a carrier board; older DeskRPG versions ignore the route.
 
