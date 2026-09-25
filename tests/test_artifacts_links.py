@@ -87,13 +87,38 @@ def test_링크가_없거나_문자열이_아니면_빈_목록(text):
     assert links.links_in_response(text) == []
 
 
-def test_악성_입력에도_선형_시간이다():
-    started = time.perf_counter()
-    for evil in ("[" * 200_000, "](" * 200_000, "[a](" + "b" * 400_000, "https://" * 50_000,
-                 "(" * 200_000, "https://x.io/" + "(" * 200_000, "https://x.io/" + ")" * 200_000,
-                 "[a](" + "(" * 200_000, "[a](https://x.io/(" + "b" * 400_000):
-        links.links_in_response(evil)
-    assert time.perf_counter() - started < 1.0
+# 악성 입력 모양. n 은 반복 횟수 — 길이는 n 에 비례한다.
+_악성_입력 = [
+    lambda n: "[" * n,
+    lambda n: "](" * n,
+    lambda n: "[a](" + "b" * (2 * n),
+    lambda n: "https://" * (n // 4),
+    lambda n: "(" * n,
+    lambda n: "https://x.io/" + "(" * n,
+    lambda n: "https://x.io/" + ")" * n,
+    lambda n: "[a](" + "(" * n,
+    lambda n: "[a](https://x.io/(" + "b" * (2 * n),
+]
+
+
+def _cpu_시간(text):
+    """세 번 중 가장 짧은 CPU 시간. 벽시계가 아니라 이 프로세스의 CPU 만 재서 다른 작업의 경합에 둔감하다."""
+    best = float("inf")
+    for _ in range(3):
+        started = time.process_time()
+        links.links_in_response(text)
+        best = min(best, time.process_time() - started)
+    return best
+
+
+@pytest.mark.parametrize("make", _악성_입력)
+def test_악성_입력에도_선형_시간이다(make):
+    # 절대 예산(예전의 1초)은 머신 부하를 함께 재서, 바쁜 머신에서는 알고리즘이 그대로여도 넘기고
+    # 넉넉한 머신에서는 진짜 폭발도 통과시킨다. 입력을 4배로 늘렸을 때의 증가율을 본다 —
+    # 선형이면 약 4배, 제곱이면 약 16배다.
+    small = _cpu_시간(make(25_000))
+    large = _cpu_시간(make(100_000))
+    assert large < 8 * max(small, 0.001), f"4배 입력에 {large / max(small, 1e-9):.1f}배 걸렸다"
 
 
 def test_도구_결과는_강한_키면_어느_도구든_약한_키는_산출_도구만():
