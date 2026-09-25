@@ -5,6 +5,7 @@ Hermes 의 거부 결과는 JSON 문자열이다: 터미널 `{"output":"","exit_
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -113,6 +114,21 @@ def test_cron_block_takes_job_id_from_task_id(api):
          task_id="cron:job42:exec7", session_id="s")
     payload = _blocked(api)[0]["payload"]
     assert payload["source"] == "cron" and payload["jobId"] == "job42" and "taskId" not in payload
+
+
+def test_cron_block_carries_the_job_name_from_jobs_json(api):
+    home = Path(api.get_hermes_home())
+    (home / "cron").mkdir(parents=True, exist_ok=True)
+    (home / "cron" / "jobs.json").write_text(json.dumps({"jobs": [{"id": "job42", "name": "야간 정리"}]}))
+    ab.make_hook(api)(tool_name="terminal", args={"command": "rm -rf /tmp/x"}, result=term(CRON_BLOCK),
+                      task_id="cron:job42:exec7", session_id="s")
+    assert _blocked(api)[0]["payload"]["jobName"] == "야간 정리"
+
+
+def test_cron_job_name_is_omitted_when_unknown(api):
+    ab.make_hook(api)(tool_name="terminal", args={"command": "rm -rf /tmp/x"}, result=term(CRON_BLOCK),
+                      task_id="cron:missing:exec7", session_id="s")
+    assert "jobName" not in _blocked(api)[0]["payload"]
 
 
 def test_mcp_denial_in_cron_is_recorded_with_server(api):

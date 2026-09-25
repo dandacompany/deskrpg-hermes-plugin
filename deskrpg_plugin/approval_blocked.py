@@ -31,6 +31,7 @@ import os
 import re
 import threading
 import time
+from pathlib import Path
 
 from . import artifacts_context as _context
 from . import artifacts_store as _store
@@ -107,6 +108,22 @@ def _context_ids(api, task_id) -> dict:
     return {}
 
 
+def _cron_job_name(api, job_id) -> str | None:
+    """크론 워커의 home(=프로필 home) `cron/jobs.json` 에서 이름을 찾는다. 없거나 못 읽으면 None."""
+    if not job_id:
+        return None
+    try:
+        data = json.loads((Path(api.get_hermes_home()) / "cron" / "jobs.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — 이름은 보조 정보다
+        return None
+    jobs = data.get("jobs") if isinstance(data, dict) else data
+    for job in jobs if isinstance(jobs, list) else []:
+        if isinstance(job, dict) and job.get("id") == job_id:
+            name = job.get("name")
+            return str(name)[:200] if name else None
+    return None
+
+
 def _pattern(api, command: str) -> dict:
     detect = getattr(api, "detect_dangerous_command", None)
     if detect is None or not command:
@@ -148,6 +165,8 @@ def build_payload(api, *, tool_name, args, result, task_id) -> dict | None:
         if not ctx:
             return None  # 대화에서 사람이 거절한 것 — 무인 실행 막힘이 아니다
         extra = {"mcpServer": verdict["mcpServer"], "mcpTool": verdict["mcpTool"]}
+    if ctx.get("source") == "cron":
+        ctx["jobName"] = _cron_job_name(api, ctx.get("jobId"))
     payload = {
         "profile": _context.current_profile(api),
         **ctx,
