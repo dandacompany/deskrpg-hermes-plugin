@@ -33,6 +33,7 @@ from . import artifacts_routes as _artifacts_routes
 from . import card_proposal_routes as _card_proposal_routes
 from . import skills_hub_routes as _skills_hub
 from . import learning_routes as _learning
+from . import mcp_admin as _mcp_admin
 from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
@@ -105,6 +106,17 @@ ROUTES = [
     ("PUT", "/p/{profile}/deskrpg/skills/{name}/enabled", "skill_enabled", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/skills/{name}/pinned", "skill_pinned", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/skills/{name}/archive", "skill_archive", Scope.PROFILE),
+    # ---- 0.17.0 NPC MCP 커넥터 관리 (프로필 키) — 고정 세그먼트 행이 servers 행보다 위 ----
+    ("GET", "/p/{profile}/deskrpg/mcp/servers", "mcp_list", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/servers", "mcp_create", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/servers/{name}", "mcp_detail", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}", "mcp_update", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/mcp/servers/{name}", "mcp_delete", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}/enabled", "mcp_enabled", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}/trust", "mcp_trust", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}/tools", "mcp_tools_put", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}/secrets/{key}", "mcp_secret_put", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/mcp/servers/{name}/secrets/{key}", "mcp_secret_delete", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets/{toolset}/providers", "get_tool_providers", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/toolsets/{toolset}/provider", "put_tool_provider", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", "put_provider_key", Scope.PROFILE),
@@ -232,6 +244,16 @@ _HANDLERS = {
     "skill_purge": lambda api: _skills_admin.purge_handler(api),
     "skill_pinned": lambda api: _skills_admin.pinned_handler(api),
     "skill_archive": lambda api: _skills_admin.archive_handler(api),
+    "mcp_list": lambda api: _mcp_admin.list_handler(api),
+    "mcp_create": lambda api: _mcp_admin.create_handler(api),
+    "mcp_detail": lambda api: _mcp_admin.detail_handler(api),
+    "mcp_update": lambda api: _mcp_admin.update_handler(api),
+    "mcp_delete": lambda api: _mcp_admin.delete_handler(api),
+    "mcp_enabled": lambda api: _mcp_admin.enabled_handler(api),
+    "mcp_trust": lambda api: _mcp_admin.trust_handler(api),
+    "mcp_tools_put": lambda api: _mcp_admin.tools_put_handler(api),
+    "mcp_secret_put": lambda api: _mcp_admin.secret_put_handler(api),
+    "mcp_secret_delete": lambda api: _mcp_admin.secret_delete_handler(api),
     "get_tool_providers": lambda api: _tool_providers.providers_handler(api),
     "put_tool_provider": lambda api: _tool_providers.select_handler(api),
     "put_provider_key": lambda api: _provider_keys.put_handler(api),
@@ -527,6 +549,17 @@ _OPTIONAL_ROUTES = {
     "learning_node_get": _contract_fields.has_skill_admin_symbols,
     "learning_node_put": _contract_fields.has_skill_admin_symbols,
     "learning_node_delete": _contract_fields.has_skill_admin_symbols,
+    # 0.17.0 — MCP 관리 라우트 전부가 `profile_mcp_admin` capability 와 같은 판정을 쓴다.
+    "mcp_list": _contract_fields.has_mcp_admin_symbols,
+    "mcp_create": _contract_fields.has_mcp_admin_symbols,
+    "mcp_detail": _contract_fields.has_mcp_admin_symbols,
+    "mcp_update": _contract_fields.has_mcp_admin_symbols,
+    "mcp_delete": _contract_fields.has_mcp_admin_symbols,
+    "mcp_enabled": _contract_fields.has_mcp_admin_symbols,
+    "mcp_trust": _contract_fields.has_mcp_admin_symbols,
+    "mcp_tools_put": _contract_fields.has_mcp_admin_symbols,
+    "mcp_secret_put": _contract_fields.has_mcp_admin_symbols,
+    "mcp_secret_delete": _contract_fields.has_mcp_admin_symbols,
 }
 
 
