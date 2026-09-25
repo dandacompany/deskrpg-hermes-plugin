@@ -37,6 +37,7 @@ from . import mcp_admin as _mcp_admin
 from . import mcp_probe as _mcp_probe
 from . import mcp_oauth_routes as _mcp_oauth
 from . import mcp_catalog_routes as _mcp_catalog
+from . import approval_policy as _approval_policy
 from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
@@ -134,6 +135,11 @@ ROUTES = [
     ("POST", "/p/{profile}/deskrpg/mcp/servers/{name}/test", "mcp_test", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/mcp/servers/{name}/tools", "mcp_tools_get", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/mcp/servers/{name}/oauth", "mcp_oauth_start", Scope.PROFILE),
+    # ---- 0.18.0 무인 실행 정책 (프로필 키) — 허용 목록 항목은 `/`·공백이 있어 본문으로 받는다 ----
+    ("GET", "/p/{profile}/deskrpg/approval-policy", "approval_policy_get", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/approval-policy", "approval_policy_put", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/approval-policy/allowlist", "approval_allowlist_add", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/approval-policy/allowlist", "approval_allowlist_delete", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets/{toolset}/providers", "get_tool_providers", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/toolsets/{toolset}/provider", "put_tool_provider", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", "put_provider_key", Scope.PROFILE),
@@ -282,6 +288,10 @@ _HANDLERS = {
     "mcp_catalog_install": lambda api: _mcp_catalog.install_handler(api),
     "mcp_reload": lambda api: _mcp_catalog.reload_handler(api),
     "mcp_export": lambda api: _mcp_catalog.export_handler(api),
+    "approval_policy_get": lambda api: _approval_policy.get_handler(api),
+    "approval_policy_put": lambda api: _approval_policy.put_handler(api),
+    "approval_allowlist_add": lambda api: _approval_policy.allowlist_add_handler(api),
+    "approval_allowlist_delete": lambda api: _approval_policy.allowlist_delete_handler(api),
     "get_tool_providers": lambda api: _tool_providers.providers_handler(api),
     "put_tool_provider": lambda api: _tool_providers.select_handler(api),
     "put_provider_key": lambda api: _provider_keys.put_handler(api),
@@ -599,6 +609,11 @@ _OPTIONAL_ROUTES = {
     "mcp_catalog_install": _contract_fields.has_mcp_admin_symbols,
     "mcp_reload": _contract_fields.has_mcp_admin_symbols,
     "mcp_export": _contract_fields.has_mcp_admin_symbols,
+    # 0.18.0 — `profile_approval_policy` capability 와 같은 판정.
+    "approval_policy_get": _contract_fields.has_approval_policy_symbols,
+    "approval_policy_put": _contract_fields.has_approval_policy_symbols,
+    "approval_allowlist_add": _contract_fields.has_approval_policy_symbols,
+    "approval_allowlist_delete": _contract_fields.has_approval_policy_symbols,
 }
 
 

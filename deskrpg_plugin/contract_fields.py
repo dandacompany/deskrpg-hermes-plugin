@@ -77,6 +77,12 @@ _MCP_ADMIN_SYMBOLS = (
 )
 
 
+def has_approval_policy_symbols(api) -> bool:
+    """무인 실행 정책(0.18.0). 프로필 config.yaml 을 직접 읽고 쓰므로 Hermes 심볼이 필요 없다 — 항상 참.
+    라우트와 capability 가 이 한 판정을 함께 쓰게 해 둔다(나중에 심볼이 필요해지면 여기만 바꾼다)."""
+    return True
+
+
 def has_mcp_admin_symbols(api) -> bool:
     """MCP 관리 라우트와 `profile_mcp_admin` capability 가 **같은 판정**을 쓴다 — 라우트 없는 capability 를 알리지 않으려고."""
     return _has(api, _MCP_ADMIN_SYMBOLS)
@@ -185,6 +191,8 @@ def capabilities(api) -> tuple[str, ...]:
         extra.append("profile_skill_admin")
     if has_mcp_admin_symbols(api):
         extra.append("profile_mcp_admin")
+    if has_approval_policy_symbols(api):
+        extra.append("profile_approval_policy")
     if _has(api, ("PROVIDER_REGISTRY",)):
         extra.append("profile_clone")
         extra.append("profile_provider_keys")
