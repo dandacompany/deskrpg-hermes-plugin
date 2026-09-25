@@ -36,6 +36,7 @@ from . import learning_routes as _learning
 from . import mcp_admin as _mcp_admin
 from . import mcp_probe as _mcp_probe
 from . import mcp_oauth_routes as _mcp_oauth
+from . import mcp_catalog_routes as _mcp_catalog
 from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
@@ -65,6 +66,9 @@ def _read_plugin_version() -> str:
 logger = logging.getLogger("deskrpg_plugin")
 
 PLUGIN_VERSION = _read_plugin_version()
+
+# attach 에 넘어온 API Server 어댑터. MCP 재적재가 캐시된 에이전트를 새로고침하려고 그 `gateway_runner` 를 본다.
+ADAPTER = None
 
 # (method, path, handler_name, scope)
 ROUTES = [
@@ -113,6 +117,10 @@ ROUTES = [
     ("POST", "/p/{profile}/deskrpg/mcp/oauth/{session_id}/callback", "mcp_oauth_callback", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/mcp/oauth/{session_id}", "mcp_oauth_poll", Scope.PROFILE),
     ("DELETE", "/p/{profile}/deskrpg/mcp/oauth/{session_id}", "mcp_oauth_cancel", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/catalog", "mcp_catalog", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/catalog/{entry}/install", "mcp_catalog_install", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/reload", "mcp_reload", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/export/{name}", "mcp_export", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/mcp/servers", "mcp_list", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/mcp/servers", "mcp_create", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/mcp/servers/{name}", "mcp_detail", Scope.PROFILE),
@@ -270,6 +278,10 @@ _HANDLERS = {
     "mcp_oauth_callback": lambda api: _mcp_oauth.callback_handler(api),
     "mcp_oauth_poll": lambda api: _mcp_oauth.poll_handler(api),
     "mcp_oauth_cancel": lambda api: _mcp_oauth.cancel_handler(api),
+    "mcp_catalog": lambda api: _mcp_catalog.catalog_handler(api),
+    "mcp_catalog_install": lambda api: _mcp_catalog.install_handler(api),
+    "mcp_reload": lambda api: _mcp_catalog.reload_handler(api),
+    "mcp_export": lambda api: _mcp_catalog.export_handler(api),
     "get_tool_providers": lambda api: _tool_providers.providers_handler(api),
     "put_tool_provider": lambda api: _tool_providers.select_handler(api),
     "put_provider_key": lambda api: _provider_keys.put_handler(api),
@@ -583,6 +595,10 @@ _OPTIONAL_ROUTES = {
     "mcp_oauth_callback": _contract_fields.has_mcp_admin_symbols,
     "mcp_oauth_poll": _contract_fields.has_mcp_admin_symbols,
     "mcp_oauth_cancel": _contract_fields.has_mcp_admin_symbols,
+    "mcp_catalog": _contract_fields.has_mcp_admin_symbols,
+    "mcp_catalog_install": _contract_fields.has_mcp_admin_symbols,
+    "mcp_reload": _contract_fields.has_mcp_admin_symbols,
+    "mcp_export": _contract_fields.has_mcp_admin_symbols,
 }
 
 
@@ -606,6 +622,8 @@ def attach(app, adapter, api) -> None:
     app.router.add_* 를 여기 말고 어디서도 부르지 않는다 — 그래야 감싸지 않은
     핸들러가 생길 수 없다.
     """
+    global ADAPTER
+    ADAPTER = adapter
     before = len(getattr(app.router, "_resources", []))
     for method, path, handler_name, scope in routes_for(api):
         handler = require_auth(adapter, scope, handler_for(handler_name, api))
