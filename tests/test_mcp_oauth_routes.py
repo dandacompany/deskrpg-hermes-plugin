@@ -140,3 +140,86 @@ async def test_audit_records_start_without_urls(client, fake_api):
     await _start(client)
     log = (fake_api.get_profile_dir("sophie") / "plugin-data" / "deskrpg" / "mcp-audit.jsonl").read_text()
     assert '"action": "oauth_start"' in log and "auth.example" not in log
+
+
+# ---- 0.17.1 — 같은 서버의 OAuth 시도를 겹치지 않게 한다 ----------------------------------------
+# Hermes 는 새 시도가 옛 시도를 취소하게 두는데, 새 시도가 먼저 끝난 뒤 옛 워커가 끝나면 옛 워커의
+# 롤백이 시작 전 토큰 스냅샷을 되돌려 방금 받은 인증을 지운다(스테이징 실측). 플러그인이 겹침 자체를 막는다.
+
+
+async def test_second_start_while_open_is_409_in_progress(client, fake_api):
+    sid = await _start(client)
+    res = await client.post("/p/sophie/deskrpg/mcp/servers/canva/oauth", headers=ACTOR)
+    body = await res.json()
+    assert res.status == 409 and body["error"] == "oauth_in_progress" and body["sessionId"] == sid
+    assert list(fake_api.fake_mcp.flow_objs) == [sid]  # Hermes start 를 다시 부르지 않았다
+
+
+async def test_other_profile_or_server_is_not_blocked(client):
+    await _start(client)
+    assert (await client.post("/p/bob/deskrpg/mcp/servers/canva/oauth", headers=ACTOR)).status == 200
+
+
+async def test_restart_cancels_and_waits_then_starts_new(client, fake_api):
+    old = await _start(client)
+    seen = []
+    fake_api.cancel_flow = lambda s, n, home: seen.append(s) or {"ok": True}
+    res = await client.post("/p/sophie/deskrpg/mcp/servers/canva/oauth", json={"restart": True}, headers=ACTOR)
+    body = await res.json()
+    assert res.status == 200 and body["sessionId"] != old
+    assert fake_api.fake_mcp.cancel_attempts == [old] and seen == [old]
+    assert fake_api.fake_mcp.flow_objs[old].worker_done is True
+    assert (await client.get(f"/p/sophie/deskrpg/mcp/oauth/{old}")).status == 404
+
+
+async def test_restart_when_worker_does_not_exit_is_409_busy(client, fake_api, monkeypatch):
+    monkeypatch.setattr(mcp_oauth_routes, "_WORKER_WAIT", 0.1)
+    old = await _start(client)
+    fake_api.fake_mcp.worker_exits_on_cancel = False
+    res = await client.post("/p/sophie/deskrpg/mcp/servers/canva/oauth", json={"restart": True}, headers=ACTOR)
+    assert res.status == 409 and (await res.json())["error"] == "oauth_busy"
+    assert list(fake_api.fake_mcp.flow_objs) == [old]  # 새 시도를 시작하지 않았다
+    # 워커가 나중에 끝나면 그때는 새로 시작할 수 있다.
+    fake_api.fake_mcp.flow_objs[old].worker_done = True
+    assert (await client.post("/p/sophie/deskrpg/mcp/servers/canva/oauth", headers=ACTOR)).status == 200
+
+
+async def test_finished_worker_does_not_block_new_start(client, fake_api):
+    old = await _start(client)
+    fake_api.fake_mcp.flow_objs[old].worker_done = True  # 붙여넣지 않고 끝난 시도(시간 초과 등)
+    res = await client.post("/p/sophie/deskrpg/mcp/servers/canva/oauth", headers=ACTOR)
+    assert res.status == 200 and (await res.json())["sessionId"] != old
+
+
+async def test_approved_then_new_start_is_allowed(client):
+    sid = await _start(client)
+    await client.post(f"/p/sophie/deskrpg/mcp/oauth/{sid}/callback", json={"code": "c", "state": "st-" + sid},
+                      headers=ACTOR)
+    assert (await (await client.get(f"/p/sophie/deskrpg/mcp/oauth/{sid}")).json())["status"] == "approved"
+    assert (await client.post("/p/sophie/deskrpg/mcp/servers/canva/oauth", headers=ACTOR)).status == 200
+
+
+async def test_cancel_waits_for_worker(client, fake_api):
+    sid = await _start(client)
+    res = await client.delete(f"/p/sophie/deskrpg/mcp/oauth/{sid}", headers=ACTOR)
+    assert res.status == 200 and (await res.json())["ok"] is True
+    assert fake_api.fake_mcp.cancel_attempts == [sid] and fake_api.fake_mcp.flow_objs[sid].worker_done
+    assert (await client.post("/p/sophie/deskrpg/mcp/servers/canva/oauth", headers=ACTOR)).status == 200
+
+
+async def test_cancel_with_stuck_worker_keeps_blocking(client, fake_api, monkeypatch):
+    monkeypatch.setattr(mcp_oauth_routes, "_WORKER_WAIT", 0.1)
+    sid = await _start(client)
+    fake_api.fake_mcp.worker_exits_on_cancel = False
+    res = await client.delete(f"/p/sophie/deskrpg/mcp/oauth/{sid}", headers=ACTOR)
+    assert res.status == 200 and (await res.json()) == {"ok": True, "workerDone": False}
+    res = await client.post("/p/sophie/deskrpg/mcp/servers/canva/oauth", headers=ACTOR)
+    assert res.status == 409 and (await res.json())["error"] == "oauth_in_progress"
+
+
+async def test_concurrent_starts_call_hermes_once(client, fake_api):
+    import asyncio
+    results = await asyncio.gather(*[client.post("/p/sophie/deskrpg/mcp/servers/canva/oauth", headers=ACTOR)
+                                     for _ in range(3)])
+    assert sorted(r.status for r in results) == [200, 409, 409]
+    assert len(fake_api.fake_mcp.flow_objs) == 1

@@ -45,6 +45,9 @@ class FakeMcp:
     connect_errors: dict = field(default_factory=dict)  # name -> Exception
     reload_calls: list = field(default_factory=list)
     oauth_flows: dict = field(default_factory=dict)  # session_id -> dict
+    flow_objs: dict = field(default_factory=dict)  # session_id -> Flow
+    cancel_attempts: list = field(default_factory=list)  # 취소된 flow_id
+    worker_exits_on_cancel: bool = True  # False 면 취소돼도 워커가 끝나지 않는다(oauth_busy 재현)
     catalog: list = field(default_factory=list)
     installs: list = field(default_factory=list)
 
@@ -114,24 +117,30 @@ def install_fake_mcp(api) -> FakeMcp:
             return str(api.get_hermes_home())
 
     class Flow:
+        # Hermes `DashboardOAuthFlow` 의 필요한 면만 — `worker_done` 은 워커 스레드가 끝났는지.
         def __init__(self, fid):
             self.flow_id = fid
+            self.cancelled = False
+            self.worker_done = False
 
     class Attempt:
         def __init__(self, url, fid):
             self.auth_url, self.flow = url, Flow(fid)
 
     def oauth_start(server, *, client_redirect_uri=None, cfg=None, **_):
-        fid = f"flow-{len(fake.oauth_flows) + 1}"
+        fid = f"flow-{len(fake.flow_objs) + 1}"
         fake.oauth_flows[fid] = {"server": server, "redirect": client_redirect_uri, "state": "st-" + fid,
                                  "status": "pending", "home": str(api.get_hermes_home())}
-        return Attempt(f"https://auth.example/authorize?state=st-{fid}", fid)
+        attempt = Attempt(f"https://auth.example/authorize?state=st-{fid}", fid)
+        fake.flow_objs[fid] = attempt.flow
+        return attempt
 
     def deliver(session_id, server, *, code, state, error=None, iss=None):
         flow = fake.oauth_flows.get(session_id)
         if not flow or flow["server"] != server or state != flow["state"] or flow["status"] != "pending":
             return {"ok": False, "error_message": "state mismatch"}
         flow["status"] = "approved"
+        fake.flow_objs[session_id].worker_done = True
         return {"ok": True, "session_id": session_id}
 
     def poll(session_id, server):
@@ -186,7 +195,14 @@ def install_fake_mcp(api) -> FakeMcp:
 
     api.mcp_card_install_config = card_install_config
     api.mcp_oauth_start = oauth_start
-    api.mcp_oauth_cancel_attempt = lambda flow: False
+    def cancel_attempt(flow):
+        fake.cancel_attempts.append(flow.flow_id)
+        flow.cancelled = True
+        if fake.worker_exits_on_cancel:
+            flow.worker_done = True
+        return False
+
+    api.mcp_oauth_cancel_attempt = cancel_attempt
     api.deliver_callback_flow = deliver
     api.poll_flow = poll
     api.cancel_flow = cancel
