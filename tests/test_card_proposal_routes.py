@@ -54,6 +54,18 @@ async def test_task_id_는_없어도_된다(client, tmp_api):
     assert store.get(tmp_api, pid)["resolved_task_id"] is None
 
 
+async def test_inline_해소는_task_id_를_받아도_적지_않고_되돌릴_수_있다(client, tmp_api):
+    """inline 은 카드를 만들지 않는다. 여기에 카드 id 가 적히면 카드는 없는데 unresolve 가 영영 막힌다."""
+    pid = _seed(tmp_api)
+    resp = await client.post(f"/deskrpg/card-proposals/{pid}/resolve",
+                             json={"choice": "inline", "task_id": "x"})
+    assert resp.status == 200
+    row = store.get(tmp_api, pid)
+    assert (row["resolved_choice"], row["resolved_task_id"]) == ("inline", None)
+    assert (await client.post(f"/deskrpg/card-proposals/{pid}/unresolve")).status == 200
+    assert store.get(tmp_api, pid)["resolved_at"] is None
+
+
 @pytest.mark.parametrize("body", [{"choice": "카드"}, {"choice": ""}, {}, {"choice": 3}])
 async def test_허용되지_않은_choice_는_400_이고_제안은_그대로다(client, tmp_api, body):
     pid = _seed(tmp_api)

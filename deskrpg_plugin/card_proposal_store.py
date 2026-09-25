@@ -83,7 +83,10 @@ def resolve(api, proposal_id: str, choice: str, task_id=None) -> bool:
     """방금 해소했으면 True, 이미 해소됐거나 없는 제안이면 False.
 
     판정은 `UPDATE … WHERE resolved_at IS NULL` 의 `rowcount` 다 — 읽고 나서 쓰면 동시에 들어온
-    두 요청이 둘 다 통과해 카드가 두 장 생긴다."""
+    두 요청이 둘 다 통과해 카드가 두 장 생긴다.
+
+    `task_id` 는 `card` 일 때만 적는다. `inline` 은 카드를 만들지 않으므로, 거기 카드 id 가 적히면
+    카드는 없는데 `unresolve` 가 영영 막힌다(`record_task` 와 같은 갈래 가드)."""
     conn = open_store(api)
     try:
         with conn:
@@ -91,7 +94,7 @@ def resolve(api, proposal_id: str, choice: str, task_id=None) -> bool:
             cur = conn.execute(
                 "UPDATE card_proposals SET resolved_at=?, resolved_choice=?, resolved_task_id=?"
                 " WHERE proposal_id=? AND resolved_at IS NULL",
-                (_now(), choice, task_id, proposal_id),
+                (_now(), choice, task_id if choice == "card" else None, proposal_id),
             )
             return cur.rowcount == 1
     finally:
