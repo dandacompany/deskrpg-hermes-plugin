@@ -65,6 +65,16 @@ def view_of(api, home: Path, name: str, entry: dict, *, detail: bool = False) ->
         return build(api, home, name, entry, mcp_state.read_checks(home), kind=server_kind(api, name))
 
 
+def refresh_tool_flags(home: Path, name: str, entry: dict) -> None:
+    """도구 선택이 바뀌면 마지막 확인 결과의 `on` 을 다시 계산한다(목록의 "도구 N/M" 이 바로 맞도록)."""
+    check = mcp_state.read_checks(home).get(name)
+    if check and isinstance(check.get("tools"), list):
+        from .mcp_probe import tool_rows
+
+        check["tools"] = tool_rows(entry, check["tools"])
+        mcp_state.write_check(home, name, check)
+
+
 def _save(api, home: Path, name: str, entry: dict) -> None:
     reasons = api.validate_mcp_server_entry(name, entry)
     if reasons:
@@ -73,6 +83,7 @@ def _save(api, home: Path, name: str, entry: dict) -> None:
     with mcp_state.CONFIG_LOCK, _home_scope(api, home):
         if not api._save_mcp_server(name, entry):
             raise RequestError(500, "mcp_save_failed", "Hermes refused to save the server entry")
+    refresh_tool_flags(home, name, entry)
 
 
 def _header_env_key(name: str, header: str) -> str:

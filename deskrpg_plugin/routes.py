@@ -34,6 +34,7 @@ from . import card_proposal_routes as _card_proposal_routes
 from . import skills_hub_routes as _skills_hub
 from . import learning_routes as _learning
 from . import mcp_admin as _mcp_admin
+from . import mcp_probe as _mcp_probe
 from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
@@ -107,6 +108,7 @@ ROUTES = [
     ("PUT", "/p/{profile}/deskrpg/skills/{name}/pinned", "skill_pinned", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/skills/{name}/archive", "skill_archive", Scope.PROFILE),
     # ---- 0.17.0 NPC MCP 커넥터 관리 (프로필 키) — 고정 세그먼트 행이 servers 행보다 위 ----
+    ("GET", "/p/{profile}/deskrpg/mcp/jobs/{job_id}", "mcp_job", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/mcp/servers", "mcp_list", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/mcp/servers", "mcp_create", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/mcp/servers/{name}", "mcp_detail", Scope.PROFILE),
@@ -117,6 +119,8 @@ ROUTES = [
     ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}/tools", "mcp_tools_put", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}/secrets/{key}", "mcp_secret_put", Scope.PROFILE),
     ("DELETE", "/p/{profile}/deskrpg/mcp/servers/{name}/secrets/{key}", "mcp_secret_delete", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/servers/{name}/test", "mcp_test", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/servers/{name}/tools", "mcp_tools_get", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets/{toolset}/providers", "get_tool_providers", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/toolsets/{toolset}/provider", "put_tool_provider", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", "put_provider_key", Scope.PROFILE),
@@ -254,6 +258,9 @@ _HANDLERS = {
     "mcp_tools_put": lambda api: _mcp_admin.tools_put_handler(api),
     "mcp_secret_put": lambda api: _mcp_admin.secret_put_handler(api),
     "mcp_secret_delete": lambda api: _mcp_admin.secret_delete_handler(api),
+    "mcp_job": lambda api: _mcp_probe.job_handler(api),
+    "mcp_test": lambda api: _mcp_probe.test_handler(api),
+    "mcp_tools_get": lambda api: _mcp_probe.tools_get_handler(api),
     "get_tool_providers": lambda api: _tool_providers.providers_handler(api),
     "put_tool_provider": lambda api: _tool_providers.select_handler(api),
     "put_provider_key": lambda api: _provider_keys.put_handler(api),
@@ -560,6 +567,9 @@ _OPTIONAL_ROUTES = {
     "mcp_tools_put": _contract_fields.has_mcp_admin_symbols,
     "mcp_secret_put": _contract_fields.has_mcp_admin_symbols,
     "mcp_secret_delete": _contract_fields.has_mcp_admin_symbols,
+    "mcp_job": _contract_fields.has_mcp_admin_symbols,
+    "mcp_test": _contract_fields.has_mcp_admin_symbols,
+    "mcp_tools_get": _contract_fields.has_mcp_admin_symbols,
 }
 
 
