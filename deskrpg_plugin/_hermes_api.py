@@ -243,7 +243,7 @@ OPTIONAL_SPEC = (
     ("gateway.run", ("_profile_runtime_scope",)),
     ("hermes_cli.mcp_catalog", (
         ("list_catalog", "mcp_list_catalog"), ("get_entry", "mcp_get_catalog_entry"),
-        ("install_entry", "mcp_install_catalog_entry"),
+        ("card_install_config", "mcp_card_install_config"),
     )),
     ("tools.connectors.mcp_oauth", (("start", "mcp_oauth_start"), ("cancel_attempt", "mcp_oauth_cancel_attempt"))),
     ("tui_gateway.mcp_oauth_sessions", ("deliver_callback_flow", "poll_flow", "cancel_flow")),

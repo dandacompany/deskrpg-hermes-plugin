@@ -72,7 +72,7 @@ _MCP_ADMIN_SYMBOLS = (
     "validate_mcp_server_entry", "_ensure_mcp_loop", "_run_on_mcp_loop", "_connect_server",
     "discover_mcp_tools", "_stop_mcp_loop_if_idle", "shutdown_mcp_servers", "reprobe_tool_availability",
     "mcp_registry", "_profile_runtime_scope", "mcp_list_catalog", "mcp_get_catalog_entry",
-    "mcp_install_catalog_entry", "mcp_oauth_start", "mcp_oauth_cancel_attempt",
+    "mcp_card_install_config", "mcp_oauth_start", "mcp_oauth_cancel_attempt",
     "deliver_callback_flow", "poll_flow", "cancel_flow",
 )
 

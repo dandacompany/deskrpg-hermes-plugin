@@ -33,6 +33,10 @@ from . import artifacts_routes as _artifacts_routes
 from . import card_proposal_routes as _card_proposal_routes
 from . import skills_hub_routes as _skills_hub
 from . import learning_routes as _learning
+from . import mcp_admin as _mcp_admin
+from . import mcp_probe as _mcp_probe
+from . import mcp_oauth_routes as _mcp_oauth
+from . import mcp_catalog_routes as _mcp_catalog
 from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
@@ -62,6 +66,9 @@ def _read_plugin_version() -> str:
 logger = logging.getLogger("deskrpg_plugin")
 
 PLUGIN_VERSION = _read_plugin_version()
+
+# attach 에 넘어온 API Server 어댑터. MCP 재적재가 캐시된 에이전트를 새로고침하려고 그 `gateway_runner` 를 본다.
+ADAPTER = None
 
 # (method, path, handler_name, scope)
 ROUTES = [
@@ -105,6 +112,28 @@ ROUTES = [
     ("PUT", "/p/{profile}/deskrpg/skills/{name}/enabled", "skill_enabled", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/skills/{name}/pinned", "skill_pinned", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/skills/{name}/archive", "skill_archive", Scope.PROFILE),
+    # ---- 0.17.0 NPC MCP 커넥터 관리 (프로필 키) — 고정 세그먼트 행이 servers 행보다 위 ----
+    ("GET", "/p/{profile}/deskrpg/mcp/jobs/{job_id}", "mcp_job", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/oauth/{session_id}/callback", "mcp_oauth_callback", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/oauth/{session_id}", "mcp_oauth_poll", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/mcp/oauth/{session_id}", "mcp_oauth_cancel", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/catalog", "mcp_catalog", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/catalog/{entry}/install", "mcp_catalog_install", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/reload", "mcp_reload", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/export/{name}", "mcp_export", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/servers", "mcp_list", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/servers", "mcp_create", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/servers/{name}", "mcp_detail", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}", "mcp_update", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/mcp/servers/{name}", "mcp_delete", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}/enabled", "mcp_enabled", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}/trust", "mcp_trust", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}/tools", "mcp_tools_put", Scope.PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/mcp/servers/{name}/secrets/{key}", "mcp_secret_put", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/mcp/servers/{name}/secrets/{key}", "mcp_secret_delete", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/servers/{name}/test", "mcp_test", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/servers/{name}/tools", "mcp_tools_get", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/servers/{name}/oauth", "mcp_oauth_start", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets/{toolset}/providers", "get_tool_providers", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/toolsets/{toolset}/provider", "put_tool_provider", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", "put_provider_key", Scope.PROFILE),
@@ -232,6 +261,27 @@ _HANDLERS = {
     "skill_purge": lambda api: _skills_admin.purge_handler(api),
     "skill_pinned": lambda api: _skills_admin.pinned_handler(api),
     "skill_archive": lambda api: _skills_admin.archive_handler(api),
+    "mcp_list": lambda api: _mcp_admin.list_handler(api),
+    "mcp_create": lambda api: _mcp_admin.create_handler(api),
+    "mcp_detail": lambda api: _mcp_admin.detail_handler(api),
+    "mcp_update": lambda api: _mcp_admin.update_handler(api),
+    "mcp_delete": lambda api: _mcp_admin.delete_handler(api),
+    "mcp_enabled": lambda api: _mcp_admin.enabled_handler(api),
+    "mcp_trust": lambda api: _mcp_admin.trust_handler(api),
+    "mcp_tools_put": lambda api: _mcp_admin.tools_put_handler(api),
+    "mcp_secret_put": lambda api: _mcp_admin.secret_put_handler(api),
+    "mcp_secret_delete": lambda api: _mcp_admin.secret_delete_handler(api),
+    "mcp_job": lambda api: _mcp_probe.job_handler(api),
+    "mcp_test": lambda api: _mcp_probe.test_handler(api),
+    "mcp_tools_get": lambda api: _mcp_probe.tools_get_handler(api),
+    "mcp_oauth_start": lambda api: _mcp_oauth.start_handler(api),
+    "mcp_oauth_callback": lambda api: _mcp_oauth.callback_handler(api),
+    "mcp_oauth_poll": lambda api: _mcp_oauth.poll_handler(api),
+    "mcp_oauth_cancel": lambda api: _mcp_oauth.cancel_handler(api),
+    "mcp_catalog": lambda api: _mcp_catalog.catalog_handler(api),
+    "mcp_catalog_install": lambda api: _mcp_catalog.install_handler(api),
+    "mcp_reload": lambda api: _mcp_catalog.reload_handler(api),
+    "mcp_export": lambda api: _mcp_catalog.export_handler(api),
     "get_tool_providers": lambda api: _tool_providers.providers_handler(api),
     "put_tool_provider": lambda api: _tool_providers.select_handler(api),
     "put_provider_key": lambda api: _provider_keys.put_handler(api),
@@ -527,6 +577,28 @@ _OPTIONAL_ROUTES = {
     "learning_node_get": _contract_fields.has_skill_admin_symbols,
     "learning_node_put": _contract_fields.has_skill_admin_symbols,
     "learning_node_delete": _contract_fields.has_skill_admin_symbols,
+    # 0.17.0 — MCP 관리 라우트 전부가 `profile_mcp_admin` capability 와 같은 판정을 쓴다.
+    "mcp_list": _contract_fields.has_mcp_admin_symbols,
+    "mcp_create": _contract_fields.has_mcp_admin_symbols,
+    "mcp_detail": _contract_fields.has_mcp_admin_symbols,
+    "mcp_update": _contract_fields.has_mcp_admin_symbols,
+    "mcp_delete": _contract_fields.has_mcp_admin_symbols,
+    "mcp_enabled": _contract_fields.has_mcp_admin_symbols,
+    "mcp_trust": _contract_fields.has_mcp_admin_symbols,
+    "mcp_tools_put": _contract_fields.has_mcp_admin_symbols,
+    "mcp_secret_put": _contract_fields.has_mcp_admin_symbols,
+    "mcp_secret_delete": _contract_fields.has_mcp_admin_symbols,
+    "mcp_job": _contract_fields.has_mcp_admin_symbols,
+    "mcp_test": _contract_fields.has_mcp_admin_symbols,
+    "mcp_tools_get": _contract_fields.has_mcp_admin_symbols,
+    "mcp_oauth_start": _contract_fields.has_mcp_admin_symbols,
+    "mcp_oauth_callback": _contract_fields.has_mcp_admin_symbols,
+    "mcp_oauth_poll": _contract_fields.has_mcp_admin_symbols,
+    "mcp_oauth_cancel": _contract_fields.has_mcp_admin_symbols,
+    "mcp_catalog": _contract_fields.has_mcp_admin_symbols,
+    "mcp_catalog_install": _contract_fields.has_mcp_admin_symbols,
+    "mcp_reload": _contract_fields.has_mcp_admin_symbols,
+    "mcp_export": _contract_fields.has_mcp_admin_symbols,
 }
 
 
@@ -550,6 +622,8 @@ def attach(app, adapter, api) -> None:
     app.router.add_* 를 여기 말고 어디서도 부르지 않는다 — 그래야 감싸지 않은
     핸들러가 생길 수 없다.
     """
+    global ADAPTER
+    ADAPTER = adapter
     before = len(getattr(app.router, "_resources", []))
     for method, path, handler_name, scope in routes_for(api):
         handler = require_auth(adapter, scope, handler_for(handler_name, api))
