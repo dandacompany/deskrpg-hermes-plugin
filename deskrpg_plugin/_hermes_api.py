@@ -247,6 +247,10 @@ OPTIONAL_SPEC = (
     )),
     ("tools.connectors.mcp_oauth", (("start", "mcp_oauth_start"), ("cancel_attempt", "mcp_oauth_cancel_attempt"))),
     ("tui_gateway.mcp_oauth_sessions", ("deliver_callback_flow", "poll_flow", "cancel_flow")),
+    # 0.18.0 — 무인 실행 막힘 사건. 막힌 명령의 위험 패턴 키를 다시 계산하고, 명령을 가려서 싣는다.
+    # 없어도 사건은 남는다(패턴·명령만 빠진다) — capability 판정에 넣지 않는다.
+    ("tools.approval_detection", ("detect_dangerous_command",)),
+    ("agent.redact", ("redact_sensitive_text",)),
 )
 
 def _pairs(names):

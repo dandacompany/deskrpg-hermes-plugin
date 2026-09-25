@@ -357,6 +357,8 @@ EVENT_KINDS = frozenset({
     "artifact.delete_partial",
     # 카드 제안 — `include=card_proposals` 로 옵트인했을 때만 실린다. 아티팩트 옵트인과 독립이다.
     "card_proposal.created",
+    # 무인 실행 막힘 — `include=approvals` 로 옵트인했을 때만 실린다(0.18.0).
+    "approval.blocked",
 })
 
 PLUGIN_EVENT_REQUIRED = frozenset({"id", "ts", "kind", "payload"})
