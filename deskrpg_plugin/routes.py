@@ -35,6 +35,7 @@ from . import skills_hub_routes as _skills_hub
 from . import learning_routes as _learning
 from . import mcp_admin as _mcp_admin
 from . import mcp_probe as _mcp_probe
+from . import mcp_oauth_routes as _mcp_oauth
 from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
@@ -109,6 +110,9 @@ ROUTES = [
     ("POST", "/p/{profile}/deskrpg/skills/{name}/archive", "skill_archive", Scope.PROFILE),
     # ---- 0.17.0 NPC MCP 커넥터 관리 (프로필 키) — 고정 세그먼트 행이 servers 행보다 위 ----
     ("GET", "/p/{profile}/deskrpg/mcp/jobs/{job_id}", "mcp_job", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/oauth/{session_id}/callback", "mcp_oauth_callback", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/mcp/oauth/{session_id}", "mcp_oauth_poll", Scope.PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/mcp/oauth/{session_id}", "mcp_oauth_cancel", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/mcp/servers", "mcp_list", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/mcp/servers", "mcp_create", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/mcp/servers/{name}", "mcp_detail", Scope.PROFILE),
@@ -121,6 +125,7 @@ ROUTES = [
     ("DELETE", "/p/{profile}/deskrpg/mcp/servers/{name}/secrets/{key}", "mcp_secret_delete", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/mcp/servers/{name}/test", "mcp_test", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/mcp/servers/{name}/tools", "mcp_tools_get", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/mcp/servers/{name}/oauth", "mcp_oauth_start", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets/{toolset}/providers", "get_tool_providers", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/toolsets/{toolset}/provider", "put_tool_provider", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", "put_provider_key", Scope.PROFILE),
@@ -261,6 +266,10 @@ _HANDLERS = {
     "mcp_job": lambda api: _mcp_probe.job_handler(api),
     "mcp_test": lambda api: _mcp_probe.test_handler(api),
     "mcp_tools_get": lambda api: _mcp_probe.tools_get_handler(api),
+    "mcp_oauth_start": lambda api: _mcp_oauth.start_handler(api),
+    "mcp_oauth_callback": lambda api: _mcp_oauth.callback_handler(api),
+    "mcp_oauth_poll": lambda api: _mcp_oauth.poll_handler(api),
+    "mcp_oauth_cancel": lambda api: _mcp_oauth.cancel_handler(api),
     "get_tool_providers": lambda api: _tool_providers.providers_handler(api),
     "put_tool_provider": lambda api: _tool_providers.select_handler(api),
     "put_provider_key": lambda api: _provider_keys.put_handler(api),
@@ -570,6 +579,10 @@ _OPTIONAL_ROUTES = {
     "mcp_job": _contract_fields.has_mcp_admin_symbols,
     "mcp_test": _contract_fields.has_mcp_admin_symbols,
     "mcp_tools_get": _contract_fields.has_mcp_admin_symbols,
+    "mcp_oauth_start": _contract_fields.has_mcp_admin_symbols,
+    "mcp_oauth_callback": _contract_fields.has_mcp_admin_symbols,
+    "mcp_oauth_poll": _contract_fields.has_mcp_admin_symbols,
+    "mcp_oauth_cancel": _contract_fields.has_mcp_admin_symbols,
 }
 
 
