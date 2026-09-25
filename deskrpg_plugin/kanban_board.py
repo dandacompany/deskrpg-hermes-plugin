@@ -136,12 +136,22 @@ def _find_board(api, slug: str):
     return None
 
 
+def _include_archived(request) -> bool:
+    return request.query.get("include_archived", "").lower() in ("1", "true", "yes")
+
+
 def list_boards_handler(api):
+    """보관된 보드는 `?include_archived=true` 일 때만 싣는다."""
+
     @guarded
     async def handler(request):
+        include_archived = _include_archived(request)
+
         def work():
             out = []
             for meta in api.list_boards(include_archived=True):
+                if meta.get("archived") and not include_archived:
+                    continue
                 total, counts = _board_task_counts(api, meta["slug"])
                 out.append(_board_meta(api, meta, total=total, counts=counts))
             return {"boards": out, "current": api.get_current_board()}
@@ -189,10 +199,24 @@ def patch_board_handler(api):
         name = require_str(body, "name", required=False, allow_empty=True)
         description = require_str(body, "description", required=False, allow_empty=True)
         workdir = _validate_workdir(require_str(body, "default_workdir", required=False, allow_empty=True))
+        archived = require_bool(body, "archived", required=False)
+        if archived and slug == "default":
+            # Hermes `remove_board` 와 같은 원칙 — default 는 늘 있어야 하는 보드다.
+            raise RequestError(400, "invalid_board", "the default board cannot be archived")
 
         def work():
-            meta = api.write_board_metadata(slug, name=name, description=description, default_workdir=workdir)
+            if archived:
+                # 보관하면 디스패처가 이 보드를 건너뛴다. 돌고 있는 카드의 결과 알림이 끊기지 않게 막는다.
+                _total, counts = _board_task_counts(api, slug)
+                running = counts.get("running", 0)
+                if running:
+                    raise RequestError(409, "board_has_running_cards", f"{running} running").with_extra(running=running)
+            meta = api.write_board_metadata(
+                slug, name=name, description=description, default_workdir=workdir, archived=archived,
+            )
             total, _counts = _board_task_counts(api, slug)
+            if archived is not None:
+                log_event("board.archive" if archived else "board.unarchive", board=slug)
             log_event("board.patch", board=slug, fields=[k for k in body])
             return _board_meta(api, meta, total=total)
 
@@ -210,7 +234,7 @@ def get_board_handler(api):
     @guarded
     async def handler(request):
         slug = _board_from_query(api, request)
-        include_archived = request.query.get("include_archived", "").lower() in ("1", "true", "yes")
+        include_archived = _include_archived(request)
 
         def work():
             with board_conn(api, slug) as conn:

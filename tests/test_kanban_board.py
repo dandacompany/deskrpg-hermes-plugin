@@ -112,6 +112,78 @@ async def test_보드_수정은_없는_보드에_404_알_수_없는_키에_400(a
     assert (await resp.json())["error"] == "unknown_field"
 
 
+async def test_보드_보관은_목록_기본에서_빠지고_include_archived_로_다시_보인다(aiohttp_client, fake_api):
+    fake_api.create_board("deskrpg-arc", name="보관할 보드")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.patch("/deskrpg/kanban/boards/deskrpg-arc", json={"archived": True})
+    assert resp.status == 200
+    assert (await resp.json())["board"]["archived"] is True
+    assert fake_api.kanban.boards["deskrpg-arc"].meta["archived"] is True
+
+    listed = await (await client.get("/deskrpg/kanban/boards")).json()
+    assert [b["slug"] for b in listed["boards"]] == ["default"]
+    listed = await (await client.get("/deskrpg/kanban/boards?include_archived=true")).json()
+    by_slug = {b["slug"]: b for b in listed["boards"]}
+    assert by_slug["deskrpg-arc"]["archived"] is True
+    assert by_slug["default"].get("archived") in (None, False)
+
+
+async def test_보드_보관_해제는_archived_를_false_로_되돌린다(aiohttp_client, fake_api):
+    fake_api.create_board("deskrpg-back", name="x")
+    client = await _client(aiohttp_client, fake_api)
+    await client.patch("/deskrpg/kanban/boards/deskrpg-back", json={"archived": True})
+    resp = await client.patch("/deskrpg/kanban/boards/deskrpg-back", json={"archived": False})
+    assert resp.status == 200
+    assert (await resp.json())["board"]["archived"] is False
+    listed = await (await client.get("/deskrpg/kanban/boards")).json()
+    assert "deskrpg-back" in [b["slug"] for b in listed["boards"]]
+
+
+async def test_보관된_보드도_이름_수정과_보기는_된다(aiohttp_client, fake_api):
+    fake_api.create_board("deskrpg-old", name="x")
+    client = await _client(aiohttp_client, fake_api)
+    await client.patch("/deskrpg/kanban/boards/deskrpg-old", json={"archived": True})
+    resp = await client.patch("/deskrpg/kanban/boards/deskrpg-old", json={"name": "y"})
+    assert resp.status == 200
+    assert (await resp.json())["board"]["archived"] is True
+    resp = await client.get("/deskrpg/kanban/board?board=deskrpg-old")
+    assert resp.status == 200
+
+
+async def test_default_보드는_보관할_수_없다(aiohttp_client, fake_api):
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.patch("/deskrpg/kanban/boards/default", json={"archived": True})
+    assert resp.status == 400
+    assert (await resp.json())["error"] == "invalid_board"
+    assert not fake_api.kanban.boards["default"].meta.get("archived")
+
+
+async def test_실행_중_카드가_있는_보드는_보관을_409_로_거절하고_개수를_알린다(aiohttp_client, fake_api):
+    fake_api.create_board("deskrpg-busy", name="x")
+    db = fake_api.kanban
+    conn = db.connect(board="deskrpg-busy")
+    t = db.create_task(conn, title="작업 중")
+    db.get_task(conn, t).status = "running"
+    db.create_task(conn, title="대기")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.patch("/deskrpg/kanban/boards/deskrpg-busy", json={"archived": True})
+    assert resp.status == 409
+    body = await resp.json()
+    assert body["error"] == "board_has_running_cards"
+    assert body["running"] == 1
+    assert not fake_api.kanban.boards["deskrpg-busy"].meta.get("archived")
+    # 보관 해제와 다른 키 수정은 막지 않는다.
+    resp = await client.patch("/deskrpg/kanban/boards/deskrpg-busy", json={"archived": False, "name": "z"})
+    assert resp.status == 200
+
+
+async def test_보관_값은_불리언만_받는다(aiohttp_client, fake_api):
+    fake_api.create_board("deskrpg-b", name="x")
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.patch("/deskrpg/kanban/boards/deskrpg-b", json={"archived": "yes"})
+    assert resp.status == 400
+
+
 # ---------------------------------------------------------------------------
 # 보드 보기
 # ---------------------------------------------------------------------------

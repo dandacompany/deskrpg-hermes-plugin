@@ -29,9 +29,11 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 # `worker_plugin` = `/deskrpg/info` 의 `worker_plugin` 보고와 `POST /deskrpg/worker-plugin`. 프로필 목록·경로 심볼만
 # 쓰므로 늘 된다.
 # `kanban_attachment_list` = `GET /deskrpg/kanban/attachments?board=` (보드 전체 첨부, 결과물 갤러리용).
+# `board_archive` = `PATCH /deskrpg/kanban/boards/{slug}` 의 `archived` 키와 목록의 `?include_archived=`.
+# 옛 플러그인은 그 키에 `unknown_field` 400 을 내므로 호출부는 이 값으로 판정한다.
 CAPABILITIES = (
     "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin",
-    "kanban_attachment_list",
+    "kanban_attachment_list", "board_archive",
 )
 
 
@@ -228,7 +230,7 @@ KANBAN_TASK_ACTIONS = (
 BOARD_META_REQUIRED = frozenset({"slug"})
 BOARD_META_OPTIONAL = frozenset({
     "name", "description", "is_current", "total", "default_workdir",
-    "default_workspace_kind", "project_id", "project_name",
+    "default_workspace_kind", "project_id", "project_name", "archived",
 })
 BOARD_META_KEYS = BOARD_META_REQUIRED | BOARD_META_OPTIONAL
 
@@ -322,7 +324,9 @@ UPDATE_TASK_KEYS = (CREATE_TASK_KEYS - {"idempotency_key"}) | frozenset({"status
 CREATE_BOARD_REQUIRED = frozenset({"slug", "name"})
 CREATE_BOARD_OPTIONAL = frozenset({"default_workdir"})
 CREATE_BOARD_KEYS = CREATE_BOARD_REQUIRED | CREATE_BOARD_OPTIONAL
-UPDATE_BOARD_KEYS = frozenset({"name", "description", "default_workdir"})
+# `archived` = Hermes `board.json` 의 보관 플래그(`write_board_metadata(archived=)`). 폴더를 옮기는
+# `remove_board` 와 달리 되돌릴 수 있다. 보관된 보드는 게이트웨이 디스패처·알림 감시자가 건너뛴다.
+UPDATE_BOARD_KEYS = frozenset({"name", "description", "default_workdir", "archived"})
 
 ORCHESTRATION_SETTINGS_REQUIRED = frozenset({
     "orchestrator_profile", "default_assignee", "auto_decompose",
