@@ -15,6 +15,7 @@ import contextlib
 import os
 import re
 import tempfile
+import time
 from pathlib import Path
 
 # `#` 로 시작하는 주석 줄은 정의가 아니다 — 정규식이 첫 비공백 문자로 식별자를 요구해 자연히 걸러진다.
@@ -57,8 +58,23 @@ def write_text_atomic(path: Path, text: str) -> None:
         # mkstemp 는 0600 으로 만든다 — 값이 담긴 채로 넓은 권한에 놓이는 순간이 없다.
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
-        os.chmod(tmp, 0o600)
-        os.replace(tmp, path)
+        with contextlib.suppress(OSError):
+            os.chmod(tmp, 0o600)
+        # Windows-resilient replace: on Windows, os.replace raises PermissionError
+        # if the destination file is open by another thread/process, or held by a file watcher.
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == max_attempts - 1:
+                    with open(path, "w", encoding="utf-8") as handle:
+                        handle.write(text)
+                    with contextlib.suppress(OSError):
+                        os.unlink(tmp)
+                    break
+                time.sleep(0.05 * (2 ** attempt))
     except BaseException:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
