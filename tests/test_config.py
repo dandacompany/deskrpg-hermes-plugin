@@ -534,7 +534,7 @@ async def test_clearBaseUrl_은_true_만_받는다(aiohttp_client, fake_api):
     assert resp.status == 400
 
 
-# ── 비밀 위생 (PVTI_…7n8oo · PVTI_…7oHZg) ────────────────────────────────────
+# ── 비밀 위생 ────────────────────────────────────
 #
 # config.yaml 에는 인라인 API 키가 들어갈 수 있다(`providers.*.api_key`,
 # `custom_providers`). 그래서 이 파일을 다루는 모든 경로는 두 가지를 지켜야 한다:

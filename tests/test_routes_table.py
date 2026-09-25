@@ -149,12 +149,17 @@ EXPECTED_ROUTES = {
     ("POST", "/p/{profile}/deskrpg/mcp/servers/{name}/test", _PROFILE),
     ("GET", "/p/{profile}/deskrpg/mcp/servers/{name}/tools", _PROFILE),
     ("POST", "/p/{profile}/deskrpg/mcp/servers/{name}/oauth", _PROFILE),
+    # 0.18.0 무인 실행 승인 정책 (프로필 키)
+    ("GET", "/p/{profile}/deskrpg/approval-policy", _PROFILE),
+    ("PUT", "/p/{profile}/deskrpg/approval-policy", _PROFILE),
+    ("POST", "/p/{profile}/deskrpg/approval-policy/allowlist", _PROFILE),
+    ("DELETE", "/p/{profile}/deskrpg/approval-policy/allowlist", _PROFILE),
 }
 
 
 def test_라우트_테이블이_스펙의_예순여덟_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 115
-    assert len(routes.ROUTES) == 115, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+    assert len(EXPECTED_ROUTES) == 119
+    assert len(routes.ROUTES) == 119, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
@@ -164,9 +169,9 @@ def test_소유자_라우트는_41_개_프로필_라우트는_27_개다():
         by_scope[scope] = by_scope.get(scope, 0) + 1
     # 소유자: 기존 4 + 워커 플러그인 1 + 칸반 21 + 보드 첨부 목록 1 + 뷰 묶음 조회 2 + 스웜 2 + 사건 1 + 아티팩트 6 + 카드 제안 3 = 41 ·
     # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 + 0.10.0 도구 프로바이더 2
-    #   + 0.15.0 스킬 CRUD 11 + 스킬 Hub 6 + curator·관계도 8 + 0.17.0 MCP 21 = 73.
+    #   + 0.15.0 스킬 CRUD 11 + 스킬 Hub 6 + curator·관계도 8 + 0.17.0 MCP 21 + 0.18.0 승인 정책 4 = 77.
     assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 21 + 1 + 2 + 2 + 2 + 6 + 3,
-                        routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11 + 6 + 8 + 21}
+                        routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11 + 6 + 8 + 21 + 4}
 
 
 def test_OAuth_취소_행이_연결_끊기_행보다_앞에_있다():
@@ -239,7 +244,7 @@ def test_plugin_yaml_이_requires_hermes_를_최상위에_선언하고_버전은
 
     raw = (pathlib.Path(__file__).resolve().parent.parent / "plugin.yaml").read_text(encoding="utf-8")
     manifest = yaml.safe_load(raw)
-    assert manifest["version"] == "0.17.1"
+    assert manifest["version"] == "0.18.0"
     assert manifest["requires_hermes"] == ">=0.21.1"
     assert "requires" not in manifest
 

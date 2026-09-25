@@ -17,7 +17,7 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.17.1 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.18.0 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -80,6 +80,8 @@ Stop the gateway and back up its kanban databases before replacing core code. In
 New cards default to human approval. An explicitly delegated task can be approved by a different AI profile. Approvals bind to the submitted result; generic status changes cannot substitute for approval. AI reviewers must inspect the actual submitted text or artifacts; this does not guarantee the semantic quality of an AI review. Existing cards are not converted automatically.
 
 ## Release
+
+0.18.0 adds the unattended run approval policy (capability `profile_approval_policy`, routes under `/p/{profile}/deskrpg/approval-policy`): read and set `approvals.cron_mode` and `approvals.single_query_mode` (`deny`/`approve` only) and edit `command_allowlist` (dangerous-pattern keys). Worker processes also record `approval.blocked` events (opt-in `include=approvals`) when a cron job or kanban run is stopped by that policy or by an untrusted MCP write tool, with the pattern key when there is one and a redacted command.
 
 0.17.1 prevents overlapping MCP OAuth attempts for the same server. Hermes lets a new attempt cancel an older one, but if the older worker finishes after the newer attempt has been approved, its rollback restores the pre-attempt token snapshot and erases the fresh authorization. `POST …/mcp/servers/{name}/oauth` now returns `409 oauth_in_progress` (with the open `sessionId`) while an attempt is still running; with `{"restart": true}` it cancels the open attempt, waits up to 10 seconds for its worker to exit, and only then starts a new one (`409 oauth_busy` if the worker has not exited). Cancelling also waits for the worker; if it has not exited the response adds `workerDone: false` and new attempts stay blocked until it does.
 
