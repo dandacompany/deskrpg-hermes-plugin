@@ -17,7 +17,7 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.18.1 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.19.0 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -81,6 +81,8 @@ Stop the gateway and back up its kanban databases before replacing core code. In
 New cards default to human approval. An explicitly delegated task can be approved by a different AI profile. Approvals bind to the submitted result; generic status changes cannot substitute for approval. AI reviewers must inspect the actual submitted text or artifacts; this does not guarantee the semantic quality of an AI review. Existing cards are not converted automatically.
 
 ## Release
+
+0.19.0 adds board archiving (capability `board_archive`): `PATCH /deskrpg/kanban/boards/{slug}` accepts `archived: true|false`, archived boards leave `GET /deskrpg/kanban/boards` unless `?include_archived=true`, board metadata reports `archived`, the default board cannot be archived (`400 invalid_board`), and a board with running cards is refused with `409 board_has_running_cards` and its `running` count. A card-proposal resolve now records `task_id` only for the card choice, and time-based tests no longer depend on wall-clock budgets.
 
 0.18.1 adds the cron job name (`jobName`, from the profile's `cron/jobs.json`) to `approval.blocked` events.
 
