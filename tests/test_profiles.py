@@ -1,7 +1,7 @@
 import asyncio
 import os
 import stat
-import time
+import threading
 
 import pytest
 from aiohttp import web
@@ -175,8 +175,15 @@ async def test_DELETE는_동기_삭제_중에도_이벤트_루프를_막지_않�
 
     original_tree = safedelete.delete_profile_tree
 
+    # 삭제는 테스트가 풀어 줄 때까지 붙잡힌다. 벽시계 예산(예전의 0.25초) 대신 "info 가 답할 때
+    # 삭제가 아직 안 끝났다" 를 본다 — 바쁜 머신에서도 흔들리지 않는다. 루프를 막는 회귀라면
+    # 삭제가 5초 뒤 스스로 풀리고 info 는 그 뒤에야 답해 아래 단언이 실패한다(멈추지는 않는다).
+    entered = threading.Event()
+    release = threading.Event()
+
     def slow_tree(name, profile_dir, home=None):
-        time.sleep(0.3)  # 스레드에서 도는지 확인할 만큼만 느리게
+        entered.set()
+        release.wait(5)
         return original_tree(name, profile_dir, home)
 
     monkeypatch.setattr(safedelete, "delete_profile_tree", slow_tree)
@@ -189,18 +196,12 @@ async def test_DELETE는_동기_삭제_중에도_이벤트_루프를_막지_않�
     async def do_info():
         return await client.get("/deskrpg/info")
 
-    # 상대 타이밍(wait_for)으로는 잡히지 않는다 — 루프가 막히면 그 sleep 자체가
-    # 삭제가 끝날 때까지 밀리고, wait_for 는 이미 풀린 뒤에 시작해 즉시 성공한다.
-    # 요청 시작부터의 절대 경과시간을 재야 블로킹이 드러난다.
-    t0 = time.monotonic()
     delete_task = asyncio.ensure_future(do_delete())
-    await asyncio.sleep(0.05)  # delete 가 먼저 진행되게 살짝 양보
+    assert await asyncio.to_thread(entered.wait, 5), "삭제가 시작되지 않았다"
     info_resp = await do_info()
-    elapsed = time.monotonic() - t0
     assert info_resp.status == 200
-    assert elapsed < 0.25, (
-        f"info 응답까지 {elapsed:.3f}s — 느린 삭제(0.3s)가 이벤트 루프를 막았다"
-    )
+    assert not delete_task.done(), "느린 삭제가 이벤트 루프를 막았다 — info 가 삭제 뒤에야 답했다"
+    release.set()
 
     delete_resp = await delete_task
     assert delete_resp.status == 200

@@ -205,11 +205,27 @@ def test_제목의_HTML_엔티티를_되돌린다():
     assert got.title == "Tom & Jerry"
 
 
-def test_닫히지_않은_태그가_반복돼도_선형_시간에_끝난다():
+def _cpu_시간(text):
+    """세 번 중 가장 짧은 CPU 시간. 벽시계가 아니라 이 프로세스의 CPU 만 재서 경합에 둔감하다."""
     import time
 
-    evil = "<x " * 40_000  # 120 KB, '>' 없음
-    started = time.perf_counter()
-    assert fences.detect("html", evil) is None
+    best = float("inf")
+    for _ in range(3):
+        started = time.process_time()
+        fences.detect("html", text)
+        best = min(best, time.process_time() - started)
+    return best
+
+
+@pytest.mark.parametrize(
+    "make",
+    [lambda n: "<x " * n, lambda n: "<title" * n + "<html>" + "y" * 200],
+)
+def test_닫히지_않은_태그가_반복돼도_선형_시간에_끝난다(make):
+    # 벽시계 1초 예산은 머신 부하를 함께 잰다. 입력을 4배로 늘렸을 때의 증가율을 본다 —
+    # 선형이면 약 4배, 제곱이면 약 16배다.
+    assert fences.detect("html", "<x " * 40_000) is None
     assert fences.detect("html", "<title" * 20_000 + "<html>" + "y" * 200) is not None
-    assert time.perf_counter() - started < 1.0
+    small = _cpu_시간(make(10_000))
+    large = _cpu_시간(make(40_000))
+    assert large < 8 * max(small, 0.001), f"4배 입력에 {large / max(small, 1e-9):.1f}배 걸렸다"
