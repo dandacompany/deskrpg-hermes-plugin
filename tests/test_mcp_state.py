@@ -87,3 +87,10 @@ def test_audit_appends_jsonl(fake_api):
 def test_request_error_extra_reaches_body():
     resp = RequestError(422, "mcp_security_rejected", "x").with_extra(reasons=["r1"]).response()
     assert json.loads(resp.body)["reasons"] == ["r1"]
+
+
+def test_env_refs_cover_oauth_args_and_url():
+    entry = {"url": "https://x.example/${TENANT}/mcp", "args": ["--key", "${API_K}"],
+             "oauth": {"client_id": "abc", "client_secret": "${ASANA_CLIENT_SECRET}"},
+             "env": {"A": "${A}"}}
+    assert mcp_state.env_refs(entry) == ["A", "ASANA_CLIENT_SECRET", "API_K", "TENANT"]

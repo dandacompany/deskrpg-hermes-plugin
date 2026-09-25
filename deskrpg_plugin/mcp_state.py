@@ -93,14 +93,32 @@ def profile_scope(api, home: Path):
         yield
 
 
+_REF_SECTIONS = ("env", "headers", "oauth", "args", "url")
+
+
+def _strings(value):
+    if isinstance(value, dict):
+        for item in value.values():
+            yield from _strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings(item)
+    elif isinstance(value, str):
+        yield value
+
+
 def env_refs(entry: dict) -> list[str]:
-    """항목의 `env`·`headers` 값에 든 `${KEY}` 참조 이름(등장 순서, 중복 없이)."""
+    """항목에 든 `${KEY}` 참조 이름(등장 순서, 중복 없이).
+
+    `env`·`headers` 뿐 아니라 `oauth` 블록(카탈로그 OAuth 항목의 `client_secret: ${…}`)·`args`·`url` 도 훑는다 —
+    빠지면 그 키의 hasValue 를 보여 주지 못하고 비밀값을 넣을 수도 없다.
+    """
     found: list[str] = []
-    blobs = [*(entry.get("env") or {}).values(), *(entry.get("headers") or {}).values()]
-    for blob in blobs:
-        for key in ENV_REF_RE.findall(str(blob)):
-            if key not in found:
-                found.append(key)
+    for section in _REF_SECTIONS:
+        for text in _strings(entry.get(section)):
+            for key in ENV_REF_RE.findall(text):
+                if key not in found:
+                    found.append(key)
     return found
 
 
