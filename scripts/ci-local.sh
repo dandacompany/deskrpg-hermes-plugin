@@ -68,7 +68,7 @@ git -C "$HERMES_SRC" checkout --quiet "$REF"
 say "Hermes editable 설치"
 # 업스트림이 wheel·sdist 빌드를 막았다(setup.py 빌드 가드). editable 은 build_editable
 # 을 쓰므로 가드에 걸리지 않는다 — 여기를 `pip install <url>` 로 되돌리지 말 것.
-"$PY" -m pip install -q -e "$HERMES_SRC"
+"$PY" -m pip install -q -e "$HERMES_SRC[mcp]"
 "$PY" -c "import hermes_cli, cron, hermes_state; print('hermes ok')"
 
 say "가드 — 우리 tests 패키지가 가려지지 않았는가"

@@ -156,3 +156,13 @@ async def test_probe_uses_profile_config(client, fake_api):
     assert seen["home"].endswith("sophie") and seen["cfg"]["url"] == "https://a.example/x"
     raw = yaml.safe_load((fake_api.get_profile_dir("sophie") / "config.yaml").read_text())
     assert "connect_timeout" not in raw["mcp_servers"]["gh"]
+
+
+def test_hint_reads_camel_snake_and_dict_annotations():
+    from types import SimpleNamespace as NS
+
+    assert mcp_probe._hint(NS(annotations=NS(readOnlyHint=True)), "readOnlyHint") is True
+    assert mcp_probe._hint(NS(annotations=NS(read_only_hint=True)), "readOnlyHint") is True
+    assert mcp_probe._hint(NS(annotations={"destructiveHint": True}), "destructiveHint") is True
+    assert mcp_probe._hint(NS(annotations=None), "readOnlyHint") is None
+    assert mcp_probe._hint(NS(annotations=NS(readOnlyHint="yes")), "readOnlyHint") is None

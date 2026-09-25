@@ -44,7 +44,7 @@ jobs:
             "$(tr -d '[:space:]' < .hermes-repo)" hermes-src
           git -C hermes-src fetch --depth 1 origin "$HERMES_REF"
           git -C hermes-src checkout "$HERMES_REF"
-          pip install -e hermes-src
+          pip install -e "hermes-src[mcp]"
       - name: Verify Hermes import
         run: python -c "import hermes_cli, cron, hermes_state; print('hermes ok')"
       # hermes-agent 에도 `tests/` 정규 패키지가 있다. editable 설치가 루트를 통째로

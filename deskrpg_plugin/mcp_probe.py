@@ -87,8 +87,19 @@ class ProbeJobs:
 JOBS = ProbeJobs()
 
 
+_SNAKE = {"readOnlyHint": "read_only_hint", "destructiveHint": "destructive_hint"}
+
+
 def _hint(tool, key):
-    value = getattr(getattr(tool, "annotations", None), key, None)
+    # mcp 1.x 는 `readOnlyHint`, mcp 2.x(`mcp_types`) 는 `read_only_hint` 로 읽힌다(실측) — 둘 다 본다.
+    # 캐시에서 온 dict 모양도 받는다.
+    annotations = getattr(tool, "annotations", None)
+    if isinstance(annotations, dict):
+        value = annotations.get(key, annotations.get(_SNAKE[key]))
+    else:
+        value = getattr(annotations, key, None)
+        if value is None:
+            value = getattr(annotations, _SNAKE[key], None)
     return value if isinstance(value, bool) else None
 
 
