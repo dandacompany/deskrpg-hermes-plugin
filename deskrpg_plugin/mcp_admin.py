@@ -75,7 +75,8 @@ def refresh_tool_flags(home: Path, name: str, entry: dict) -> None:
         mcp_state.write_check(home, name, check)
 
 
-def _save(api, home: Path, name: str, entry: dict) -> None:
+def save_entry(api, home: Path, name: str, entry: dict) -> None:
+    """보안 검사(422) → 서버 단위 저장(실패 500) → 저장된 도구 on 표시 갱신."""
     reasons = api.validate_mcp_server_entry(name, entry)
     if reasons:
         raise RequestError(422, "mcp_security_rejected", "server entry rejected by Hermes security check") \
@@ -239,7 +240,7 @@ def create_handler(api):
             if body.get("auth") == "bearer":
                 with _home_scope(api, home):
                     entry["headers"] = {**(entry.get("headers") or {}), **api._bearer_auth_headers(name)}
-            _save(api, home, name, entry)
+            save_entry(api, home, name, entry)
             _write_env(home, env_values)
             mcp_state.audit(home, actor, "create", name, transport="http" if entry.get("url") else "stdio",
                             command=Path(str(entry.get("command") or "")).name or None)
@@ -269,7 +270,7 @@ def update_handler(api):
             new, env_values = _entry_from_body(name, body, existing=old)
             if _stdio_changed(old, new) and body.get("confirmName") != name:
                 raise RequestError(400, "confirmation_required", "stdio command changes need confirmName == name")
-            _save(api, home, name, new)
+            save_entry(api, home, name, new)
             _write_env(home, env_values)
             extra = {"command": Path(str(new.get("command") or "")).name} if _stdio_changed(old, new) else {}
             mcp_state.audit(home, actor, "update", name, **extra)
@@ -325,7 +326,7 @@ def _patch(api, action: str, mutate):
         def work():
             entry = copy.deepcopy(require_entry(home, name))
             mutate(entry, body)
-            _save(api, home, name, entry)
+            save_entry(api, home, name, entry)
             mcp_state.audit(home, actor, action, name)
             return view_of(api, home, name, require_entry(home, name))
 

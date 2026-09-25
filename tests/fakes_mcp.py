@@ -164,8 +164,27 @@ def install_fake_mcp(api) -> FakeMcp:
     api._profile_runtime_scope = runtime_scope
     api.mcp_list_catalog = lambda: list(fake.catalog)
     api.mcp_get_catalog_entry = lambda n: next((e for e in fake.catalog if e.name == n), None)
-    api.mcp_install_catalog_entry = lambda entry, *, enable=True, preloaded_env=None: fake.installs.append(
-        (entry.name, enable, dict(preloaded_env or {})))
+    def card_install_config(entry):
+        # Hermes `card_install_config` 와 같은 모양 — `_build_server_config` + enabled, 프롬프트·탐침 없음.
+        fake.installs.append(entry.name)
+        t, auth = entry.transport, entry.auth
+        cfg = {}
+        if t.type == "stdio":
+            cfg["command"] = t.command
+            if getattr(t, "args", None):
+                cfg["args"] = list(t.args)
+            if getattr(t, "env", None):
+                cfg["env"] = dict(t.env)
+        else:
+            cfg["url"] = t.url
+            if auth.type == "oauth":
+                cfg["auth"] = "oauth"
+            elif auth.type == "api_key":
+                cfg["headers"] = api._bearer_auth_headers(entry.name)
+        cfg["enabled"] = True
+        return cfg
+
+    api.mcp_card_install_config = card_install_config
     api.mcp_oauth_start = oauth_start
     api.mcp_oauth_cancel_attempt = lambda flow: False
     api.deliver_callback_flow = deliver
