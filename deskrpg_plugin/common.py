@@ -48,9 +48,15 @@ class RequestError(Exception):
         self.status = status
         self.code = code
         self.detail = detail
+        self.extra: dict = {}
+
+    def with_extra(self, **extra) -> "RequestError":
+        """응답 본문에 필드를 더한다(예: 보안 검사 거절 사유 `reasons`). 값에 비밀을 싣지 않는다."""
+        self.extra.update(extra)
+        return self
 
     def response(self) -> web.Response:
-        return json_error(self.status, self.code, self.detail)
+        return json_error(self.status, self.code, self.detail, **self.extra)
 
 
 def guarded(fn):

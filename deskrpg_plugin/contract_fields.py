@@ -65,6 +65,23 @@ _SKILL_ADMIN_SYMBOLS = (
 )
 
 
+# 0.17.0 — NPC MCP 커넥터 관리. `_hermes_api.OPTIONAL_SPEC` 의 0.17.0 블록과 같은 집합이다.
+_MCP_ADMIN_SYMBOLS = (
+    "_get_mcp_servers", "_save_mcp_server", "_remove_mcp_server", "_env_key_for_server",
+    "_bearer_auth_headers", "_oauth_tokens_present", "redact_mcp_probe_text", "_resolve_mcp_server_config",
+    "validate_mcp_server_entry", "_ensure_mcp_loop", "_run_on_mcp_loop", "_connect_server",
+    "discover_mcp_tools", "_stop_mcp_loop_if_idle", "shutdown_mcp_servers", "reprobe_tool_availability",
+    "mcp_registry", "_profile_runtime_scope", "mcp_list_catalog", "mcp_get_catalog_entry",
+    "mcp_install_catalog_entry", "mcp_oauth_start", "mcp_oauth_cancel_attempt",
+    "deliver_callback_flow", "poll_flow", "cancel_flow",
+)
+
+
+def has_mcp_admin_symbols(api) -> bool:
+    """MCP 관리 라우트와 `profile_mcp_admin` capability 가 **같은 판정**을 쓴다 — 라우트 없는 capability 를 알리지 않으려고."""
+    return _has(api, _MCP_ADMIN_SYMBOLS)
+
+
 def has_skill_admin_symbols(api) -> bool:
     """`profile_skill_admin` capability 와 스킬 관리 라우트 전부가 같은 판정을 쓴다."""
     return _has(api, _SKILL_ADMIN_SYMBOLS) and has_skill_symbols(api)
@@ -166,6 +183,8 @@ def capabilities(api) -> tuple[str, ...]:
         extra.append("profile_skills")
     if has_skill_admin_symbols(api):
         extra.append("profile_skill_admin")
+    if has_mcp_admin_symbols(api):
+        extra.append("profile_mcp_admin")
     if _has(api, ("PROVIDER_REGISTRY",)):
         extra.append("profile_clone")
         extra.append("profile_provider_keys")

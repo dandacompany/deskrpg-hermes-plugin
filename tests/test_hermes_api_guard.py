@@ -25,7 +25,7 @@ def _install(monkeypatch, missing=(), skip_modules=()):
             monkeypatch.setitem(sys.modules, module_path, None)
             continue
         mod = made.setdefault(module_path, types.ModuleType(module_path))
-        for name in names:
+        for name, _flat in _hermes_api._pairs(names):  # 별칭 쌍이면 모듈에는 원래 이름으로 있다
             if name not in missing:
                 setattr(mod, name, lambda *a, **k: None)
         monkeypatch.setitem(sys.modules, module_path, mod)
@@ -39,7 +39,7 @@ def test_모든_심볼이_있으면_로드된다(monkeypatch):
 
 
 def test_REQUIRED_는_SPEC_의_모든_이름이다():
-    assert set(_hermes_api.REQUIRED) == {n for _m, names in _hermes_api.SPEC for n in names}
+    assert set(_hermes_api.REQUIRED) == {n for _m, names in _hermes_api.SPEC for _s, n in _hermes_api._pairs(names)}
     assert len(_hermes_api.REQUIRED) == len(set(_hermes_api.REQUIRED))
 
 
@@ -103,7 +103,9 @@ def test_선택_모듈이_통째로_없어도_로드된다(monkeypatch):
     # 필수 모듈(hermes_constants)에 붙은 선택 심볼은 모듈째 빠질 수 없다 — 그 심볼만 뺀다.
     required_modules = {module for module, _names in _hermes_api.SPEC}
     optional_only = tuple(m for m, _n in _hermes_api.OPTIONAL_SPEC if m not in required_modules)
-    optional_names = tuple(n for m, names in _hermes_api.OPTIONAL_SPEC if m in required_modules for n in names)
+    optional_names = tuple(
+        n for m, names in _hermes_api.OPTIONAL_SPEC if m in required_modules for n, _f in _hermes_api._pairs(names)
+    )
     _install(monkeypatch, skip_modules=optional_only, missing=optional_names)
     api = _hermes_api.load()
     for name in _hermes_api.OPTIONAL:

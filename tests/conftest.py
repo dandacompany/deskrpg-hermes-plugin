@@ -234,6 +234,9 @@ def fake_api(tmp_path):
     from tests.fakes_skills import install_fake_skills
 
     install_fake_skills(api)
+    from tests.fakes_mcp import install_fake_mcp
+
+    api.fake_mcp = install_fake_mcp(api)
     return api
 
 

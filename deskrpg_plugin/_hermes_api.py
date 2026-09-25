@@ -227,17 +227,42 @@ OPTIONAL_SPEC = (
     ("tools.skills_hub_install", ("quarantine_bundle",)),
     ("tools.skills_guard", ("scan_skill", "should_allow_install")),
     ("hermes_cli.web_server_gateway", ("_profile_action_environment", "_dashboard_spawn_executable")),
+    # 0.17.0 — NPC MCP 커넥터 관리. 전부 있을 때만 profile_mcp_admin 을 알린다(contract_fields).
+    # 모듈 간 흔한 이름(start·registry·list_catalog …)은 `(원래 이름, 평면 이름)` 쌍으로 별칭을 준다.
+    ("hermes_cli.mcp_config", (
+        "_get_mcp_servers", "_save_mcp_server", "_remove_mcp_server", "_env_key_for_server",
+        "_bearer_auth_headers", "_oauth_tokens_present", "redact_mcp_probe_text",
+        "_resolve_mcp_server_config",
+    )),
+    ("hermes_cli.mcp_security", ("validate_mcp_server_entry",)),
+    ("tools.mcp_tool_loop", ("_ensure_mcp_loop", "_run_on_mcp_loop")),
+    ("tools.mcp_tool_discovery", ("_connect_server", "discover_mcp_tools")),
+    ("tools.mcp_tool_lifecycle", ("_stop_mcp_loop_if_idle", "shutdown_mcp_servers")),
+    ("tools.mcp_tool_agent", ("reprobe_tool_availability",)),
+    ("tools.registry", (("registry", "mcp_registry"),)),
+    ("gateway.run", ("_profile_runtime_scope",)),
+    ("hermes_cli.mcp_catalog", (
+        ("list_catalog", "mcp_list_catalog"), ("get_entry", "mcp_get_catalog_entry"),
+        ("install_entry", "mcp_install_catalog_entry"),
+    )),
+    ("tools.connectors.mcp_oauth", (("start", "mcp_oauth_start"), ("cancel_attempt", "mcp_oauth_cancel_attempt"))),
+    ("tui_gateway.mcp_oauth_sessions", ("deliver_callback_flow", "poll_flow", "cancel_flow")),
 )
 
-REQUIRED = tuple(name for _module, names in SPEC for name in names)
-OPTIONAL = tuple(name for _module, names in OPTIONAL_SPEC for name in names)
+def _pairs(names):
+    """`"name"` 또는 `("원래 이름", "평면 이름")` 을 `(src, dst)` 쌍으로 푼다."""
+    return [(n, n) if isinstance(n, str) else n for n in names]
+
+
+REQUIRED = tuple(dst for _module, names in SPEC for _src, dst in _pairs(names))
+OPTIONAL = tuple(dst for _module, names in OPTIONAL_SPEC for _src, dst in _pairs(names))
 
 
 def _assert_no_duplicate_names():
     # 평면 네임스페이스라 이름이 겹치면 한쪽이 조용히 다른 쪽을 덮는다 — import 시점에 막는다.
     seen = set()
     for _module, names in (*SPEC, *OPTIONAL_SPEC):
-        for name in names:
+        for _src, name in _pairs(names):
             if name in seen:
                 raise AssertionError(f"duplicate name in _hermes_api.SPEC: {name}")
             seen.add(name)
@@ -258,11 +283,11 @@ def load() -> types.SimpleNamespace:
             module = importlib.import_module(module_path)
         except Exception as exc:  # ImportError 뿐 아니라 초기화 실패도 잡는다
             raise MissingHermesApi(f"{module_path} cannot be imported: {exc!r}") from exc
-        for name in names:
-            value = getattr(module, name, None)
+        for src, dst in _pairs(names):
+            value = getattr(module, src, None)
             if value is None:
-                missing.append(f"{module_path}.{name}")
-            resolved[name] = value
+                missing.append(f"{module_path}.{src}")
+            resolved[dst] = value
 
     if missing:
         raise MissingHermesApi("missing symbols: " + ", ".join(missing))
@@ -273,7 +298,7 @@ def load() -> types.SimpleNamespace:
         except Exception:
             # 모듈 자체가 없는 구버전 Hermes. 이 기능만 끄고 계속한다.
             module = None
-        for name in names:
-            resolved[name] = getattr(module, name, None) if module is not None else None
+        for src, dst in _pairs(names):
+            resolved[dst] = getattr(module, src, None) if module is not None else None
 
     return types.SimpleNamespace(**resolved)
