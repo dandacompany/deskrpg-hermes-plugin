@@ -244,3 +244,27 @@ def test_the_tool_finds_its_session_without_knowing_its_profile(tmp_api):
     assert ask_user.answer("noah", row["id"], "표 중심") == "answered"
     thread.join(3)
     assert json.loads(out["value"])["user_response"] == "표 중심"
+
+
+def test_two_loaded_copies_of_the_plugin_share_sessions_and_questions(tmp_api, monkeypatch):
+    """Hermes loads a directory plugin once per profile scope under different module names
+    (hermes_plugins.deskrpg, hermes_plugins.deskrpg__home_<digest>). The api_server routes come from
+    one copy and a profile's tool from another, so the waiting state must not live in module globals."""
+    import importlib.util
+
+    # A second copy under another name in the same package, as a second profile scope loads it.
+    spec = importlib.util.spec_from_file_location("deskrpg_plugin.ask_user_second_copy", ask_user.__file__)
+    second = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(second)
+    monkeypatch.setattr(second, "REGISTRATION_GRACE_SECONDS", 0.3)
+    monkeypatch.setattr(second, "_session_kind", lambda api, session_id: "chat")
+    monkeypatch.setattr(second, "_interrupted", lambda: False)
+    assert second is not ask_user
+    assert second._state is ask_user._state
+
+    ask_user.register_session("noah", "sess-1")  # the routes' copy
+    thread, out = _run_in_thread(second.make_handler(tmp_api), ARGS, session_id="sess-1")  # the profile's copy
+    [row] = _wait_pending("noah")  # read through the routes' copy
+    assert ask_user.answer("noah", row["id"], "표 중심") == "answered"
+    thread.join(3)
+    assert json.loads(out["value"])["user_response"] == "표 중심"
