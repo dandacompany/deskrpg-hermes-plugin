@@ -50,7 +50,11 @@ _SOURCE_RANK = {"k": 0, "d": 1, "c": 2, "a": 3}
 # E3 — Hermes task_events.kind → 계약 kind
 # ---------------------------------------------------------------------------
 
-RUN_FINISHED_KINDS = frozenset({"completed", "reclaimed", "gave_up", "timed_out", "crashed", "stale"})
+# `spawn_failed` (the worker never started) and `rate_limited` (quota wall, requeued without counting a
+# failure) also close a run — without them the run's end never reached the stream and the NPC stayed "working".
+RUN_FINISHED_KINDS = frozenset({
+    "completed", "reclaimed", "gave_up", "timed_out", "crashed", "stale", "spawn_failed", "rate_limited",
+})
 STATUS_KINDS = frozenset({
     "status", "promoted", "promoted_manual", "blocked", "unblocked", "review_requested",
     "changes_requested", "review_reopened", "archived", "scheduled", "specified",
