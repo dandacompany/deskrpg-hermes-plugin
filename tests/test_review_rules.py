@@ -57,12 +57,12 @@ def test_submission_gets_the_policy_reviewer_and_ignores_the_models_choice():
     assert decide_pre("kanban_request_review", {"reviewer": "x", "summary": "s"}, s(A)) == {
         "action": "modify", "args": {"reviewer": "rev", "summary": "s"}}
     assert decide_pre("kanban_request_review", {"reviewer": "x", "summary": "s"}, s(H)) == {
-        "action": "modify", "args": {"summary": "s"}}
+        "action": "modify", "args": {"summary": "s", "reviewer": None}}
 
 
 def test_mixed_reviewer_verdict_goes_to_a_person_without_reviewer():
     got = decide_pre("kanban_request_review", {"reviewer": "rev", "summary": "pass"}, s(M, caller="rev", reviewer_run=True))
-    assert got == {"action": "modify", "args": {"summary": "pass"}}
+    assert got == {"action": "modify", "args": {"summary": "pass", "reviewer": None}}
 
 
 def test_release_to_human_cases():

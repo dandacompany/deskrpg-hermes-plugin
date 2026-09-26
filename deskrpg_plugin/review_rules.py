@@ -58,9 +58,11 @@ def decide_pre(tool, args, s):
         # A run that slipped onto a card waiting for a person must not send it back on its own.
         return _block(BLOCK_RETURN_MESSAGE)
     if tool == "kanban_request_review" and s.policy is not None:
+        # Hermes shallow-merges a modify directive into the original arguments, so a reviewer the model chose is
+        # cleared by setting it to None — leaving the key out would keep the model's choice.
         rest = {k: v for k, v in args.items() if k != "reviewer"}
         if s.policy.mode == "human" or (s.policy.mode == "mixed" and s.reviewer_run):
-            return {"action": "modify", "args": rest}
+            return {"action": "modify", "args": {**rest, "reviewer": None}}
         return {"action": "modify", "args": {**rest, "reviewer": s.policy.reviewer_profile}}
     if tool in TERMINAL_TOOLS and s.policy is not None and is_terminal_completion(str(args.get("command", ""))):
         return _block(BLOCK_TERMINAL_MESSAGE)
