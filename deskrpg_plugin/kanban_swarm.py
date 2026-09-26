@@ -18,7 +18,9 @@ from .common import (
     require_str_list,
     run_blocking,
 )
+from .contract_fields import has_review_policy, has_swarm_policy_symbols
 from .kanban_common import actor_from_request, open_board, require_task
+from .kanban_swarm_policy import SwarmPolicyConflict, create_swarm_with_policy
 
 
 def _worker_specs(api, raw_workers):
@@ -52,6 +54,26 @@ def _require_profile(api, name: str) -> str:
     return name
 
 
+def _worker_policy(api, body):
+    """The workers' approval policy, or None on a Hermes that has no approval policies at all.
+
+    Fail-closed: on a Hermes with approval policies, a swarm without policies would let its result cards finish
+    unapproved, so it is refused — 428 when this build cannot attach them (`swarm_review_policy` missing), 400
+    when the caller did not send one."""
+    if not has_review_policy(api):
+        if "review_policy" in body:
+            raise RequestError(428, "review_policy_required", "Hermes approval policy support is required")
+        return None
+    if not has_swarm_policy_symbols(api):
+        raise RequestError(
+            428, "swarm_review_policy_unsupported", "This Hermes build cannot create a swarm with approval policies"
+        )
+    policy = body.get("review_policy")
+    if not isinstance(policy, dict):
+        raise RequestError(400, "invalid_field", "review_policy is required for a swarm on an approval-policy board")
+    return policy
+
+
 def create_swarm_handler(api):
     @guarded
     async def handler(request):
@@ -65,20 +87,33 @@ def create_swarm_handler(api):
         priority = require_int(body, "priority", required=False, default=0)
         idempotency_key = require_str(body, "idempotency_key", required=False, default=None)
         created_by = actor_from_request(request)
+        worker_policy = _worker_policy(api, body)
 
         def work():
             with open_board(api, slug) as conn:
-                return api.create_swarm(
-                    conn,
-                    goal=goal,
-                    workers=workers,
-                    verifier_assignee=verifier,
-                    synthesizer_assignee=synthesizer,
-                    tenant=tenant,
-                    created_by=created_by,
-                    priority=priority,
-                    idempotency_key=idempotency_key,
-                )
+                if worker_policy is None:
+                    # A Hermes without approval policies: nothing to bypass, Hermes builds the swarm as before.
+                    return api.create_swarm(
+                        conn,
+                        goal=goal,
+                        workers=workers,
+                        verifier_assignee=verifier,
+                        synthesizer_assignee=synthesizer,
+                        tenant=tenant,
+                        created_by=created_by,
+                        priority=priority,
+                        idempotency_key=idempotency_key,
+                    )
+                try:
+                    return create_swarm_with_policy(
+                        api, conn, goal=goal, workers=workers, verifier_assignee=verifier,
+                        synthesizer_assignee=synthesizer, worker_policy=worker_policy, tenant=tenant,
+                        created_by=created_by, priority=priority, idempotency_key=idempotency_key,
+                    )
+                except SwarmPolicyConflict as exc:
+                    raise RequestError(409, "swarm_exists_without_policy", str(exc)) from None
+                except ValueError as exc:  # ReviewPolicyError is a ValueError (reviewer = implementer, bad mode…)
+                    raise RequestError(400, "invalid_swarm", str(exc)) from None
 
         created = await run_blocking(work)
         payload = created.as_dict()

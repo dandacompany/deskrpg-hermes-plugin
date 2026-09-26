@@ -148,6 +148,36 @@ def has_review_policy(api) -> bool:
         return False
 
 
+# Keyword parameters the plugin passes to Hermes swarm internals. If Hermes renames or drops one, the capability
+# goes away instead of the call failing halfway (fail-closed: DeskRPG keeps blocking new swarms).
+_SWARM_UNCOMMITTED_PARAMS = frozenset({
+    "goal", "workers", "verifier_assignee", "synthesizer_assignee", "root_title", "verifier_title",
+    "synthesizer_title", "tenant", "created_by", "workspace_kind", "workspace_path", "priority", "idempotency_key",
+})
+_ACTIVATE_ROOT_PARAMS = frozenset({"summary", "metadata"})
+
+
+def has_swarm_policy_symbols(api) -> bool:
+    """`swarm_review_policy` capability and the policy-aware swarm path share this check.
+
+    Needs the approval-policy contract itself, the swarm internals the plugin assembles with, and their expected
+    signatures — a Hermes build that moved them must not get a half-protected swarm."""
+    import inspect
+
+    if not has_review_policy(api) or getattr(api, "create_swarm", None) is None:
+        return False
+    names = ("_create_swarm_uncommitted", "_activate_root_inline", "create_policy", "inherited_policy",
+             "latest_run", "_fire_kanban_lifecycle_hook")
+    if not all(callable(getattr(api, n, None)) for n in names):
+        return False
+    try:
+        uncommitted = set(inspect.signature(api._create_swarm_uncommitted).parameters)
+        activate = set(inspect.signature(api._activate_root_inline).parameters)
+    except (TypeError, ValueError):
+        return False
+    return _SWARM_UNCOMMITTED_PARAMS <= uncommitted and _ACTIVATE_ROOT_PARAMS <= activate
+
+
 def has_initial_status(api) -> bool:
     """이 Hermes 빌드의 `create_task` 가 `initial_status` 를 받는가.
 
@@ -197,6 +227,9 @@ def capabilities(api) -> tuple[str, ...]:
         extra.append("kanban_review_policy_v1")
     if getattr(api, "create_swarm", None) is not None:
         extra.append("swarm")
+    if has_swarm_policy_symbols(api):
+        # New swarms on approval-policy boards: every result card gets its policy in the creating transaction.
+        extra.append("swarm_review_policy")
     if has_toolset_symbols(api):
         extra.append("profile_toolsets")
     if has_skill_symbols(api):

@@ -172,6 +172,13 @@ OPTIONAL_SPEC = (
     # 계획 B — OAuth 가 default 를 None(=프로세스 홈)으로 넘겨도 되는지 본다. 없으면 default 의 앱 안 로그인만 거절된다.
     ("hermes_constants", ("get_process_hermes_home",)),
     ("hermes_cli.kanban_swarm", ("create_swarm", "latest_blackboard", "SwarmWorkerSpec")),
+    # Swarm on an approval-policy board: the plugin assembles the swarm in one transaction so every result card
+    # gets its policy before any worker can be dispatched (kanban_swarm_policy.py). These are Hermes internals;
+    # the `swarm_review_policy` capability is announced only when all of them are present with the expected
+    # signatures (contract_fields.has_swarm_policy_symbols).
+    ("hermes_cli.kanban_swarm", ("_create_swarm_uncommitted", "_activate_root_inline")),
+    ("hermes_cli.kanban_review_policy", ("create_policy", "inherited_policy")),
+    ("hermes_cli.kanban_db", ("latest_run", "_fire_kanban_lifecycle_hook")),
     # 0.7.1 — 대시보드 공개 주소. 없는 빌드는 `/deskrpg/info` 의 dashboard_url 만 null 이 된다.
     ("hermes_cli.dashboard_auth.prefix", ("resolve_public_url",)),
     # 0.9.0 — 직원 설정 피커. 없는 빌드는 그 라우트와 capability 만 빠진다.

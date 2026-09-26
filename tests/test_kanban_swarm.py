@@ -113,3 +113,65 @@ def test_심볼이_없으면_capability_에도_없다(fake_api):
     assert "swarm" in capabilities(fake_api)
     fake_api.create_swarm = None
     assert "swarm" not in capabilities(fake_api)
+
+
+# --- Approval-policy boards (swarm_review_policy) ---------------------------------------------------------------
+
+import types  # noqa: E402
+
+from deskrpg_plugin import kanban_swarm as _kanban_swarm  # noqa: E402
+
+HUMAN = {"version": 1, "mode": "human", "reviewer_profile": None}
+
+
+def _policy_hermes(monkeypatch, *, swarm_policy):
+    monkeypatch.setattr(_kanban_swarm, "has_review_policy", lambda api: True)
+    monkeypatch.setattr(_kanban_swarm, "has_swarm_policy_symbols", lambda api: swarm_policy)
+
+
+async def test_a_policy_hermes_without_the_swarm_internals_refuses_new_swarms(
+    aiohttp_client, fake_api, swarm_body, monkeypatch
+):
+    _policy_hermes(monkeypatch, swarm_policy=False)
+    client = await aiohttp_client(_app(fake_api))
+    calls = len(fake_api.swarm_calls)
+    res = await client.post("/deskrpg/kanban/swarm?board=default", json={**swarm_body, "review_policy": HUMAN})
+    assert res.status == 428
+    assert (await res.json())["error"] == "swarm_review_policy_unsupported"
+    assert len(fake_api.swarm_calls) == calls  # Hermes was not written to
+
+
+async def test_a_policy_hermes_requires_a_policy_for_the_workers(aiohttp_client, fake_api, swarm_body, monkeypatch):
+    _policy_hermes(monkeypatch, swarm_policy=True)
+    client = await aiohttp_client(_app(fake_api))
+    calls = len(fake_api.swarm_calls)
+    res = await client.post("/deskrpg/kanban/swarm?board=default", json=swarm_body)
+    assert res.status == 400
+    assert len(fake_api.swarm_calls) == calls
+
+
+async def test_a_policy_swarm_goes_through_the_plugin_assembly_not_create_swarm(
+    aiohttp_client, fake_api, swarm_body, monkeypatch
+):
+    _policy_hermes(monkeypatch, swarm_policy=True)
+    seen = {}
+
+    def fake_assembly(api, conn, **kwargs):
+        seen.update(kwargs)
+        return types.SimpleNamespace(as_dict=lambda: {"root_id": "t_root"})
+
+    monkeypatch.setattr(_kanban_swarm, "create_swarm_with_policy", fake_assembly)
+    client = await aiohttp_client(_app(fake_api))
+    calls = len(fake_api.swarm_calls)
+    res = await client.post("/deskrpg/kanban/swarm?board=default", json={**swarm_body, "review_policy": HUMAN})
+    assert res.status == 200, await res.text()
+    assert seen["worker_policy"] == HUMAN
+    assert seen["verifier_assignee"] == "sophie" and seen["synthesizer_assignee"] == "dante"
+    assert len(fake_api.swarm_calls) == calls  # plain create_swarm (no policies) is never used
+
+
+async def test_a_hermes_without_policies_rejects_a_policy_it_cannot_keep(aiohttp_client, fake_api, swarm_body):
+    client = await aiohttp_client(_app(fake_api))
+    res = await client.post("/deskrpg/kanban/swarm?board=default", json={**swarm_body, "review_policy": HUMAN})
+    assert res.status == 428
+    assert (await res.json())["error"] == "review_policy_required"
