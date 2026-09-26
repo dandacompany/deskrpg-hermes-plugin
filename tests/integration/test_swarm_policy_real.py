@@ -50,12 +50,26 @@ def _state(api, task_id):
         return task.status, api.get_review_state(conn, task_id), task.result
 
 
-async def test_capability_is_announced_on_a_policy_hermes(client, api):
-    _require_capability(api)
+async def test_capability_follows_the_policy_swarm_internals(client, api, crew):
+    # Runs on every Hermes, patched or not: the capability is announced exactly when the internals exist, and a
+    # build without them refuses a policy swarm up front instead of creating cards without a policy.
     info = await (await client.get("/deskrpg/info")).json()
-    assert "swarm_review_policy" in info["capabilities"]
+    if cf.has_swarm_policy_symbols(api):
+        assert "swarm_review_policy" in info["capabilities"]
+        return
+    assert "swarm_review_policy" not in info["capabilities"]
+    await _board(client)
+    response = await client.post(f"/deskrpg/kanban/swarm{B}", json=_body(crew))
+    assert response.status == 428
+    # Without any approval-policy support (upstream Hermes) the policy itself is refused; with policies but
+    # without the swarm internals, the swarm is.
+    expected = "swarm_review_policy_unsupported" if cf.has_review_policy(api) else "review_policy_required"
+    assert (await response.json())["error"] == expected
+    with api.connect_closing(board=BOARD) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0
 
 
+@pytest.mark.patch_only
 async def test_every_result_card_has_a_policy_before_any_worker_is_ready(client, api, crew, monkeypatch):
     _require_capability(api)
     await _board(client)
@@ -98,6 +112,7 @@ async def test_every_result_card_has_a_policy_before_any_worker_is_ready(client,
         assert run.metadata["kind"] == "kanban_swarm_v1"
 
 
+@pytest.mark.patch_only
 async def test_results_cannot_finish_without_approval_even_by_raw_sql(client, api, crew):
     _require_capability(api)
     await _board(client)
@@ -111,6 +126,7 @@ async def test_results_cannot_finish_without_approval_even_by_raw_sql(client, ap
     assert _state(api, created["synthesizer_id"])[0] == "todo"
 
 
+@pytest.mark.patch_only
 async def test_agent_policy_for_workers_keeps_the_final_result_human(client, api, crew):
     _require_capability(api)
     await _board(client)
@@ -123,6 +139,7 @@ async def test_agent_policy_for_workers_keeps_the_final_result_human(client, api
     assert _state(api, created["synthesizer_id"])[1]["policy"] == HUMAN
 
 
+@pytest.mark.patch_only
 async def test_a_policy_hermes_refuses_a_bad_policy_and_leaves_nothing_behind(client, api, crew):
     _require_capability(api)
     await _board(client)
@@ -140,6 +157,7 @@ async def test_a_policy_hermes_refuses_a_bad_policy_and_leaves_nothing_behind(cl
     assert resp.status == 400
 
 
+@pytest.mark.patch_only
 async def test_idempotent_replay_returns_the_same_swarm(client, api, crew):
     _require_capability(api)
     await _board(client)

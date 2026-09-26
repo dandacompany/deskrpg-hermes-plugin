@@ -66,3 +66,40 @@ jobs:
       - run: python -m pytest -q -m integration tests/integration
       # 가짜 스위트도 실제 Hermes 가 설치된 환경에서 한 번 더 — import 경로 충돌(예: aiohttp 버전)을 잡는다.
       - run: python -m pytest -q
+
+  # The same integration suite on upstream Hermes `main` (NousResearch), not the pinned fork commit above.
+  # The plugin must not depend on a core patch or on Hermes internals (decision 0017); this job shows what
+  # upstream breaks as it happens. Tests that need the policy core patch carry the `patch_only` marker and are
+  # deselected here — their "no patch" behaviour is covered by tests without it.
+  # Upstream main installs its core dependencies only on Python 3.14 (pyproject markers), hence 3.14.
+  # `continue-on-error`: upstream moves daily, so a break here is reported (red job) without blocking a
+  # release that is gated by the pinned `integration` job.
+  integration-upstream:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      HERMES_INTEGRATION_REQUIRED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - run: pip install -r requirements-dev.txt
+      - name: Install Hermes (upstream main, editable)
+        run: |
+          git clone --depth 1 --filter=blob:none "$(tr -d '[:space:]' < .hermes-upstream-repo)" hermes-src
+          echo "Hermes upstream main: $(git -C hermes-src rev-parse HEAD)"
+          pip install -e "hermes-src[mcp]"
+      - name: Verify Hermes import
+        run: python -c "import hermes_cli, cron, hermes_state; print('hermes ok')"
+      # Same guard as the pinned job: upstream also ships a regular `tests` package.
+      - name: Guard — our tests package is not shadowed
+        run: |
+          python - <<'GUARD'
+          import pathlib, tests
+          here = pathlib.Path.cwd().resolve()
+          paths = [pathlib.Path(p).resolve() for p in list(getattr(tests, "__path__", []))]
+          assert paths and all(p == here / "tests" for p in paths), f"tests shadowed: {paths}"
+          GUARD
+      - run: python -m pytest -q -m "integration and not patch_only" tests/integration
+      - run: python -m pytest -q -m "not patch_only"
