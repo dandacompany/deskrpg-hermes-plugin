@@ -33,6 +33,7 @@ from .contract_fields import KANBAN_TASK_ACTIONS, has_review_policy
 # 카드 조회(404)·KanbanTaskFull 직렬화·행위자 판정은 `kanban_common` 의 것을 쓴다 —
 # 상세·생성·수정 응답과 동작 응답의 모양이 갈라지면 안 된다.
 from .kanban_common import actor_from_request, open_board, require_task, run_claimed_from_review, task_payload
+from .review_state import card_policy, hooks_enabled, open_approval_store, review_state
 
 # 보조 LLM 호출의 타임아웃(초). Hermes 기본(120/180)과 같고, 운영에서 조정할 수 있게 상수로 둔다.
 SPECIFY_TIMEOUT_SECONDS = 120
@@ -201,31 +202,107 @@ def action_handler(api, name: str):
     return handler
 
 
+def _approval_actor_name(encoded_user_name):
+    """The approving person's display name from the URL-encoded header, or None when it was not sent."""
+    if encoded_user_name is None:
+        return None
+    try:
+        actor_name = unquote(encoded_user_name, errors="strict")
+    except UnicodeDecodeError:
+        raise RequestError(400, "invalid_actor_name", "User name must be URL-encoded UTF-8") from None
+    if not actor_name.strip() or len(actor_name) > 200:
+        raise RequestError(400, "invalid_actor_name", "User name must contain 1 to 200 characters")
+    return actor_name.strip()
+
+
+def _check_approval_request(body, user_id):
+    if set(body) - {"submission_id", "request_id"}:
+        raise RequestError(400, "invalid_field", "Only submission_id and request_id are accepted")
+    if not user_id or len(user_id) > 200:
+        raise RequestError(400, "approval_actor_required", "Authenticated DeskRPG user header is required")
+
+
+def _approve_waiting_card(api, conn, store, task, slug, body, user_id, encoded_user_name):
+    """A person approves a card waiting for them: Hermes' public `complete_task`, then the decision is recorded.
+
+    Only a card in `human_required` can be approved, and only for its latest submission — a late or repeated
+    approval is refused and changes nothing."""
+    from . import review_store
+
+    _check_approval_request(body, user_id)
+    state = review_state(api, conn, store, task, slug)
+    submission = require_str(body, "submission_id")
+    request_id = require_str(body, "request_id")
+    if state["state"] != "human_required":
+        raise RequestError(409, "not_waiting_for_approval", f"the card is not waiting for a person (state={state['state']})")
+    if state["submission"] is None or submission != state["submission"]["id"]:
+        raise RequestError(409, "stale_submission", "the card has a newer submission — reload it before approving")
+    approver = f"deskrpg:{user_id}"
+    approval = {"actor": approver, "submission_id": submission, "request_id": request_id}
+    actor_name = _approval_actor_name(encoded_user_name)
+    if actor_name:
+        approval["actor_name"] = actor_name
+    _check(api.complete_task(conn, task.id, metadata={"approval": approval}), "the card cannot be completed now")
+    review_store.record_decision(store, task.id, "human", approver, "approve", None)
+
+
+def _implementer_of(api, conn, task_id, policy, reviewer_profile):
+    """Who did the work: the policy's implementer, else the first submission's (not the reviewer's verdict)."""
+    if policy is not None and policy.implementer:
+        return policy.implementer
+    for event in api.list_events(conn, task_id):
+        who = (event.payload or {}).get("implementer") if event.kind == "review_requested" else None
+        if who and who != reviewer_profile:
+            return who
+    return None
+
+
+def _record_rejection(api, conn, store, task_id, slug, actor, comment, outcome):
+    """After a person sent a policy card back: a mixed card returns to its implementer (Hermes would hand it back to
+    the reviewer who asked last), and the rejection is recorded."""
+    from . import review_store
+
+    resolved = card_policy(store, task_id, slug)
+    if resolved is None:
+        return
+    mode, reviewer_profile, _implementer = resolved
+    if mode == "mixed" and outcome == "reopened":
+        implementer = _implementer_of(api, conn, task_id, review_store.get_policy(store, task_id), reviewer_profile)
+        if implementer:
+            _check(api.assign_task(conn, task_id, implementer), "the card cannot be handed back to its implementer")
+    review_store.record_decision(store, task_id, "human", actor, "reject", comment)
+
+
 def _run_simple_action(api, slug, task_id, name, body, actor, user_id="", encoded_user_name=None):
     with open_board(api, slug) as conn:
         require_task(api, conn, task_id)
         try:
             review = api.get_review_state(conn, task_id) if has_review_policy(api) else None
-            if name == "approve" and review is not None:
-                if set(body) - {"submission_id", "request_id"}:
-                    raise RequestError(400, "invalid_field", "Only submission_id and request_id are accepted")
-                if not user_id or len(user_id) > 200:
-                    raise RequestError(400, "approval_actor_required", "Authenticated DeskRPG user header is required")
-                metadata = {}
-                if encoded_user_name is not None:
-                    try:
-                        actor_name = unquote(encoded_user_name, errors="strict")
-                    except UnicodeDecodeError:
-                        raise RequestError(400, "invalid_actor_name", "User name must be URL-encoded UTF-8") from None
-                    if not actor_name.strip() or len(actor_name) > 200:
-                        raise RequestError(400, "invalid_actor_name", "User name must contain 1 to 200 characters")
-                    metadata["actor_name"] = actor_name.strip()
-                api.approve_task(conn, task_id, actor_id=f"deskrpg:{user_id}",
-                                 submission_id=require_str(body, "submission_id"),
-                                 request_id=require_str(body, "request_id"), **metadata)
-                extra = {}
-            else:
-                extra = _SIMPLE[name](api, conn, task_id, body, actor)
+            store = open_approval_store(api) if hooks_enabled(api) and name in ("approve", "request-changes") else None
+            if hooks_enabled(api) and name in ("approve", "request-changes") and store is None:
+                raise RequestError(503, "approval_store_unavailable", "the approval store cannot be opened")
+            try:
+                task = require_task(api, conn, task_id)
+                if name == "approve" and review is not None:
+                    _check_approval_request(body, user_id)
+                    metadata = {}
+                    actor_name = _approval_actor_name(encoded_user_name)
+                    if actor_name:
+                        metadata["actor_name"] = actor_name
+                    api.approve_task(conn, task_id, actor_id=f"deskrpg:{user_id}",
+                                     submission_id=require_str(body, "submission_id"),
+                                     request_id=require_str(body, "request_id"), **metadata)
+                    extra = {}
+                elif name == "approve" and store is not None and card_policy(store, task_id, slug) is not None:
+                    _approve_waiting_card(api, conn, store, task, slug, body, user_id, encoded_user_name)
+                    extra = {}
+                else:
+                    extra = _SIMPLE[name](api, conn, task_id, body, actor)
+                    if name == "request-changes" and store is not None:
+                        _record_rejection(api, conn, store, task_id, slug, actor, body.get("comment"), extra.get("outcome"))
+            finally:
+                if store is not None:
+                    store.close()
         except (RuntimeError, ValueError) as exc:
             # Hermes 가 전이를 예외로 거절하는 경우(실행 중 재배정 RuntimeError, HallucinatedCardsError 등).
             # 요청 오류(RequestError)는 Exception 이지만 이 둘의 하위가 아니라 그대로 지나간다.
