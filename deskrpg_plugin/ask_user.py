@@ -16,8 +16,10 @@ DeskRPG 는 대기 목록을 사본으로 저장하지 않는다(Hermes 정본).
 
 import json
 import logging
+import sys
 import threading
 import time
+import types
 import uuid
 
 from aiohttp import web
@@ -66,12 +68,34 @@ TOOL_SCHEMA = {
     },
 }
 
-_lock = threading.Lock()
-# session_id -> (registered_at monotonic, profile, context dict). Keyed by session alone: in the
-# multiplexed gateway the tool thread may not see its profile home (a context-local override), so
-# the profile comes from the registration, which the profile's own key authenticated.
-_sessions: dict = {}
-_questions: dict = {}  # question_id -> entry
+_STATE_MODULE = "deskrpg_ask_user_shared_state"
+
+
+def _shared_state():
+    """Process-wide state shared by every loaded copy of this plugin.
+
+    Hermes imports a directory plugin once per profile scope, under different module names
+    (``hermes_plugins.deskrpg``, ``hermes_plugins.deskrpg__home_<digest>``). The api_server routes are
+    wired from one copy and a profile's tool runs from another, so module globals would split the
+    registrations and questions in two — the tool would never see a registration (measured on
+    staging, 0.24.0-0.24.2). One anchor module in ``sys.modules`` holds them instead.
+    """
+    state = sys.modules.get(_STATE_MODULE)
+    if state is None:
+        fresh = types.ModuleType(_STATE_MODULE)
+        fresh.lock = threading.Lock()
+        # session_id -> (registered_at monotonic, profile, context). Keyed by session alone: the
+        # profile comes from the registration, which the profile's own key authenticated.
+        fresh.sessions = {}
+        fresh.questions = {}  # question_id -> entry
+        state = sys.modules.setdefault(_STATE_MODULE, fresh)
+    return state
+
+
+_state = _shared_state()
+_lock = _state.lock
+_sessions: dict = _state.sessions
+_questions: dict = _state.questions
 
 
 def reset_for_tests() -> None:
