@@ -22,8 +22,10 @@ import re
 import secrets
 import shutil
 import sqlite3
+import sys
 import threading
 import time
+import types
 import unicodedata
 from pathlib import Path
 
@@ -145,22 +147,41 @@ def normalize_title(title: str) -> str:
 
 
 _ID_ALPHABET = "0123456789abcdefghijklmnopqrstuvwxyz"
-_id_lock = threading.Lock()
-_last_ms = 0
+_CLOCK_MODULE = "deskrpg_artifact_id_clock"
+
+
+def _shared_clock():
+    """The id clock shared by every loaded copy of this plugin.
+
+    Hermes imports a directory plugin once per profile scope, under different module names
+    (``hermes_plugins.deskrpg``, ``hermes_plugins.deskrpg__home_<digest>``). The upload route runs from
+    one copy and a profile's tool or hook from another, so a module-global ``last_ms`` would let two
+    copies hand out ids with the same time prefix. One anchor module in ``sys.modules`` holds it.
+    """
+    clock = sys.modules.get(_CLOCK_MODULE)
+    if clock is None:
+        fresh = types.ModuleType(_CLOCK_MODULE)
+        fresh.lock = threading.Lock()
+        fresh.last_ms = 0
+        clock = sys.modules.setdefault(_CLOCK_MODULE, fresh)
+    return clock
+
+
+_clock = _shared_clock()
 
 
 def new_artifact_id() -> str:
     """앞 10자는 밀리초 시각의 36진수(시간순 정렬), 뒤 16자는 난수. 표준 라이브러리만 쓴다.
 
     같은 밀리초(또는 시계가 뒤로 가는 경우)에 연속 호출돼도 프로세스 안에서는 엄격히 증가하도록
-    `_last_ms` 로 단조성을 강제한다. 도구·훅 핸들러가 워커 스레드에서 동시에 부를 수 있어 락을 건다.
+    `last_ms` 로 단조성을 강제한다 — 플러그인 사본이 여럿이어도 시계는 하나다(`_shared_clock`).
+    도구·훅 핸들러가 워커 스레드에서 동시에 부를 수 있어 락을 건다.
     """
-    global _last_ms
-    with _id_lock:
+    with _clock.lock:
         ms = int(time.time() * 1000)
-        if ms <= _last_ms:
-            ms = _last_ms + 1
-        _last_ms = ms
+        if ms <= _clock.last_ms:
+            ms = _clock.last_ms + 1
+        _clock.last_ms = ms
     stamp = ms
     head = ""
     for _ in range(10):
