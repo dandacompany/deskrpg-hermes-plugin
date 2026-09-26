@@ -1,31 +1,9 @@
-"""Shared fixtures for the review-hook routes: an approval store in a temp dir and the hooks capability on.
-
-The real `deskrpg_plugin.review_store` is built in parallel; until it exists, the plan's interface stand-in
-(`tests/fakes_review_store.py`) is installed under its name, so the route code imports the same module either way.
-"""
-
-import importlib
-import importlib.util
-import sys
+"""Shared fixtures for the review-hook routes: an approval store in a temp dir and the hooks capability on."""
 
 import pytest
 
 from deskrpg_plugin import contract_fields
-
-
-def _review_store_module():
-    if importlib.util.find_spec("deskrpg_plugin.review_store") is not None:
-        return importlib.import_module("deskrpg_plugin.review_store")
-    from tests import fakes_review_store
-
-    sys.modules["deskrpg_plugin.review_store"] = fakes_review_store
-    import deskrpg_plugin
-
-    deskrpg_plugin.review_store = fakes_review_store
-    return fakes_review_store
-
-
-rs = _review_store_module()
+from deskrpg_plugin import review_store as rs
 
 
 @pytest.fixture
