@@ -120,29 +120,33 @@ async def test_files_outside_the_workdir_are_counted_not_named(client, store):
 
 
 async def test_kanban_worker_files_are_named_by_card(client, store, fake_api):
-    # Kanban worker sessions record no cwd; card workspaces live under the kanban home.
-    kanban = "/srv/hermes/kanban"
-    fake_api.kanban_home = lambda: kanban
+    # Kanban worker sessions record no cwd. `kanban_home()` is the shared Hermes root; boards live under
+    # <root>/kanban/boards, and a card's files sit in its workspace or its attachments folder.
+    root = "/srv/.hermes"
+    boards = f"{root}/kanban/boards"
+    fake_api.kanban_home = lambda: root
     store.sessions["w"] = {"id": "w", "source": "kanban", "cwd": ""}
     store.messages["w"] = [
-        _assistant(1, _call("a", "read_file", {"path": f"{kanban}/boards/b1/workspaces/t_aa/draft.md"}),
-                   _call("b", "read_file", {"path": f"{kanban}/boards/b1/workspaces/t_parent/research/notes.md"}),
-                   _call("c", "read_file", {"path": f"{kanban}/boards/b1/kanban.db"}),
-                   _call("d", "read_file", {"path": f"{kanban}/boards/b1/workspaces/t_aa"}),
-                   _call("e", "read_file", {"path": f"{kanban}/boards/b1/workspaces/../../../etc/passwd"}),
-                   _call("f", "read_file", {"path": "relative.md"})),
+        _assistant(1, _call("a", "read_file", {"path": f"{boards}/b1/workspaces/t_aa/draft.md"}),
+                   _call("b", "read_file", {"path": f"{boards}/b1/attachments/t_parent/report.md"}),
+                   _call("c", "read_file", {"path": f"{boards}/b1/kanban.db"}),
+                   _call("d", "read_file", {"path": f"{boards}/b1/logs/t_aa/run.log"}),
+                   _call("e", "read_file", {"path": f"{boards}/b1/workspaces/../../../../etc/passwd"}),
+                   _call("f", "read_file", {"path": f"{root}/boards/b1/workspaces/t_aa/x.md"}),
+                   _call("g", "read_file", {"path": "relative.md"})),
     ]
     body = await (await client.get(f"{BASE}/w/sources")).json()
-    assert [s["ref"] for s in body["sources"]] == ["t_aa/draft.md", "t_parent/research/notes.md"]
-    assert body["outside_workdir_files"] == 4
+    assert [s["ref"] for s in body["sources"]] == ["t_aa/draft.md", "t_parent/report.md"]
+    assert body["outside_workdir_files"] == 5
     assert "/srv" not in json.dumps(body)
 
 
 def test_relative_path_rules():
     rp = session_sources.relative_path
     assert rp("a/b.md", WORKDIR) == "a/b.md"
-    assert rp(f"{WORKDIR}/../t_2/x.md", WORKDIR, "/home/u/.hermes/kanban") == "t_2/x.md"
-    assert rp("/etc/hosts", WORKDIR, "/home/u/.hermes/kanban") is None
+    boards = "/home/u/.hermes/kanban/boards"
+    assert rp(f"{WORKDIR}/../t_2/x.md", WORKDIR, boards) == "t_2/x.md"
+    assert rp("/etc/hosts", WORKDIR, boards) is None
     assert rp("/x/boards/b/workspaces/t_1/f.md", None, None) is None
     assert rp("", WORKDIR) is None
 
