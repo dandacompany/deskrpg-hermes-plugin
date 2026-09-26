@@ -31,6 +31,7 @@ def register(ctx) -> None:
     _register_card_proposal(ctx, api)
     _register_approval_blocked(ctx, api)
     _register_ask_user(ctx, api)
+    _register_review_hooks(ctx, api)
 
 
 def _register_artifacts(ctx, api) -> None:
@@ -119,3 +120,22 @@ def _register_approval_blocked(ctx, api) -> None:
         ctx.register_hook("post_tool_call", approval_blocked.make_hook(api))
     except Exception as exc:  # noqa: BLE001
         logger.warning("[deskrpg] approval-blocked hook registration failed: %s", type(exc).__name__)
+
+
+def _register_review_hooks(ctx, api) -> None:
+    """Per-card approval hooks. They act only inside kanban workers (`HERMES_KANBAN_TASK`), so in the gateway they
+    are registered but idle. Each hook is wrapped separately, like the other registrations."""
+    try:
+        from . import review_hooks
+    except Exception as exc:  # noqa: BLE001 — must not take the routes down with it
+        logger.warning("[deskrpg] review hooks module import failed: %s", type(exc).__name__)
+        return
+
+    registered = 0
+    for name, factory in (("pre_tool_call", review_hooks.make_pre_hook), ("post_tool_call", review_hooks.make_post_hook)):
+        try:
+            ctx.register_hook(name, factory(api))
+            registered += 1
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[deskrpg] review %s registration failed: %s", name, type(exc).__name__)
+    review_hooks.HOOKS_REGISTERED = registered == 2

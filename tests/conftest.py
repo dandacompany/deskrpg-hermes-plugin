@@ -551,3 +551,15 @@ def 공용_config_에_core_worktree_가_생기지_않는다():
 def _worker_propagation_off(monkeypatch):
     """개발자 셸에 켜 둔 값이 테스트 결과를 바꾸지 않게 — 워커 전파는 기본 꺼짐에서 시작한다."""
     monkeypatch.delenv("DESKRPG_WORKER_PROPAGATION", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _reset_review_hooks_flag():
+    """`register()` marks the approval hooks as registered for the whole process; a test that calls it must not
+    turn on `review_hooks_v1` for the tests that run after it."""
+    from deskrpg_plugin import review_hooks
+
+    saved = review_hooks.HOOKS_REGISTERED
+    review_hooks.HOOKS_REGISTERED = False
+    yield
+    review_hooks.HOOKS_REGISTERED = saved

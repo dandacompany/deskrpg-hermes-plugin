@@ -79,7 +79,8 @@ def test_응답_훅이_post_llm_call_로_따로_등록된다(monkeypatch):
     ctx = _Ctx()
     deskrpg_plugin.register(ctx)
     hooks = {c[1][0]: c[1][1] for c in ctx.calls if c[0] == "register_hook"}
-    assert set(hooks) == {"post_tool_call", "post_llm_call"}
+    # pre_tool_call is the approval review hook, registered alongside.
+    assert set(hooks) == {"pre_tool_call", "post_tool_call", "post_llm_call"}
     assert callable(hooks["post_llm_call"]) and hooks["post_llm_call"] is not hooks["post_tool_call"]
 
 

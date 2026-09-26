@@ -64,8 +64,12 @@ def decide_pre(tool, args, s):
         if s.policy.mode == "human" or (s.policy.mode == "mixed" and s.reviewer_run):
             return {"action": "modify", "args": {**rest, "reviewer": None}}
         return {"action": "modify", "args": {**rest, "reviewer": s.policy.reviewer_profile}}
-    if tool in TERMINAL_TOOLS and s.policy is not None and is_terminal_completion(str(args.get("command", ""))):
-        return _block(BLOCK_TERMINAL_MESSAGE)
+    if tool in TERMINAL_TOOLS and is_terminal_completion(str(args.get("command", ""))):
+        # Completing from the shell is the same completion: refused when the policy cannot be read, too.
+        if not s.store_ok:
+            return _block(BLOCK_UNAVAILABLE_MESSAGE)
+        if s.policy is not None:
+            return _block(BLOCK_TERMINAL_MESSAGE)
     return None
 
 

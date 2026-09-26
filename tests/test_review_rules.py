@@ -93,3 +93,9 @@ def test_run_on_a_card_waiting_for_a_person_cannot_send_it_back():
     assert got == {"action": "block", "message": BLOCK_RETURN_MESSAGE}
     # A real AI review may still request changes.
     assert decide_pre("kanban_request_changes", {"reason": "x"}, s(A, caller="rev", reviewer_run=True)) is None
+
+
+def test_shell_completion_is_refused_when_the_store_is_unavailable():
+    got = decide_pre("terminal", {"command": "hermes kanban complete t"}, s(None, ok=False))
+    assert got == {"action": "block", "message": BLOCK_UNAVAILABLE_MESSAGE}
+    assert decide_pre("terminal", {"command": "hermes kanban complete t"}, s(None)) is None

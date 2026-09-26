@@ -178,6 +178,31 @@ def has_swarm_policy_symbols(api) -> bool:
     return _SWARM_UNCOMMITTED_PARAMS <= uncommitted and _ACTIVATE_ROOT_PARAMS <= activate
 
 
+_REVIEW_HOOK_SYMBOLS = (
+    "kanban_home", "connect_closing", "get_task", "list_events", "request_review", "assign_task",
+    "reopen_review_task", "complete_task",
+)
+
+
+def has_review_hooks(api) -> bool:
+    """`review_hooks_v1`: per-card approval enforced by this plugin's worker hooks on any Hermes (no core patch).
+
+    Needs the public kanban verbs the hooks and the approval routes use, both hooks registered in this process,
+    and the approval store open-able."""
+    from . import review_hooks
+    from .review_store import open_store, sidecar_path
+
+    if not review_hooks.HOOKS_REGISTERED:
+        return False
+    if not all(callable(getattr(api, name, None)) for name in _REVIEW_HOOK_SYMBOLS):
+        return False
+    try:
+        open_store(sidecar_path(api)).close()
+    except Exception:  # noqa: BLE001 — an unwritable store means the hooks would block every completion
+        return False
+    return True
+
+
 def has_initial_status(api) -> bool:
     """이 Hermes 빌드의 `create_task` 가 `initial_status` 를 받는가.
 
@@ -247,6 +272,10 @@ def capabilities(api) -> tuple[str, ...]:
         extra.append("profile_oauth")
     if has_tool_provider_symbols(api):
         extra.append("profile_tool_providers")
+    if has_review_hooks(api):
+        from .review_contract import REVIEW_HOOKS_CAPABILITY
+
+        extra.append(REVIEW_HOOKS_CAPABILITY)
     if has_initial_status(api):
         # 실행 전 승인 관문이 카드를 `blocked` 로 세울 수 있는가. 화면은 이 값이 없으면
         # "플러그인 업데이트 필요" 로 안내한다 — 조용히 승인 없이 실행되지 않게.
