@@ -252,7 +252,7 @@ def test_plugin_yaml_이_requires_hermes_를_최상위에_선언하고_버전은
 
     raw = (pathlib.Path(__file__).resolve().parent.parent / "plugin.yaml").read_text(encoding="utf-8")
     manifest = yaml.safe_load(raw)
-    assert manifest["version"] == "0.24.2"
+    assert manifest["version"] == "0.24.3"
     assert manifest["requires_hermes"] == ">=0.21.1"
     assert "requires" not in manifest
 
