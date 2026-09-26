@@ -37,9 +37,12 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 # event stream (`task.run.finished`).
 # `profile_key_issue` = `POST /deskrpg/profiles/{name}/key` (a key for a profile made outside DeskRPG). Uses only
 # profile paths and the `.env` writer, so it is always available.
+# `session_sources` = `GET /p/{profile}/deskrpg/sessions/{id}/sources` (web pages and files a session read). Reads
+# only the profile's state.db through `SessionDB`, a required symbol, so it is always available.
 CAPABILITIES = (
     "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin",
     "kanban_attachment_list", "board_archive", "kanban_task_events", "kanban_run_events", "profile_key_issue",
+    "session_sources",
 )
 
 
@@ -480,3 +483,10 @@ ARTIFACT_SUMMARY_KEYS = ARTIFACT_SUMMARY_REQUIRED | ARTIFACT_SUMMARY_OPTIONAL
 ARTIFACT_VERSION_REQUIRED = frozenset({"version", "filename", "mime", "size", "sha256", "created_by", "captured_via", "created_at"})
 ARTIFACT_VERSION_OPTIONAL = frozenset({"origin_path", "note", "pruned_at"})
 ARTIFACT_VERSION_KEYS = ARTIFACT_VERSION_REQUIRED | ARTIFACT_VERSION_OPTIONAL
+
+# ---------------------------------------------------------------------------
+# Session sources (`session_sources`) — what a session read
+# ---------------------------------------------------------------------------
+SESSION_SOURCE_KINDS = ("web", "file")
+SESSION_SOURCES_KEYS = frozenset({"session_id", "sources", "outside_workdir_files", "truncated"})
+SESSION_SOURCE_KEYS = frozenset({"kind", "ref", "title", "via", "at"})
