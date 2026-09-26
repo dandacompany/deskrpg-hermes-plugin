@@ -35,9 +35,11 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 # for the rework metric). Reads only the board DB, so it is always available when kanban is.
 # `kanban_run_events` = card detail `events[].run_id`, and `spawn_failed`·`rate_limited` closing a run in the
 # event stream (`task.run.finished`).
+# `profile_key_issue` = `POST /deskrpg/profiles/{name}/key` (a key for a profile made outside DeskRPG). Uses only
+# profile paths and the `.env` writer, so it is always available.
 CAPABILITIES = (
     "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin",
-    "kanban_attachment_list", "board_archive", "kanban_task_events", "kanban_run_events",
+    "kanban_attachment_list", "board_archive", "kanban_task_events", "kanban_run_events", "profile_key_issue",
 )
 
 

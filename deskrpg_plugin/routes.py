@@ -77,6 +77,8 @@ ROUTES = [
     ("GET", "/deskrpg/profiles", "list_profiles", Scope.DEFAULT),
     ("POST", "/deskrpg/profiles", "create_profile", Scope.DEFAULT),
     ("DELETE", "/deskrpg/profiles/{name}", "delete_profile", Scope.DEFAULT),
+    # Key for a profile made outside DeskRPG (owner key only; never reads an existing key back).
+    ("POST", "/deskrpg/profiles/{name}/key", "issue_profile_key", Scope.DEFAULT),
     # 워커(칸반·크론)는 프로필 홈으로 뜬다 — 그 홈에도 이 플러그인이 있게 한다. 명시 호출 전용(worker_plugin 모듈 주석).
     ("POST", "/deskrpg/worker-plugin", "ensure_worker_plugin", Scope.DEFAULT),
     ("GET", "/p/{profile}/deskrpg/identity", "get_identity", Scope.PROFILE),
@@ -248,6 +250,7 @@ _HANDLERS = {
     "info": lambda api: _make_info(api),
     "ensure_worker_plugin": lambda api: _worker_plugin.ensure_handler(api),
     "list_profiles": lambda api: _profiles.list_handler(api),
+    "issue_profile_key": lambda api: _profiles.key_handler(api),
     "create_profile": lambda api: _profiles.create_handler(api),
     "delete_profile": lambda api: _profiles.delete_handler(api),
     "get_identity": lambda api: _identity.get_handler(api),
