@@ -83,17 +83,26 @@ New cards default to human approval. An explicitly delegated task can be approve
 ### Moving an install off the patched core
 
 The plugin can enforce approvals on upstream Hermes with its own hooks and approval store. To move an install that
-ran the patched core, carry its policies over first — the command reads the patch's table and never writes it:
+ran the patched core, carry its policies over first, then remove the patch's database triggers:
 
 ```bash
 # on the gateway host, in the Hermes environment, once per DeskRPG board
-python -m deskrpg_plugin.review_migrate --board <board-slug> --dry-run   # report only
-python -m deskrpg_plugin.review_migrate --board <board-slug>
+python -m deskrpg_plugin.review_migrate --board <board-slug> --dry-run --drop-patch-triggers   # report only
+python -m deskrpg_plugin.review_migrate --board <board-slug> --drop-patch-triggers
 ```
 
 It copies each card's policy and recorded approvals into the approval store and leaves a card that was waiting for
-a person in `review` with nobody assigned. Cards it cannot move are listed under `skipped`. Then stop the gateway,
-back up the kanban databases, reinstall upstream Hermes in the same environment, and restart the gateway.
+a person in `review` with nobody assigned. Cards it cannot move are listed under `skipped`. The patch's tables are
+only read and are kept as a record.
+
+`--drop-patch-triggers` removes the eleven triggers the patch installed in the board database (listed under
+`dropped_triggers`; nothing else is touched). They outlive the patched core: without this, a card the patch had not
+approved could never be completed on upstream Hermes, not even through an approval in DeskRPG.
+
+Then stop the gateway, back up the Hermes home, and install upstream Hermes with its own installer — current
+upstream runs on Python 3.14, so an older virtualenv cannot simply be reinstalled into; from the source checkout,
+`python -m pm.cli install` (or `hermes update`) prepares the new environment and launcher. Point any service unit at
+the new launcher and restart the gateway.
 
 ## Upstream Hermes main
 

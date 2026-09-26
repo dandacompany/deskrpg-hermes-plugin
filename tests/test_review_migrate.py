@@ -134,3 +134,72 @@ def test_the_patch_table_is_opened_read_only(fake_api, kanban, store, patch_db, 
     with pytest.raises(sqlite3.OperationalError):
         ro = real_connect(f"file:{path}?mode=ro", uri=True)
         ro.execute("DELETE FROM task_review_policies")
+
+
+def _install_patch_triggers(path):
+    """The patch's trigger names on a board database, with its real done guard (the one that blocks completion)."""
+    conn = sqlite3.connect(path)
+    conn.execute("CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, status TEXT, title TEXT)")
+    conn.execute("CREATE TABLE IF NOT EXISTS task_attachments (id INTEGER PRIMARY KEY, task_id TEXT)")
+    conn.execute("""CREATE TRIGGER review_policy_done_guard
+        BEFORE UPDATE OF status ON tasks
+        WHEN NEW.status = 'done' AND OLD.status != 'done'
+         AND EXISTS (SELECT 1 FROM task_review_policies WHERE task_id = NEW.id
+                     AND (state != 'approved' OR approval IS NULL OR submission IS NULL))
+        BEGIN SELECT RAISE(ABORT, 'review policy requires explicit approval'); END""")
+    for name in review_migrate.PATCH_TRIGGERS[1:]:
+        conn.execute(f"CREATE TRIGGER {name} AFTER UPDATE OF title ON tasks BEGIN SELECT 1; END")
+    conn.execute("CREATE TRIGGER someone_elses_trigger AFTER UPDATE OF title ON tasks BEGIN SELECT 1; END")
+    conn.commit()
+    conn.close()
+
+
+def _triggers(path):
+    conn = sqlite3.connect(path)
+    try:
+        return {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'")}
+    finally:
+        conn.close()
+
+
+def test_dropping_patch_triggers_lets_an_unapproved_card_complete(fake_api, kanban, store, patch_db):
+    path, pconn = patch_db
+    conn = kanban.connect(board=BOARD)
+    tid = kanban.create_task(conn, title="card", assignee="impl")
+    _row(pconn, tid, HUMAN, "awaiting_submission")
+    _install_patch_triggers(path)
+    raw = sqlite3.connect(path)
+    raw.execute("INSERT INTO tasks(id, status, title) VALUES (?, 'review', 'card')", (tid,))
+    raw.commit()
+    with pytest.raises(sqlite3.IntegrityError, match="explicit approval"):
+        raw.execute("UPDATE tasks SET status = 'done' WHERE id = ?", (tid,))
+    raw.rollback()
+
+    result = review_migrate.migrate(fake_api, BOARD, conn, store, drop_triggers=True)
+
+    assert result["dropped_triggers"] == list(review_migrate.PATCH_TRIGGERS)
+    assert _triggers(path) == {"someone_elses_trigger"}
+    # The patch's tables stay as a record.
+    assert raw.execute("SELECT COUNT(*) FROM task_review_policies").fetchone()[0] == 1
+    raw.execute("UPDATE tasks SET status = 'done' WHERE id = ?", (tid,))
+    raw.commit()
+    raw.close()
+    # A second run finds nothing left to drop.
+    assert review_migrate.migrate(fake_api, BOARD, conn, store, drop_triggers=True)["dropped_triggers"] == []
+
+
+def test_dry_run_lists_the_triggers_it_would_drop_and_keeps_them(fake_api, kanban, store, patch_db):
+    path, _pconn = patch_db
+    _install_patch_triggers(path)
+    conn = kanban.connect(board=BOARD)
+    result = review_migrate.migrate(fake_api, BOARD, conn, store, dry_run=True, drop_triggers=True)
+    assert result["dropped_triggers"] == list(review_migrate.PATCH_TRIGGERS)
+    assert set(review_migrate.PATCH_TRIGGERS) <= _triggers(path)
+
+
+def test_triggers_are_left_alone_unless_asked(fake_api, kanban, store, patch_db):
+    path, _pconn = patch_db
+    _install_patch_triggers(path)
+    result = review_migrate.migrate(fake_api, BOARD, kanban.connect(board=BOARD), store)
+    assert "dropped_triggers" not in result
+    assert set(review_migrate.PATCH_TRIGGERS) <= _triggers(path)
