@@ -169,7 +169,7 @@ def _run_llm_action(api, slug: str, task_id: str, name: str, actor: str):
     else:
         extra = {"outcome": {"child_ids": list(getattr(outcome, "child_ids", None) or [])}}
     with open_board(api, slug) as conn:
-        return task_payload(api, conn, task_id), extra
+        return task_payload(api, conn, task_id, board=slug), extra
 
 
 def action_handler(api, name: str):
@@ -230,7 +230,7 @@ def _run_simple_action(api, slug, task_id, name, body, actor, user_id="", encode
             # Hermes 가 전이를 예외로 거절하는 경우(실행 중 재배정 RuntimeError, HallucinatedCardsError 등).
             # 요청 오류(RequestError)는 Exception 이지만 이 둘의 하위가 아니라 그대로 지나간다.
             raise transition_error(exc)
-        return task_payload(api, conn, task_id), extra
+        return task_payload(api, conn, task_id, board=slug), extra
 
 
 def slug_or_none(request):

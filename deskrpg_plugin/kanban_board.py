@@ -49,6 +49,7 @@ from .contract_fields import (
     UPDATE_TASK_KEYS,
     WORKSPACE_KINDS,
 )
+from .review_state import hooks_enabled, open_approval_store, review_field
 from .kanban_common import (
     ACTOR_MAX_CHARS,
     CARD_SUMMARY_PREVIEW_CHARS,
@@ -246,12 +247,15 @@ def get_board_handler(api):
                 columns = {c: [] for c in BOARD_COLUMNS}
                 if include_archived:
                     columns["archived"] = []
+                store = open_approval_store(api) if hooks_enabled(api) else None
                 for t in tasks:
                     full = summary_map.get(t.id)
                     d = task_dict(t, latest_summary=(full[:CARD_SUMMARY_PREVIEW_CHARS] if full else None))
-                    d["review"] = api.get_review_state(conn, t.id) if has_review_policy(api) else None
+                    d["review"] = review_field(api, conn, t, slug, store=store)
                     decorate(d, t.id, link_counts, comment_counts, progress, diagnostics.get(t.id))
                     columns[t.status if t.status in columns else "todo"].append(project(d, KANBAN_TASK_KEYS))
+                if store is not None:
+                    store.close()
                 tenants = [
                     r["tenant"]
                     for r in conn.execute("SELECT DISTINCT tenant FROM tasks WHERE tenant IS NOT NULL ORDER BY tenant")
@@ -288,7 +292,7 @@ def get_task_handler(api):
 
         def work():
             with board_conn(api, slug) as conn:
-                task = task_payload(api, conn, task_id)
+                task = task_payload(api, conn, task_id, board=slug)
                 return {
                     "task": task,
                     "comments": [project(asdict(c), KANBAN_COMMENT_KEYS) for c in api.list_comments(conn, task_id)],
@@ -373,7 +377,7 @@ def create_task_handler(api):
                     task_id = api.create_task(conn, created_by=created_by, board=slug, **fields)
                 except ValueError as exc:
                     raise RequestError(400, "invalid_task", str(exc))
-                out = {"task": task_payload(api, conn, task_id)}
+                out = {"task": task_payload(api, conn, task_id, board=slug)}
             if _dispatcher_missing(api):
                 out["warning"] = "dispatcher_missing"
             log_event("task.create", board=slug, task_id=task_id, title_len=len(fields["title"]))
@@ -607,7 +611,7 @@ def patch_task_handler(api):
                                 policy=p.get("review_policy"), expected_revision=p.get("expected_revision"))
                     except (ValueError, RuntimeError) as exc:
                         raise RequestError(409, "invalid_transition", str(exc))
-                    return {"task": task_payload(api, conn, task_id)}
+                    return {"task": task_payload(api, conn, task_id, board=slug)}
                 status = p.get("status")
                 assignee = p.get("assignee", _MISSING)
                 # 담당자+review 를 함께 주면 request_review 가 구현자를 먼저 기록해야 하므로 assign 을 미룬다.
@@ -640,7 +644,7 @@ def patch_task_handler(api):
                 if "title" in p or "body" in p:
                     _patch_title_body(api, conn, task_id, p.get("title", _MISSING), p.get("body", _MISSING), slug)
                 log_event("task.patch", board=slug, task_id=task_id, fields=sorted(p))
-                return {"task": task_payload(api, conn, task_id)}
+                return {"task": task_payload(api, conn, task_id, board=slug)}
 
         return web.json_response(await run_blocking(work))
 
