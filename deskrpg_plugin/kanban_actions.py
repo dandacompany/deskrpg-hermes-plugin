@@ -243,7 +243,7 @@ def _approve_waiting_card(api, conn, store, task, slug, body, user_id, encoded_u
     if actor_name:
         approval["actor_name"] = actor_name
     _check(api.complete_task(conn, task.id, metadata={"approval": approval}), "the card cannot be completed now")
-    review_store.record_decision(store, task.id, "human", approver, "approve", None)
+    review_store.record_decision(store, task.id, "human", approver, "approve", None, request_id=request_id)
 
 
 def _implementer_of(api, conn, task_id, policy, reviewer_profile):
@@ -299,7 +299,10 @@ def _run_simple_action(api, slug, task_id, name, body, actor, user_id="", encode
                 else:
                     extra = _SIMPLE[name](api, conn, task_id, body, actor)
                     if name == "request-changes" and store is not None:
-                        _record_rejection(api, conn, store, task_id, slug, actor, body.get("comment"), extra.get("outcome"))
+                        # Recorded under the signed-in person, like an approval; the generic actor when none is sent.
+                        rejecter = f"deskrpg:{user_id}" if user_id else actor
+                        _record_rejection(api, conn, store, task_id, slug, rejecter, body.get("comment"),
+                                          extra.get("outcome"))
             finally:
                 if store is not None:
                     store.close()

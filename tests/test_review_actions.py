@@ -71,6 +71,8 @@ async def test_approval_completes_the_card_and_records_who_approved(client, kanb
     assert call["metadata"] == {"approval": {"actor": "deskrpg:u1", "submission_id": submission_id(run),
                                              "request_id": "r1", "actor_name": "곽지호"}}
     assert [d["verdict"] for d in rs.decisions(store, tid)] == ["approve"]
+    # The request id DeskRPG sent comes back on the card, as the patched core reports it.
+    assert body["task"]["review"]["approval"]["request_id"] == "r1"
 
 
 async def test_an_older_submission_is_refused_and_nothing_changes(client, kanban, store):
@@ -120,11 +122,14 @@ async def test_a_card_without_a_policy_is_approved_as_before(client, kanban, sto
 
 async def test_sending_back_a_human_card_returns_it_to_the_implementer(client, kanban, store):
     tid, _run = _waiting(kanban, store)
-    resp = await client.post(f"/deskrpg/kanban/tasks/{tid}/request-changes?board={BOARD}", json={"comment": "fix"})
+    resp = await client.post(f"/deskrpg/kanban/tasks/{tid}/request-changes?board={BOARD}", json={"comment": "fix"},
+                             headers=USER)
     assert resp.status == 200
     task = (await resp.json())["task"]
     assert task["assignee"] == "impl" and task["status"] in ("ready", "todo")
-    assert [(d["verdict"], d["summary"]) for d in rs.decisions(store, tid)] == [("reject", "fix")]
+    # Recorded under the person who sent it back, like an approval.
+    assert [(d["verdict"], d["summary"], d["actor"]) for d in rs.decisions(store, tid)] == [
+        ("reject", "fix", "deskrpg:u1")]
 
 
 async def test_sending_back_a_mixed_card_returns_it_to_the_implementer_not_the_reviewer(client, kanban, store):

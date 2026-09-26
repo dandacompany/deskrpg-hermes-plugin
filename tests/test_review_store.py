@@ -74,3 +74,27 @@ def test_clear_board_default(tmp_path: Path):
     assert rs.clear_board_default(conn, "office-1") is True
     assert rs.get_board_default(conn, "office-1") is None
     assert rs.clear_board_default(conn, "office-1") is False
+
+
+def test_a_decision_keeps_its_request_id(tmp_path: Path):
+    conn = rs.open_store(tmp_path / "review.sqlite")
+    rs.record_decision(conn, "t_1", "human", "deskrpg:u1", "approve", None, request_id="r1")
+    rs.record_decision(conn, "t_1", "human", "deskrpg:u1", "reject", "fix")
+    assert [d["request_id"] for d in rs.decisions(conn, "t_1")] == ["r1", None]
+
+
+def test_a_store_from_an_earlier_version_gains_the_request_id_column(tmp_path: Path):
+    path = tmp_path / "review.sqlite"
+    old = sqlite3.connect(path)
+    old.executescript("""CREATE TABLE review_decisions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, actor_kind TEXT NOT NULL, actor TEXT NOT NULL,
+      verdict TEXT NOT NULL, summary TEXT, at REAL NOT NULL);
+      INSERT INTO review_decisions(task_id, actor_kind, actor, verdict, summary, at)
+      VALUES ('t_1', 'human', 'deskrpg:u1', 'approve', NULL, 1.0);""")
+    old.close()
+    conn = rs.open_store(path)
+    assert rs.decisions(conn, "t_1")[0]["request_id"] is None
+    rs.record_decision(conn, "t_1", "human", "deskrpg:u1", "approve", None, request_id="r2")
+    assert rs.decisions(conn, "t_1")[-1]["request_id"] == "r2"
+    # Opening it again (another process) finds the column already there.
+    rs.open_store(path).close()

@@ -104,7 +104,7 @@ def review_state(api, conn, store, task, board: str | None = None) -> dict | Non
             # `approved_at` is epoch seconds, as the patched core reports it; `at` is the same instant in ISO 8601.
             "approved_at": int(approval_row["at"]),
             "at": _iso(approval_row["at"]),
-            "request_id": None,
+            "request_id": approval_row.get("request_id"),
         }
     return {
         "policy": {"version": POLICY_VERSION, "mode": mode, "reviewer_profile": reviewer_profile},

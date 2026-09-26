@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS board_defaults (
   board TEXT PRIMARY KEY, mode TEXT NOT NULL, reviewer_profile TEXT, updated_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS review_decisions (
   id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, actor_kind TEXT NOT NULL, actor TEXT NOT NULL,
-  verdict TEXT NOT NULL, summary TEXT, at REAL NOT NULL);
+  verdict TEXT NOT NULL, summary TEXT, at REAL NOT NULL, request_id TEXT);
 CREATE INDEX IF NOT EXISTS review_decisions_task ON review_decisions(task_id, id);
 """
 
@@ -47,7 +47,22 @@ def open_store(path: Path) -> sqlite3.Connection:
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.executescript(SCHEMA)
+    _add_missing_columns(conn)
     return conn
+
+
+def _add_missing_columns(conn) -> None:
+    """Bring a store created by an earlier plugin version up to the current columns.
+
+    Several processes open the store at once; one of them may add the column between the check and the ALTER,
+    so a "duplicate column" from the ALTER means it is there."""
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(review_decisions)")}
+    if "request_id" not in columns:
+        try:
+            conn.execute("ALTER TABLE review_decisions ADD COLUMN request_id TEXT")
+        except sqlite3.OperationalError as exc:
+            if "duplicate column" not in str(exc):
+                raise
 
 
 def _validate(mode: str, reviewer_profile: str | None) -> None:
@@ -94,17 +109,20 @@ def get_board_default(conn, board: str):
     return (row[0], row[1]) if row else None
 
 
-def record_decision(conn, task_id, actor_kind, actor, verdict, summary) -> int:
+def record_decision(conn, task_id, actor_kind, actor, verdict, summary, request_id: str | None = None) -> int:
+    """`request_id` is the caller's id for the decision request (a human approval sends one)."""
     cur = conn.execute(
-        "INSERT INTO review_decisions(task_id, actor_kind, actor, verdict, summary, at) VALUES (?,?,?,?,?,?)",
-        (task_id, actor_kind, actor, verdict, summary, time.time()),
+        "INSERT INTO review_decisions(task_id, actor_kind, actor, verdict, summary, at, request_id) "
+        "VALUES (?,?,?,?,?,?,?)",
+        (task_id, actor_kind, actor, verdict, summary, time.time(), request_id),
     )
     return int(cur.lastrowid)
 
 
 def decisions(conn, task_id: str) -> list[dict]:
     rows = conn.execute(
-        "SELECT id, actor_kind, actor, verdict, summary, at FROM review_decisions WHERE task_id=? ORDER BY id",
+        "SELECT id, actor_kind, actor, verdict, summary, at, request_id FROM review_decisions WHERE task_id=? "
+        "ORDER BY id",
         (task_id,),
     ).fetchall()
     return [dict(r) for r in rows]
