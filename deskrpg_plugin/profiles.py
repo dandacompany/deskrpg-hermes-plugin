@@ -8,9 +8,10 @@
 import asyncio
 import logging
 
+import yaml
 from aiohttp import web
 
-from . import cloneprofile, keyissue, safedelete, worker_plugin
+from . import cloneprofile, envfile, keyissue, safedelete, worker_plugin
 from .identity import SOUL_FILENAME, is_default_template
 
 logger = logging.getLogger(__name__)
@@ -203,5 +204,88 @@ def delete_handler(api):
         return web.json_response(
             {"name": name, "removed": {"profileDir": True, "wrapperScript": wrapper_removed}}
         )
+
+    return handler
+
+
+# Values that point at a secret provider instead of holding the key. Hermes resolves these; a key
+# minted here would replace the reference and cut the profile off from its real secret.
+_SECRET_REFERENCE_PREFIXES = ("${", "op://", "bw://")
+
+
+def _current_key(profile_dir) -> str:
+    """The profile's `API_SERVER_KEY` value as written (quotes stripped), or "" when absent."""
+    line = envfile.read_assignments(profile_dir / keyissue.ENV_FILENAME).get(keyissue.KEY_NAME, "")
+    value = line.split("=", 1)[1].strip() if "=" in line else ""
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+        value = value[1:-1]
+    return value
+
+
+def _uses_external_secrets(profile_dir, key: str) -> bool:
+    if key.startswith(_SECRET_REFERENCE_PREFIXES):
+        return True
+    config_path = profile_dir / "config.yaml"
+    if not config_path.is_file():
+        return False
+    try:
+        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        # Unreadable config: we cannot tell, so we do not touch the key.
+        return True
+    secrets = data.get("secrets") if isinstance(data, dict) else None
+    return isinstance(secrets, dict) and any(
+        isinstance(entry, dict) and entry.get("enabled") for entry in secrets.values()
+    )
+
+
+def key_handler(api):
+    """Issue an API key for a profile that already exists (owner key only).
+
+    The value leaves once, in the 201 body. An existing key is never read back: without
+    `{"rotate": true}` it is refused with 409 `key_exists`, and with it the key is replaced —
+    whatever else used the old key stops working at once (Hermes re-reads the profile `.env`
+    on every request).
+    """
+
+    async def handler(request):
+        name = _validated_name(request.match_info["name"], api)
+        if name == "default":
+            return web.json_response({"error": "default_profile", "name": name}, status=400)
+
+        rotate = False
+        if request.can_read_body:
+            try:
+                payload = await request.json()
+            except Exception:
+                raise web.HTTPBadRequest(reason="body must be JSON")
+            if not isinstance(payload, dict):
+                raise web.HTTPBadRequest(reason="body must be a JSON object")
+            if "rotate" in payload:
+                if payload["rotate"] is not True:
+                    raise web.HTTPBadRequest(reason="rotate must be true when present")
+                rotate = True
+
+        if not api.profile_exists(name):
+            return web.json_response({"error": "no_profile", "name": name}, status=404)
+        profile_dir = api.get_profile_dir(name)
+        try:
+            existing = _current_key(profile_dir)
+        except (OSError, UnicodeDecodeError) as exc:
+            reason = f"{keyissue.ENV_FILENAME} read failed: {type(exc).__name__}"
+            return web.json_response({"error": "key_issue_failed", "reason": reason, "name": name}, status=500)
+        if _uses_external_secrets(profile_dir, existing):
+            return web.json_response({"error": "external_secret_provider", "name": name}, status=409)
+        if existing and not rotate:
+            return web.json_response({"error": "key_exists", "name": name}, status=409)
+
+        try:
+            key = keyissue.issue(profile_dir)
+        except keyissue.KeyIssueFailed as exc:
+            logger.warning("[deskrpg] key issue failed: %s — %s", name, exc.reason)
+            return web.json_response({"error": "key_issue_failed", "reason": exc.reason, "name": name}, status=500)
+        rotated = bool(existing)
+        logger.info("[deskrpg] existing profile key %s: %s", "rotated" if rotated else "issued", name)
+        return web.json_response({"name": name, "apiKey": key, "issued": True, "rotated": rotated}, status=201)
 
     return handler
