@@ -413,3 +413,20 @@ def test_목록은_task_id_로_좁힌다(api):
                                      data=b"b", max_bytes=100)
         rows = store.list_artifacts(conn, board="dev", task_id="t1")
     assert [r["title"] for r in rows] == ["A"]
+
+
+def test_two_loaded_copies_keep_one_increasing_id_clock(monkeypatch):
+    """Hermes loads a directory plugin once per profile scope under different module names. The
+    upload route runs from one copy and a profile's tool or hook from another, so the id clock must
+    not live in module globals — ids from both copies in the same millisecond must still increase."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("deskrpg_plugin.artifacts_store_second_copy", store.__file__)
+    second = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(second)
+    assert second is not store
+    monkeypatch.setattr(store.time, "time", lambda: 1_790_000_000.0)  # one frozen millisecond
+
+    first_id = store.new_artifact_id()  # the route's copy
+    second_id = second.new_artifact_id()  # a profile's copy
+    assert second_id[:10] > first_id[:10], "the time prefix keeps increasing across copies"
