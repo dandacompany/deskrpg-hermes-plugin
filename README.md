@@ -17,7 +17,7 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.24.4 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.25.0 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -81,6 +81,8 @@ Stop the gateway and back up its kanban databases before replacing core code. In
 New cards default to human approval. An explicitly delegated task can be approved by a different AI profile. Approvals bind to the submitted result; generic status changes cannot substitute for approval. AI reviewers must inspect the actual submitted text or artifacts; this does not guarantee the semantic quality of an AI review. Existing cards are not converted automatically.
 
 ## Release
+
+0.25.0 creates swarms on boards with review policies (capability `swarm_review_policy`): workers get the requested policy and verifiers and synthesizers get human review, attached in the same write transaction that creates the swarm so no card becomes ready without its policy; the root stays a policy-free structure card. The capability is announced only when the Hermes internals it relies on are present with the expected signatures; otherwise a policy swarm answers `428 swarm_review_policy_unsupported`.
 
 0.24.4 keeps the artifact id clock in one process-wide place too, so an upload through the route and a save from a tool in the same millisecond still get ordered ids.
 
