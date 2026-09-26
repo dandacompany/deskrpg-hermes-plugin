@@ -1,0 +1,3 @@
+name: envprobe
+version: 0.0.1
+description: "Test only: records what a kanban worker process knows about its card."
