@@ -107,10 +107,10 @@ print("tests ok:", paths)
 GUARD
 
 say "통합 스위트 (CI 의 integration 잡)"
-HERMES_REVIEW_POLICY_REQUIRED=1 HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m integration tests/integration
+HERMES_REVIEW_POLICY_REQUIRED=1 HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m "integration and not upstream_only" tests/integration
 
 say "실제 Hermes 환경에서 단위 스위트 재실행"
 # 가짜만으로는 통과하는 테스트를 여기서 잡는다.
-HERMES_REVIEW_POLICY_REQUIRED=1 HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q
+HERMES_REVIEW_POLICY_REQUIRED=1 HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m "not upstream_only"
 
 printf '\n\033[1mCI 와 동일한 검사를 전부 통과했다.\033[0m\n'

@@ -63,9 +63,9 @@ jobs:
               assert path == here / "tests", f"tests 가 가려졌다 → {path}"
           print("tests ok:", paths)
           GUARD
-      - run: python -m pytest -q -m integration tests/integration
+      - run: python -m pytest -q -m "integration and not upstream_only" tests/integration
       # 가짜 스위트도 실제 Hermes 가 설치된 환경에서 한 번 더 — import 경로 충돌(예: aiohttp 버전)을 잡는다.
-      - run: python -m pytest -q
+      - run: python -m pytest -q -m "not upstream_only"
 
   # The same integration suite on upstream Hermes `main` (NousResearch), not the pinned fork commit above.
   # The plugin must not depend on a core patch or on Hermes internals; this job shows what
