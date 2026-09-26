@@ -8,7 +8,7 @@ stored here). Only the tool calls that mean "the agent read this" are used:
 - `browser_navigate` → the final `url` and `title` from the result
 - `read_file`     → the `path` argument, relative to the session's working folder. Kanban worker
                     sessions record no working folder (`cwd` is empty), so a file in a card workspace
-                    (`<kanban home>/boards/<board>/workspaces/<card>/…`) is named `<card>/…`
+                    (`<kanban root>/kanban/boards/<board>/{workspaces,attachments}/<card>/…`) is named `<card>/…`
 - `delegate_task` → each child's `files_read`, and one level into a child session it names
 
 Search results (`web_search`, `search_files`) are candidates, not reads, and are left out.
@@ -106,7 +106,12 @@ def _inside(full: str, root: str) -> str | None:
     return posixpath.relpath(full, root)
 
 
-def relative_path(raw, cwd, kanban_home=None) -> str | None:
+# Card folders under a board: a card's workspace, and the files attached to it (a parent card's output
+# is often read from there).
+_CARD_DIRS = ("workspaces", "attachments")
+
+
+def relative_path(raw, cwd, boards_root=None) -> str | None:
     """`raw` relative to the working folder — or `<card>/…` inside a kanban card workspace — or None
     when it is anywhere else (or cannot be placed)."""
     if not isinstance(raw, str) or not raw.strip():
@@ -124,11 +129,11 @@ def relative_path(raw, cwd, kanban_home=None) -> str | None:
         inside = _inside(full, cwd)
         if inside is not None:
             return inside
-    if isinstance(kanban_home, str) and kanban_home.startswith("/"):
-        inside = _inside(full, posixpath.join(kanban_home, "boards"))
+    if isinstance(boards_root, str) and boards_root.startswith("/"):
+        inside = _inside(full, boards_root)
         parts = inside.split("/") if inside else []
-        # <board>/workspaces/<card>/<file…>
-        if len(parts) >= 4 and parts[1] == "workspaces":
+        # <board>/{workspaces,attachments}/<card>/<file…>
+        if len(parts) >= 4 and parts[1] in _CARD_DIRS:
             return "/".join(parts[2:])
     return None
 
@@ -163,8 +168,8 @@ def _calls(message):
 
 
 class _Collector:
-    def __init__(self, kanban_home=None):
-        self.kanban_home = kanban_home
+    def __init__(self, boards_root=None):
+        self.boards_root = boards_root
         self.sources: list[dict] = []
         self.index: dict[tuple[str, str], dict] = {}
         self.outside = 0
@@ -176,7 +181,7 @@ class _Collector:
             self._add("web", ref, clean_title(title), via, at)
 
     def file(self, path, cwd, via, at):
-        ref = relative_path(path, cwd, self.kanban_home)
+        ref = relative_path(path, cwd, self.boards_root)
         if ref is None:
             self.outside += 1
         else:
@@ -246,12 +251,12 @@ def _cwd(row):
     return value if isinstance(value, str) and value else None
 
 
-def read_sources(sdb, session_id, kanban_home=None) -> dict | None:
+def read_sources(sdb, session_id, boards_root=None) -> dict | None:
     row = sdb.get_session(session_id)
     if not row:
         return None
     cwd = _cwd(row)
-    out = _Collector(kanban_home)
+    out = _Collector(boards_root)
     children: list[str] = []
     collect(_messages(sdb, session_id), cwd, out, children=children)
     for child_id in dict.fromkeys(children):
@@ -268,10 +273,11 @@ def read_sources(sdb, session_id, kanban_home=None) -> dict | None:
     }
 
 
-def _kanban_home(api):
+def _boards_root(api):
+    """Hermes `kanban_db.boards_root()`: `kanban_home()` is the shared Hermes root, not the kanban folder."""
     try:
-        return str(api.kanban_home())
-    except Exception:  # noqa: BLE001 — without it, card workspace files are only counted
+        return str(Path(api.kanban_home()) / "kanban" / "boards")
+    except Exception:  # noqa: BLE001 — without it, card files are only counted
         return None
 
 
@@ -288,7 +294,7 @@ def get_handler(api):
                 return None
             sdb = open_session_db(api, home)
             try:
-                return read_sources(sdb, session_id, _kanban_home(api))
+                return read_sources(sdb, session_id, _boards_root(api))
             finally:
                 sdb.close()
 
