@@ -451,3 +451,13 @@ async def test_status_transitions_report_a_request_changes_as_review_to_ready(cl
     assert mine[-1] == ("review", "ready")
     for event in body["events"]:
         assert cf.KANBAN_STATUS_TRANSITION_REQUIRED <= set(event) <= cf.KANBAN_STATUS_TRANSITION_KEYS
+
+
+async def test_detail_events_carry_run_id_on_real_hermes(client):
+    await _board(client)
+    task = await _task(client)
+    detail = await (await client.get(f"/deskrpg/kanban/tasks/{task['id']}{B}")).json()
+    assert detail["events"], "a new card has at least its created event"
+    for event in detail["events"]:
+        assert cf.KANBAN_EVENT_REQUIRED <= set(event) <= cf.KANBAN_EVENT_KEYS
+        assert "run_id" in event

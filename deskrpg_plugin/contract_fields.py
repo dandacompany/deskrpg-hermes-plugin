@@ -33,9 +33,11 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 # 옛 플러그인은 그 키에 `unknown_field` 400 을 내므로 호출부는 이 값으로 판정한다.
 # `kanban_task_events` = `GET /deskrpg/kanban/events?board=&from=&to=&kind=status` (status transitions in a window,
 # for the rework metric). Reads only the board DB, so it is always available when kanban is.
+# `kanban_run_events` = card detail `events[].run_id`, and `spawn_failed`·`rate_limited` closing a run in the
+# event stream (`task.run.finished`).
 CAPABILITIES = (
     "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin",
-    "kanban_attachment_list", "board_archive", "kanban_task_events",
+    "kanban_attachment_list", "board_archive", "kanban_task_events", "kanban_run_events",
 )
 
 
@@ -252,6 +254,9 @@ KANBAN_TASK_OPTIONAL = frozenset({
     "body", "assignee", "priority", "tenant", "created_at", "latest_summary",
     "comment_count", "link_counts", "progress", "warnings", "started_at",
     "worker_pid", "last_heartbeat_at", "review",
+    # Since 0.21.0 (`kanban_run_events`): lets the board tell a card blocked after repeated failures from one
+    # blocked for another reason, without a detail call per card.
+    "consecutive_failures",
 })
 KANBAN_TASK_KEYS = KANBAN_TASK_REQUIRED | KANBAN_TASK_OPTIONAL
 
@@ -259,7 +264,7 @@ KANBAN_TASK_KEYS = KANBAN_TASK_REQUIRED | KANBAN_TASK_OPTIONAL
 KANBAN_TASK_FULL_EXTRA_OPTIONAL = frozenset({
     "result", "created_by", "model_override", "provider_override", "reasoning_effort",
     "completed_at", "last_failure_error", "workspace_kind", "workspace_path",
-    "branch_name", "consecutive_failures", "diagnostics",
+    "branch_name", "diagnostics",
 })
 KANBAN_TASK_FULL_REQUIRED = KANBAN_TASK_REQUIRED
 KANBAN_TASK_FULL_OPTIONAL = KANBAN_TASK_OPTIONAL | KANBAN_TASK_FULL_EXTRA_OPTIONAL
@@ -288,7 +293,10 @@ KANBAN_COMMENT_KEYS = KANBAN_COMMENT_REQUIRED
 
 # 카드별 이력(KanbanEvent) — 통합 사건 스트림(PluginEvent)과는 다른 모양이다.
 KANBAN_EVENT_REQUIRED = frozenset({"id", "kind", "payload", "created_at"})
-KANBAN_EVENT_KEYS = KANBAN_EVENT_REQUIRED
+# `run_id` ties an event to the run it came from (null for card-level events). DeskRPG groups a card's history
+# by attempt with it; announced as capability `kanban_run_events`.
+KANBAN_EVENT_OPTIONAL = frozenset({"run_id"})
+KANBAN_EVENT_KEYS = KANBAN_EVENT_REQUIRED | KANBAN_EVENT_OPTIONAL
 
 KANBAN_ATTACHMENT_REQUIRED = frozenset({"id", "filename"})
 KANBAN_ATTACHMENT_OPTIONAL = frozenset({"size"})

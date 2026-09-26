@@ -312,3 +312,18 @@ async def test_Hermes_가_예상_못_한_예외를_던지면_500_internal_error_
     body = await resp.json()
     assert body == {"error": "internal_error", "detail": "RuntimeError"}
     assert "secret" not in await resp.text()
+
+
+async def test_board_cards_carry_consecutive_failures(aiohttp_client, fake_api):
+    # The inbox tells "blocked after repeated failures" from other blocks with this, without a detail call per card.
+    db = fake_api.kanban
+    conn = db.connect(board="default")
+    t = db.create_task(conn, title="t")
+    task = db.get_task(conn, t)
+    task.status = "blocked"
+    task.consecutive_failures = 3
+
+    client = await _client(aiohttp_client, fake_api)
+    body = await (await client.get("/deskrpg/kanban/board?board=default")).json()
+    card = next(x for c in body["columns"] for x in c["tasks"] if x["id"] == t)
+    assert card["consecutive_failures"] == 3

@@ -28,6 +28,22 @@ def _events(fake_api, task_id):
 # ---------------------------------------------------------------------------
 
 
+async def test_detail_events_carry_the_run_they_came_from(aiohttp_client, fake_api):
+    db = fake_api.kanban
+    conn = _conn(fake_api)
+    t = db.create_task(conn, title="t")
+    run_id = db.start_run(conn, t, profile="sophie")
+    db._append_event(conn, t, "crashed", {"exit_code": 1}, run_id=run_id)
+
+    client = await _client(aiohttp_client, fake_api)
+    body = await (await client.get(f"/deskrpg/kanban/tasks/{t}{B}")).json()
+
+    by_kind = {e["kind"]: e for e in body["events"]}
+    assert by_kind["crashed"]["run_id"] == run_id
+    # Card-level events (created) belong to no run.
+    assert by_kind["created"]["run_id"] is None
+
+
 async def test_카드_상세_모양은_계약과_같다(aiohttp_client, fake_api):
     db = fake_api.kanban
     conn = _conn(fake_api)
