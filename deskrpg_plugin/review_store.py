@@ -84,6 +84,11 @@ def put_board_default(conn, board: str, mode: str, reviewer_profile: str | None)
     )
 
 
+def clear_board_default(conn, board: str) -> bool:
+    """Remove a board's default policy. True when there was one."""
+    return conn.execute("DELETE FROM board_defaults WHERE board=?", (board,)).rowcount > 0
+
+
 def get_board_default(conn, board: str):
     row = conn.execute("SELECT mode, reviewer_profile FROM board_defaults WHERE board=?", (board,)).fetchone()
     return (row[0], row[1]) if row else None

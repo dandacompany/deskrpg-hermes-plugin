@@ -66,3 +66,11 @@ def test_policy_update_replaces_the_row(tmp_path: Path):
     rs.put_policy(conn, rs.Policy("t_1", "human", "impl", None, "card"))
     rs.put_policy(conn, rs.Policy("t_1", "agent", "impl", "rev", "board_default"))
     assert rs.get_policy(conn, "t_1") == rs.Policy("t_1", "agent", "impl", "rev", "board_default")
+
+
+def test_clear_board_default(tmp_path: Path):
+    conn = rs.open_store(tmp_path / "review.sqlite")
+    rs.put_board_default(conn, "office-1", "human", None)
+    assert rs.clear_board_default(conn, "office-1") is True
+    assert rs.get_board_default(conn, "office-1") is None
+    assert rs.clear_board_default(conn, "office-1") is False
