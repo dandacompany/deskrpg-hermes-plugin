@@ -152,7 +152,7 @@ async def client(aiohttp_client, tmp_api):
 
 async def test_routes_register_list_and_answer(client, tmp_api):
     resp = await client.post("/p/noah/deskrpg/ask-user/sessions", json={"session_id": "sess-1"})
-    assert resp.status == 204
+    assert resp.status == 200
     thread, out = _run_in_thread(ask_user.make_handler(tmp_api), ARGS, session_id="sess-1")
     _wait_pending()
 
@@ -186,7 +186,7 @@ async def test_answer_route_rejects_an_empty_or_off_list_response(client, tmp_ap
 async def test_registration_context_is_echoed_with_the_question(client, tmp_api):
     ctx = {"userId": "u-1", "npcId": "npc-9"}
     resp = await client.post("/p/noah/deskrpg/ask-user/sessions", json={"session_id": "sess-1", "context": ctx})
-    assert resp.status == 204
+    assert resp.status == 200
     thread, _out = _run_in_thread(ask_user.make_handler(tmp_api), ARGS, session_id="sess-1")
     [row] = _wait_pending()
     listed = await (await client.get("/p/noah/deskrpg/questions")).json()

@@ -235,7 +235,7 @@ def register_handler(api):
                 or len(json.dumps(session_context, ensure_ascii=False).encode()) > CONTEXT_MAX_BYTES):
             return json_error(400, "invalid_field", f"context must be an object of at most {CONTEXT_MAX_BYTES} bytes")
         register_session(request.match_info["profile"], session_id.strip(), session_context)
-        return web.Response(status=204)
+        return web.json_response({"registered": True})
 
     return handler
 
