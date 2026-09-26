@@ -204,3 +204,29 @@ async def test_registration_context_must_be_a_small_object(client):
 async def test_register_route_requires_a_session_id(client):
     resp = await client.post("/p/noah/deskrpg/ask-user/sessions", json={})
     assert resp.status == 400
+
+
+def test_registration_adds_the_tool_and_a_prompt_section_naming_it(monkeypatch):
+    """Hermes' Tool Search hides plugin tools behind tool_search, so the model only knows the tool
+    exists if a prompt section names it (the card proposal and artifact tools do the same)."""
+    import types
+
+    import deskrpg_plugin
+    from deskrpg_plugin import ask_user_prompt
+
+    calls = []
+
+    class _Ctx:
+        def __getattr__(self, name):
+            if not name.startswith("register_"):
+                raise AttributeError(name)
+            return lambda *a, **k: calls.append((name, a, k))
+
+    monkeypatch.setattr(deskrpg_plugin, "load", lambda: types.SimpleNamespace())
+    deskrpg_plugin.register(_Ctx())
+    assert ask_user.TOOL_NAME in {c[1][0] for c in calls if c[0] == "register_tool"}
+    sections = {c[1][0]: c[1][1] for c in calls if c[0] == "register_system_prompt_section"}
+    text = sections[ask_user_prompt.SECTION_ID]
+    assert ask_user.TOOL_NAME in text
+    assert "tool_search" in text
+    assert "2-4" in text and "plain text" in text
