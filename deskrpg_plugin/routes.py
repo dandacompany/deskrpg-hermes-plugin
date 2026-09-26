@@ -31,6 +31,7 @@ from . import cron as _cron
 from . import events as _events
 from . import artifacts_routes as _artifacts_routes
 from . import card_proposal_routes as _card_proposal_routes
+from . import ask_user as _ask_user
 from . import skills_hub_routes as _skills_hub
 from . import learning_routes as _learning
 from . import mcp_admin as _mcp_admin
@@ -220,6 +221,10 @@ ROUTES = [
     ("POST", "/deskrpg/card-proposals/{proposal_id}/resolve", "card_proposal_resolve", Scope.DEFAULT),
     ("POST", "/deskrpg/card-proposals/{proposal_id}/unresolve", "card_proposal_unresolve", Scope.DEFAULT),
     ("POST", "/deskrpg/card-proposals/{proposal_id}/task", "card_proposal_record_task", Scope.DEFAULT),
+    # ---- 대화 중 묻기 (프로필 키 — 그 프로필의 질문만 보고 답한다) ---------------------------
+    ("POST", "/p/{profile}/deskrpg/ask-user/sessions", "ask_user_register", Scope.PROFILE),
+    ("GET", "/p/{profile}/deskrpg/questions", "ask_user_list", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/questions/{question_id}/answer", "ask_user_answer", Scope.PROFILE),
 ]
 
 # Hermes 의 프로필 프리픽스 미들웨어는 `request.match_info.get("profile")` 로
@@ -361,6 +366,9 @@ _HANDLERS = {
     "artifacts_delete": lambda api: _artifacts_routes.delete_handler(api),
     # 카드 제안
     "card_proposal_resolve": lambda api: _card_proposal_routes.resolve_handler(api),
+    "ask_user_register": lambda api: _ask_user.register_handler(api),
+    "ask_user_list": lambda api: _ask_user.list_handler(api),
+    "ask_user_answer": lambda api: _ask_user.answer_handler(api),
     "card_proposal_unresolve": lambda api: _card_proposal_routes.unresolve_handler(api),
     "card_proposal_record_task": lambda api: _card_proposal_routes.record_task_handler(api),
     # 스킬 Hub (0.15.0)
