@@ -8,6 +8,7 @@ requires_hermes: ">=0.21.1"
 provides_tools:
   - artifact_save
   - propose_kanban_card
+  - deskrpg_ask_user
 provides_hooks:
   - post_tool_call
   - post_llm_call

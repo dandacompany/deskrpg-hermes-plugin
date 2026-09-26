@@ -29,6 +29,8 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 # `worker_plugin` = `/deskrpg/info` 의 `worker_plugin` 보고와 `POST /deskrpg/worker-plugin`. 프로필 목록·경로 심볼만
 # 쓰므로 늘 된다.
 # `kanban_attachment_list` = `GET /deskrpg/kanban/attachments?board=` (보드 전체 첨부, 결과물 갤러리용).
+# `ask_user` = 도구 `deskrpg_ask_user` 와 `/p/{profile}/deskrpg/ask-user/sessions`·`/questions`·`/questions/{id}/answer`.
+# DeskRPG 는 이 값이 있을 때만 1:1 run 세션을 등록하고 질문 카드를 띄운다.
 # `board_archive` = `PATCH /deskrpg/kanban/boards/{slug}` 의 `archived` 키와 목록의 `?include_archived=`.
 # 옛 플러그인은 그 키에 `unknown_field` 400 을 내므로 호출부는 이 값으로 판정한다.
 # `kanban_task_events` = `GET /deskrpg/kanban/events?board=&from=&to=&kind=status` (status transitions in a window,
@@ -40,6 +42,7 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 CAPABILITIES = (
     "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin",
     "kanban_attachment_list", "board_archive", "kanban_task_events", "kanban_run_events", "profile_key_issue",
+    "ask_user",
 )
 
 

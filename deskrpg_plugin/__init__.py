@@ -30,6 +30,7 @@ def register(ctx) -> None:
     _register_artifacts(ctx, api)
     _register_card_proposal(ctx, api)
     _register_approval_blocked(ctx, api)
+    _register_ask_user(ctx, api)
 
 
 def _register_artifacts(ctx, api) -> None:
@@ -82,6 +83,18 @@ def _register_card_proposal(ctx, api) -> None:
             step()
         except Exception as exc:  # noqa: BLE001 — 한 등록의 실패가 다른 등록을 막지 않는다
             logger.warning("[deskrpg] card proposal %s registration failed: %s", name, type(exc).__name__)
+
+
+def _register_ask_user(ctx, api) -> None:
+    """대화 중 묻기 도구. 따로 감싼다 — 실패해도 라우트와 다른 도구는 산다.
+    쓰는 기준(선택지로 좁힐 수 있을 때만)은 도구 설명이 모델에게 말한다."""
+    try:
+        from . import ask_user
+
+        ctx.register_tool(ask_user.TOOL_NAME, ask_user.TOOLSET, ask_user.TOOL_SCHEMA, ask_user.make_handler(api),
+                          description=ask_user.TOOL_SCHEMA["description"], emoji="❓")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[deskrpg] ask_user registration failed: %s", type(exc).__name__)
 
 
 def _register_approval_blocked(ctx, api) -> None:
