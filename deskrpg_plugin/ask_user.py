@@ -67,7 +67,10 @@ TOOL_SCHEMA = {
 }
 
 _lock = threading.Lock()
-_sessions: dict = {}  # (profile, session_id) -> (registered_at monotonic, context dict)
+# session_id -> (registered_at monotonic, profile, context dict). Keyed by session alone: in the
+# multiplexed gateway the tool thread may not see its profile home (a context-local override), so
+# the profile comes from the registration, which the profile's own key authenticated.
+_sessions: dict = {}
 _questions: dict = {}  # question_id -> entry
 
 
@@ -100,19 +103,19 @@ def _session_kind(api, session_id: str) -> str:
 def register_session(profile: str, session_id: str, session_context=None) -> None:
     now = time.monotonic()
     with _lock:
-        for key, (at, _ctx) in list(_sessions.items()):
+        for key, (at, _profile, _ctx) in list(_sessions.items()):
             if now - at > REGISTRATION_TTL_SECONDS:
                 del _sessions[key]
-        _sessions[(profile, session_id)] = (now, dict(session_context or {}))
+        _sessions[session_id] = (now, profile, dict(session_context or {}))
 
 
-def _registration(profile: str, session_id: str):
-    """등록돼 있으면 그 context, 없으면 None."""
+def _registration(session_id: str):
+    """등록돼 있으면 (profile, context), 없으면 None."""
     with _lock:
-        found = _sessions.get((profile, session_id))
+        found = _sessions.get(session_id)
     if found is None or time.monotonic() - found[0] > REGISTRATION_TTL_SECONDS:
         return None
-    return found[1]
+    return found[1], found[2]
 
 
 def _public(entry: dict) -> dict:
@@ -163,11 +166,11 @@ def _arguments(args: dict):
     }, None
 
 
-def _wait_for_registration(profile: str, session_id: str):
-    """등록 context, 유예 안에 등록이 오지 않으면 None."""
+def _wait_for_registration(session_id: str):
+    """(profile, context), 유예 안에 등록이 오지 않으면 None."""
     deadline = time.monotonic() + REGISTRATION_GRACE_SECONDS
     while True:
-        found = _registration(profile, session_id)
+        found = _registration(session_id)
         if found is not None:
             return found
         if time.monotonic() >= deadline or _interrupted():
@@ -180,12 +183,15 @@ def _ask(api, args: dict, kwargs: dict) -> str:
     if error:
         return error
     session_id = str(kwargs.get("session_id") or "")
-    profile = kwargs.get("profile") or context.current_profile(api)
-    if not session_id or _session_kind(api, session_id) != "chat":
+    kind = _session_kind(api, session_id) if session_id else "none"
+    if kind != "chat":
+        logger.info("[deskrpg] ask_user unattended: session=%s kind=%s", session_id or "-", kind)
         return json.dumps(UNATTENDED, ensure_ascii=False)
-    session_context = _wait_for_registration(profile, session_id)
-    if session_context is None:
+    registration = _wait_for_registration(session_id)
+    if registration is None:
+        logger.info("[deskrpg] ask_user unattended: session=%s not registered", session_id)
         return json.dumps(UNATTENDED, ensure_ascii=False)
+    profile, session_context = registration
 
     entry = {
         "id": uuid.uuid4().hex, "profile": profile, "session_id": session_id, "context": session_context,

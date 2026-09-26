@@ -230,3 +230,17 @@ def test_registration_adds_the_tool_and_a_prompt_section_naming_it(monkeypatch):
     assert ask_user.TOOL_NAME in text
     assert "tool_search" in text
     assert "2-4" in text and "plain text" in text
+
+
+def test_the_tool_finds_its_session_without_knowing_its_profile(tmp_api):
+    """In the multiplexed gateway the tool thread may not see the profile home, so the running
+    profile reads as something else. The session's registration — made with that profile's own
+    key — decides whose question it is."""
+    ask_user.register_session("noah", "sess-1")
+    thread, out = _run_in_thread(ask_user.make_handler(tmp_api), ARGS, session_id="sess-1", profile="default")
+    [row] = _wait_pending("noah")
+    assert ask_user.pending("default") == []
+    assert ask_user.answer("default", row["id"], "표 중심") == "not_found"
+    assert ask_user.answer("noah", row["id"], "표 중심") == "answered"
+    thread.join(3)
+    assert json.loads(out["value"])["user_response"] == "표 중심"
