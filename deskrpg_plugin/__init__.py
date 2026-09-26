@@ -86,15 +86,28 @@ def _register_card_proposal(ctx, api) -> None:
 
 
 def _register_ask_user(ctx, api) -> None:
-    """대화 중 묻기 도구. 따로 감싼다 — 실패해도 라우트와 다른 도구는 산다.
-    쓰는 기준(선택지로 좁힐 수 있을 때만)은 도구 설명이 모델에게 말한다."""
-    try:
-        from . import ask_user
+    """대화 중 묻기 도구와 프롬프트 절. 각각 따로 감싼다 — 실패해도 라우트와 다른 도구는 산다.
 
-        ctx.register_tool(ask_user.TOOL_NAME, ask_user.TOOLSET, ask_user.TOOL_SCHEMA, ask_user.make_handler(api),
-                          description=ask_user.TOOL_SCHEMA["description"], emoji="❓")
+    프롬프트 절이 반드시 있어야 한다: Hermes 의 Tool Search 가 플러그인 도구를 tool_search 뒤로 미뤄서,
+    도구 설명만으로는 모델이 이 도구가 있는 줄 모른다."""
+    try:
+        from . import ask_user, ask_user_prompt
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[deskrpg] ask_user registration failed: %s", type(exc).__name__)
+        logger.warning("[deskrpg] ask_user module import failed: %s", type(exc).__name__)
+        return
+
+    steps = (
+        ("tool", lambda: ctx.register_tool(
+            ask_user.TOOL_NAME, ask_user.TOOLSET, ask_user.TOOL_SCHEMA, ask_user.make_handler(api),
+            description=ask_user.TOOL_SCHEMA["description"], emoji="❓")),
+        ("prompt", lambda: ctx.register_system_prompt_section(
+            ask_user_prompt.SECTION_ID, ask_user_prompt.SECTION_TEXT, position="after_memory")),
+    )
+    for name, step in steps:
+        try:
+            step()
+        except Exception as exc:  # noqa: BLE001 — 한 등록의 실패가 다른 등록을 막지 않는다
+            logger.warning("[deskrpg] ask_user %s registration failed: %s", name, type(exc).__name__)
 
 
 def _register_approval_blocked(ctx, api) -> None:
