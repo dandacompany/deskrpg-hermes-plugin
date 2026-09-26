@@ -70,6 +70,7 @@ EXPECTED_ROUTES = {
     ("GET", "/deskrpg/kanban/boards", _OWNER),
     ("POST", "/deskrpg/kanban/boards", _OWNER),
     ("PATCH", "/deskrpg/kanban/boards/{slug}", _OWNER),
+    ("PUT", "/deskrpg/kanban/boards/{slug}/default-policy", _OWNER),
     # §5.2 보드 보기
     ("GET", "/deskrpg/kanban/board", _OWNER),
     # §5.3 카드
@@ -165,8 +166,8 @@ EXPECTED_ROUTES = {
 
 
 def test_라우트_테이블이_스펙의_예순여덟_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 125
-    assert len(routes.ROUTES) == 125, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+    assert len(EXPECTED_ROUTES) == 126
+    assert len(routes.ROUTES) == 126, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
@@ -174,11 +175,12 @@ def test_소유자_라우트는_41_개_프로필_라우트는_27_개다():
     by_scope = {}
     for _m, _p, _h, scope in routes.ROUTES:
         by_scope[scope] = by_scope.get(scope, 0) + 1
-    # 소유자: 기존 4 + 기존 프로필 키 발급 1 + 워커 플러그인 1 + 칸반 21 + 보드 첨부 목록 1 + 뷰 묶음 조회 2 + 상태 전이 묶음 조회 1 + 스웜 2 + 사건 1 + 아티팩트 6 + 카드 제안 3 = 43 ·
+    # 소유자: 기존 4 + 기존 프로필 키 발급 1 + 워커 플러그인 1 + 칸반 21 + 보드 첨부 목록 1 + 뷰 묶음 조회 2 + 상태 전이 묶음 조회 1 + 스웜 2 + 사건 1 + 아티팩트 6 + 카드 제안 3
+    #   + board default policy 1 = 45 ·
     # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 + 0.10.0 도구 프로바이더 2
     #   + 0.15.0 스킬 CRUD 11 + 스킬 Hub 6 + curator·관계도 8 + 0.17.0 MCP 21 + 0.18.0 승인 정책 4 + session sources 1
     #   + 대화 중 묻기 3 = 81.
-    assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 1 + 21 + 1 + 2 + 1 + 2 + 2 + 6 + 3,
+    assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 1 + 21 + 1 + 2 + 1 + 2 + 2 + 6 + 3 + 1,
                         routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11 + 6 + 8 + 21 + 4 + 1 + 3}
 
 

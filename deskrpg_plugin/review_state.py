@@ -140,3 +140,39 @@ def review_field(api, conn, task, board: str | None, store=None):
     finally:
         if own:
             store.close()
+
+
+def parse_policy(api, raw, implementer: str | None):
+    """A request's `review_policy` → `(mode, reviewer_profile)`, or a 400 naming what is wrong.
+
+    An AI reviewer must exist and must not be the implementer — a profile cannot approve its own work."""
+    from .common import RequestError
+    from .review_contract import REVIEW_MODES
+
+    if not isinstance(raw, dict):
+        raise RequestError(400, "invalid_field", "review_policy must be an object")
+    if raw.get("version", POLICY_VERSION) != POLICY_VERSION:
+        raise RequestError(400, "invalid_field", "review_policy.version must be 1")
+    mode = raw.get("mode")
+    if mode not in REVIEW_MODES:
+        raise RequestError(400, "invalid_field", f"review_policy.mode must be one of {'|'.join(REVIEW_MODES)}")
+    if mode == "human":
+        return mode, None
+    reviewer = raw.get("reviewer_profile")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        raise RequestError(400, "invalid_field", f"a {mode} review needs review_policy.reviewer_profile")
+    if not api.profile_exists(reviewer):
+        raise RequestError(400, "profile_not_found", reviewer)
+    if reviewer == implementer:
+        raise RequestError(400, "invalid_field", "the reviewer cannot be the card's implementer")
+    return mode, reviewer
+
+
+def require_approval_store(api):
+    """The approval store, or 503 — a policy must never be accepted and then silently dropped."""
+    from .common import RequestError
+
+    store = open_approval_store(api)
+    if store is None:
+        raise RequestError(503, "approval_store_unavailable", "the approval store cannot be opened")
+    return store
