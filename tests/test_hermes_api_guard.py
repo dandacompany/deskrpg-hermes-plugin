@@ -45,7 +45,7 @@ def test_REQUIRED_는_SPEC_의_모든_이름이다():
 
 def test_required_names_are_never_hermes_private():
     # Hermes documents only its public surface as a plugin contract; an underscore name can move in any release,
-    # and a missing SPEC name stops the whole plugin from loading (decision 0017). Internals go to OPTIONAL_SPEC.
+    # and a missing SPEC name stops the whole plugin from loading. Internals go to OPTIONAL_SPEC.
     private = [name for _m, names in _hermes_api.SPEC for src, _dst in _hermes_api._pairs(names) if src.startswith("_")]
     assert private == []
 

@@ -59,8 +59,8 @@ if [ "${1:-}" = "--upstream" ]; then
   printf '\nHermes upstream main: %s\n' "$(git -C "$HERMES_SRC" rev-parse --short=10 HEAD)"
   "$PY" -m pip install -q -e "$HERMES_SRC[mcp]"
   "$PY" -c "import hermes_cli, cron, hermes_state; print('hermes ok')"
-  HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m "integration and not patch_only" tests/integration
-  HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m "not patch_only"
+  HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m "integration and not patch_only and not upstream_known_break" tests/integration
+  HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m "not patch_only and not upstream_known_break"
   exit 0
 fi
 

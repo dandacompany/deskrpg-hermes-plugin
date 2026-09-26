@@ -111,7 +111,7 @@ SPEC = (
             "invalidate_descendants_for_parent_reopen",
             "recompute_ready",
             # Public verbs the upstream dashboard uses — they replace the underscore internals and direct SQL
-            # this list used to require (decision 0017).
+            # this list used to require.
             "unsatisfied_parents",
             "promote_task",
             "edit_task",
