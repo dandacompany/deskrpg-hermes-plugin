@@ -6,7 +6,9 @@ stored here). Only the tool calls that mean "the agent read this" are used:
 - `web_extract`   → each extracted page's `url` and `title` (URLs from the arguments when the result is
                     not readable JSON, e.g. a large result that Hermes replaced with a preview)
 - `browser_navigate` → the final `url` and `title` from the result
-- `read_file`     → the `path` argument, relative to the session's working folder
+- `read_file`     → the `path` argument, relative to the session's working folder. Kanban worker
+                    sessions record no working folder (`cwd` is empty), so a file in a card workspace
+                    (`<kanban home>/boards/<board>/workspaces/<card>/…`) is named `<card>/…`
 - `delegate_task` → each child's `files_read`, and one level into a child session it names
 
 Search results (`web_search`, `search_files`) are candidates, not reads, and are left out.
@@ -97,18 +99,38 @@ def clean_title(raw) -> str | None:
     return text if len(text) <= MAX_TITLE_CHARS else text[: MAX_TITLE_CHARS - 1] + "…"
 
 
-def relative_path(raw, cwd) -> str | None:
-    """`raw` relative to the working folder, or None when it is outside it (or cannot be placed)."""
-    if not isinstance(raw, str) or not raw.strip() or not isinstance(cwd, str) or not cwd.startswith("/"):
+def _inside(full: str, root: str) -> str | None:
+    root = posixpath.normpath(root)
+    if full == root or not full.startswith(root.rstrip("/") + "/"):
+        return None
+    return posixpath.relpath(full, root)
+
+
+def relative_path(raw, cwd, kanban_home=None) -> str | None:
+    """`raw` relative to the working folder — or `<card>/…` inside a kanban card workspace — or None
+    when it is anywhere else (or cannot be placed)."""
+    if not isinstance(raw, str) or not raw.strip():
         return None
     path = raw.strip()
     if path.startswith("~"):
         return None
-    root = posixpath.normpath(cwd)
-    full = posixpath.normpath(path if path.startswith("/") else posixpath.join(root, path))
-    if full == root or not full.startswith(root.rstrip("/") + "/"):
-        return None
-    return posixpath.relpath(full, root)
+    has_cwd = isinstance(cwd, str) and cwd.startswith("/")
+    if not path.startswith("/"):
+        if not has_cwd:
+            return None
+        path = posixpath.join(cwd, path)
+    full = posixpath.normpath(path)
+    if has_cwd:
+        inside = _inside(full, cwd)
+        if inside is not None:
+            return inside
+    if isinstance(kanban_home, str) and kanban_home.startswith("/"):
+        inside = _inside(full, posixpath.join(kanban_home, "boards"))
+        parts = inside.split("/") if inside else []
+        # <board>/workspaces/<card>/<file…>
+        if len(parts) >= 4 and parts[1] == "workspaces":
+            return "/".join(parts[2:])
+    return None
 
 
 def _json(text):
@@ -141,7 +163,8 @@ def _calls(message):
 
 
 class _Collector:
-    def __init__(self):
+    def __init__(self, kanban_home=None):
+        self.kanban_home = kanban_home
         self.sources: list[dict] = []
         self.index: dict[tuple[str, str], dict] = {}
         self.outside = 0
@@ -153,7 +176,7 @@ class _Collector:
             self._add("web", ref, clean_title(title), via, at)
 
     def file(self, path, cwd, via, at):
-        ref = relative_path(path, cwd)
+        ref = relative_path(path, cwd, self.kanban_home)
         if ref is None:
             self.outside += 1
         else:
@@ -223,12 +246,12 @@ def _cwd(row):
     return value if isinstance(value, str) and value else None
 
 
-def read_sources(sdb, session_id) -> dict | None:
+def read_sources(sdb, session_id, kanban_home=None) -> dict | None:
     row = sdb.get_session(session_id)
     if not row:
         return None
     cwd = _cwd(row)
-    out = _Collector()
+    out = _Collector(kanban_home)
     children: list[str] = []
     collect(_messages(sdb, session_id), cwd, out, children=children)
     for child_id in dict.fromkeys(children):
@@ -245,6 +268,13 @@ def read_sources(sdb, session_id) -> dict | None:
     }
 
 
+def _kanban_home(api):
+    try:
+        return str(api.kanban_home())
+    except Exception:  # noqa: BLE001 — without it, card workspace files are only counted
+        return None
+
+
 def get_handler(api):
     @guarded
     async def handler(request):
@@ -258,7 +288,7 @@ def get_handler(api):
                 return None
             sdb = open_session_db(api, home)
             try:
-                return read_sources(sdb, session_id)
+                return read_sources(sdb, session_id, _kanban_home(api))
             finally:
                 sdb.close()
 
