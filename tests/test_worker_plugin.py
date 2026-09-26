@@ -385,3 +385,38 @@ async def test_켜짐_판정은_호출마다_다시_읽는다(aiohttp_client, fa
     resp = await client.post("/deskrpg/worker-plugin", json={"profiles": ["sophie"]})
     assert resp.status == 200
     assert (await (await client.get("/deskrpg/info")).json())["worker_plugin"]["propagation"] == "enabled"
+
+
+# --- Approval hook coverage (`/deskrpg/info` kanban.review_hooks) ---------------------------------------------------
+
+
+async def test_info_reports_profiles_that_would_run_without_the_approval_hooks(
+    aiohttp_client, fake_api, propagation_on
+):
+    _profile(fake_api, "sophie")
+    _profile(fake_api, "oliver")
+    worker_plugin.ensure(fake_api, "oliver")  # linked and enabled
+    client = await _client(aiohttp_client, fake_api)
+
+    body = await (await client.get("/deskrpg/info")).json()
+
+    assert body["kanban"]["review_hooks"] == {"propagation": True, "profiles_without_plugin": ["sophie"]}
+
+
+async def test_info_says_when_propagation_is_off(aiohttp_client, fake_api):
+    _profile(fake_api, "sophie")
+    client = await _client(aiohttp_client, fake_api)
+
+    body = await (await client.get("/deskrpg/info")).json()
+
+    assert body["kanban"]["review_hooks"] == {"propagation": False, "profiles_without_plugin": ["sophie"]}
+
+
+async def test_info_reports_null_when_coverage_cannot_be_told(aiohttp_client, fake_api, monkeypatch):
+    monkeypatch.setattr(worker_plugin, "report", lambda api: (_ for _ in ()).throw(OSError("unreadable")))
+    client = await _client(aiohttp_client, fake_api)
+
+    resp = await client.get("/deskrpg/info")
+
+    assert resp.status == 200
+    assert (await resp.json())["kanban"]["review_hooks"] is None

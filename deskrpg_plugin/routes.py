@@ -501,6 +501,15 @@ def _info_worker_plugin(api):
         return None
 
 
+def _info_review_hooks(api):
+    """Profiles that would run kanban work without the approval hooks. None when it cannot be told."""
+    try:
+        return _worker_plugin.review_hooks_report(api)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[deskrpg] review hooks coverage check failed: %s", type(exc).__name__)
+        return None
+
+
 def _info_dashboard_url(api):
     """Hermes 대시보드 공개 주소, 또는 None.
 
@@ -549,6 +558,7 @@ def _make_info(api):
                     "attachment_max_bytes": min(
                         int(api.MAX_REQUEST_BYTES), int(api.KANBAN_ATTACHMENT_MAX_BYTES)
                     ),
+                    "review_hooks": _info_review_hooks(api),
                 },
             }
         )

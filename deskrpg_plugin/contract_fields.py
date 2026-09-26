@@ -18,7 +18,7 @@ PLUGIN_INFO_REQUIRED = frozenset({
 # `routes` 는 0.1.0 부터 내던 필드라 유지한다. 계약 타입에는 없지만 해가 없다.
 # `worker_plugin` 은 0.11.2 에서 더했다 — 옛 플러그인에는 없으므로 계약상 선택 키다.
 PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | frozenset({"routes", "worker_plugin"})
-PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attachment_max_bytes"})
+PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attachment_max_bytes", "review_hooks"})
 # 항상 있는 것. 스웜처럼 Hermes 빌드에 따라 갈리는 것은 `capabilities()` 가 붙인다.
 # `kanban_views` = 묶음 조회(`GET /kanban/links`, `GET /kanban/runs`). Hermes 의 선택 심볼을
 # 쓰지 않고 보드 DB 만 읽으므로 칸반이 되면 늘 된다 — 그래도 **capability 로 내보낸다.**

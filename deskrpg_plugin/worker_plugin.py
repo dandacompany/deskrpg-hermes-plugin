@@ -162,6 +162,18 @@ def report(api) -> dict:
     return {"missing": missing, "propagation": "enabled" if propagation_enabled(api) else "disabled"}
 
 
+def review_hooks_report(api) -> dict:
+    """Which profiles would run kanban work without the approval hooks — `/deskrpg/info` `kanban.review_hooks`.
+
+    The hooks act inside each worker's own profile home, so a profile where this plugin is not linked and enabled
+    would complete policy cards unchecked. DeskRPG uses the list to refuse assigning a policy card to them."""
+    missing = report(api)["missing"]
+    return {
+        "propagation": propagation_enabled(api),
+        "profiles_without_plugin": sorted(st["profile"] for st in missing),
+    }
+
+
 def _ensure_link(link: Path) -> str:
     state = _link_state(link)
     if state == "linked":

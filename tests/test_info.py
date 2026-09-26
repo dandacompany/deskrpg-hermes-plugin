@@ -50,6 +50,8 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
         "dispatcher_present": True,
         "attachments": True,
         "attachment_max_bytes": 10_000_000,
+        # No profiles yet, propagation off by default.
+        "review_hooks": {"propagation": False, "profiles_without_plugin": []},
     }
     # 기존 필드는 그대로다 — DeskRPG 구버전 파서가 routes 를 읽는다.
     assert "GET /deskrpg/info" in body["routes"]
