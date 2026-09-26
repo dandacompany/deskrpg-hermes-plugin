@@ -79,3 +79,21 @@ def should_release_to_human(tool, result, s):
     if not (isinstance(result, dict) and result.get("ok") and result.get("status") == "review"):
         return False
     return s.policy.mode == "human" or (s.policy.mode == "mixed" and s.reviewer_run)
+
+
+def agent_decision(tool, args, result, s):
+    """The AI reviewer's own decision to record, as `(verdict, summary)`, or None.
+
+    On an agent card the reviewer's completion is the approval; on agent and mixed cards its request for changes
+    is a rejection. A mixed reviewer's `kanban_request_review` is an opinion for the person who decides, not a
+    decision, so it is not recorded. Only successful calls count."""
+    if s.policy is None or not s.reviewer_run:
+        return None
+    if not (isinstance(result, dict) and result.get("ok")):
+        return None
+    args = args if isinstance(args, dict) else {}
+    if tool == "kanban_complete" and s.policy.mode == "agent":
+        return "approve", args.get("summary") or args.get("result")
+    if tool == "kanban_request_changes" and s.policy.mode in ("agent", "mixed"):
+        return "reject", args.get("reason")
+    return None

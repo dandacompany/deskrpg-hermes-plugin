@@ -99,3 +99,20 @@ def test_shell_completion_is_refused_when_the_store_is_unavailable():
     got = decide_pre("terminal", {"command": "hermes kanban complete t"}, s(None, ok=False))
     assert got == {"action": "block", "message": BLOCK_UNAVAILABLE_MESSAGE}
     assert decide_pre("terminal", {"command": "hermes kanban complete t"}, s(None)) is None
+
+
+def test_agent_decisions_are_the_reviewers_completion_and_request_for_changes():
+    from deskrpg_plugin.review_rules import agent_decision
+
+    ok = {"ok": True}
+    rev = lambda p: s(p, caller="rev", reviewer_run=True)  # noqa: E731
+    assert agent_decision("kanban_complete", {"summary": "LGTM"}, ok, rev(A)) == ("approve", "LGTM")
+    assert agent_decision("kanban_request_changes", {"reason": "fix"}, ok, rev(A)) == ("reject", "fix")
+    assert agent_decision("kanban_request_changes", {"reason": "fix"}, ok, rev(M)) == ("reject", "fix")
+    # A mixed verdict handed to a person is an opinion, not a decision.
+    assert agent_decision("kanban_request_review", {"summary": "pass"}, ok, rev(M)) is None
+    assert agent_decision("kanban_complete", {"summary": "x"}, ok, rev(M)) is None
+    # Not a review run, no policy, or a failed call: nothing to record.
+    assert agent_decision("kanban_complete", {"summary": "x"}, ok, s(A)) is None
+    assert agent_decision("kanban_complete", {"summary": "x"}, ok, s(None, reviewer_run=True)) is None
+    assert agent_decision("kanban_complete", {"summary": "x"}, {"error": "no"}, rev(A)) is None

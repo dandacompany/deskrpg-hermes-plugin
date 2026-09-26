@@ -15,9 +15,10 @@ from dataclasses import dataclass
 from .kanban_common import run_claimed_from_review
 from .review_contract import BLOCK_UNAVAILABLE_MESSAGE
 from .review_rules import (
-    TERMINAL_TOOLS, Situation, decide_pre, is_terminal_completion, resolve_policy, should_release_to_human,
+    TERMINAL_TOOLS, Situation, agent_decision, decide_pre, is_terminal_completion, resolve_policy,
+    should_release_to_human,
 )
-from .review_store import get_board_default, get_policy, open_store, sidecar_path
+from .review_store import get_board_default, get_policy, open_store, record_decision, sidecar_path
 
 
 @dataclass(frozen=True)
@@ -131,20 +132,36 @@ def make_pre_hook(api):
     return hook
 
 
+_POST_TOOLS = frozenset({"kanban_request_review", "kanban_complete", "kanban_request_changes"})
+
+
+def _record_agent_decision(api, ctx: WorkerContext, verdict: str, summary) -> None:
+    store = open_store(sidecar_path(api))
+    try:
+        record_decision(store, ctx.task_id, "agent", ctx.profile, verdict, summary)
+    finally:
+        store.close()
+
+
 def make_post_hook(api):
     def hook(tool_name=None, args=None, result=None, **_kwargs):
-        if tool_name != "kanban_request_review":
+        if tool_name not in _POST_TOOLS:
             return None
         ctx = worker_context(api)
         if ctx is None:
             return None
         try:
-            if not should_release_to_human(tool_name, _result_dict(result), situation(api, ctx)):
-                return None
-            with api.connect_closing(board=ctx.board) as conn:
-                api.assign_task(conn, ctx.task_id, None)
+            parsed = _result_dict(result)
+            s = situation(api, ctx)
+            decision = agent_decision(tool_name, args, parsed, s)
+            if decision is not None:
+                # The transition already happened; a failure here only loses the record, which is logged.
+                _record_agent_decision(api, ctx, *decision)
+            if should_release_to_human(tool_name, parsed, s):
+                with api.connect_closing(board=ctx.board) as conn:
+                    api.assign_task(conn, ctx.task_id, None)
         except Exception as exc:  # noqa: BLE001 — the card stays assigned; the next run is sent back by the pre hook
-            logger.warning("[deskrpg] review post hook failed: %s", type(exc).__name__)
+            logger.warning("[deskrpg] review post hook failed for %s: %s", tool_name, type(exc).__name__)
         return None
 
     return hook
