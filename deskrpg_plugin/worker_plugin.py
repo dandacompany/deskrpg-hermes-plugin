@@ -170,8 +170,20 @@ def _ensure_link(link: Path) -> str:
         return "other"
     if link.is_symlink():  # 끊어진 링크 — 다시 건다
         link.unlink()
+    elif os.name == "nt" and (link.is_dir() or not link.exists()):
+        try:
+            link.unlink()
+        except OSError:
+            pass
     link.parent.mkdir(parents=True, exist_ok=True)
-    os.symlink(plugin_root(), link, target_is_directory=True)
+    try:
+        os.symlink(plugin_root(), link, target_is_directory=True)
+    except OSError:
+        if os.name == "nt":
+            import _winapi
+            _winapi.CreateJunction(str(plugin_root()), str(link))
+        else:
+            raise
     return "created"
 
 
