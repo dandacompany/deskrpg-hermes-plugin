@@ -6,6 +6,9 @@
 
 쓰는 쪽은 DeskRPG 의 프로젝트 뷰(목록 트리·실적 타임라인)다. 둘 다 읽기 전용이고 Hermes 의
 `task_links`·`task_runs` 를 그대로 옮긴다 — 판단은 하지 않는다.
+
+A third route, `GET /kanban/events?kind=status`, gives every card's status transitions in a window for
+the rework metric.
 """
 
 import time
@@ -19,7 +22,8 @@ from .common import (
     parse_board_slug,
     run_blocking,
 )
-from .contract_fields import KANBAN_TIMELINE_RUN_KEYS
+from . import events as _events
+from .contract_fields import KANBAN_STATUS_TRANSITION_KEYS, KANBAN_TIMELINE_RUN_KEYS
 from .kanban_common import project
 
 # 한 번에 돌려주는 실행 기록의 상한. 넘으면 **최근 것부터** 남기고 `truncated: true` 를 붙인다.
@@ -133,6 +137,97 @@ def runs_handler(api):
             return {
                 "runs": runs,
                 "board": slug,
+                "window": {"from": from_ts, "to": to_ts},
+                "truncated": truncated,
+            }
+
+        return web.json_response(await run_blocking(work))
+
+    return handler
+
+
+# Status transitions (`GET /kanban/events?kind=status`). Same cap policy as runs: past the cap keep the
+# **most recent** and say `truncated: true`.
+EVENTS_LIMIT_DEFAULT = 1000
+EVENTS_LIMIT_MAX = 5000
+EVENTS_KINDS = ("status",)
+
+# Every status-bearing row up to the window end, walked per card in id order. The rows before the window
+# are what give the first in-window transition its `from` — one query instead of one lookback per row.
+# Tests match this string exactly; change `tests/fakes_kanban.py` with it.
+_STATUS_BEARING = tuple(sorted(_events._STATUS_BEARING_KINDS))
+SQL_STATUS_HISTORY = (
+    "SELECT e.id, e.task_id, e.kind, e.payload, e.created_at, t.tenant AS tenant "
+    "FROM task_events e LEFT JOIN tasks t ON t.id = e.task_id "
+    f"WHERE e.created_at <= ? AND e.kind IN ({','.join('?' * len(_STATUS_BEARING))}) "
+    "ORDER BY e.task_id, e.id"
+)
+
+
+def status_transitions(rows, from_ts: int) -> list:
+    """Status-bearing rows (ordered by task, then id) → transitions that happened at or after `from_ts`.
+
+    `from` follows the same rule as the event stream (`events._status_from`): the last earlier row that
+    names a status. A row whose status can't be told is skipped rather than guessed — the stream falls
+    back to the card's *current* status, which is wrong for history. A row that repeats the previous
+    status is not a transition.
+    """
+    out = []
+    task_id = None
+    last = None
+    for row in rows:
+        if row["task_id"] != task_id:
+            task_id, last = row["task_id"], None
+        to = _events._status_of(row["kind"], _events._payload_of(row["payload"]))
+        if to is None:
+            continue
+        if to != last and row["created_at"] >= from_ts:
+            out.append({
+                "id": row["id"],
+                "task_id": row["task_id"],
+                "from": last,
+                "to": to,
+                "created_at": row["created_at"],
+                "tenant": row["tenant"],
+            })
+        last = to
+    return out
+
+
+def task_events_handler(api):
+    """`GET /deskrpg/kanban/events?board=&from=&to=&kind=status&limit=` — status transitions in a window.
+
+    Feeds the rework metric (review → todo/ready), which needs every card's transitions at once — the
+    card detail carries them one card at a time. Only `kind=status` exists; other kinds are a 400 so a
+    caller never mistakes "unsupported" for "none happened".
+
+    `from`·`to` are epoch seconds, inclusive, default the last 7 days. A transition belongs to the window
+    it **happened** in; its `from` may come from a row before the window.
+    """
+
+    @guarded
+    async def handler(request):
+        slug = _board_from_query(api, request)
+        kind = request.query.get("kind") or "status"
+        if kind not in EVENTS_KINDS:
+            raise RequestError(400, "invalid_query", f"unsupported kind: {kind!r}")
+        now = int(time.time())
+        to_ts = _query_int(request, "to", now)
+        from_ts = _query_int(request, "from", to_ts - RUNS_WINDOW_DEFAULT_SECONDS)
+        if from_ts > to_ts:
+            raise RequestError(400, "invalid_query", f"from is after to: {from_ts} > {to_ts}")
+        limit = _query_int(request, "limit", EVENTS_LIMIT_DEFAULT, minimum=1, maximum=EVENTS_LIMIT_MAX)
+
+        def work():
+            with board_conn(api, slug) as conn:
+                rows = conn.execute(SQL_STATUS_HISTORY, (to_ts, *_STATUS_BEARING)).fetchall()
+            found = sorted(status_transitions(rows, from_ts), key=lambda e: e["id"])
+            truncated = len(found) > limit
+            kept = found[-limit:] if truncated else found
+            return {
+                "events": [project({**e, "board": slug}, KANBAN_STATUS_TRANSITION_KEYS) for e in kept],
+                "board": slug,
+                "kind": kind,
                 "window": {"from": from_ts, "to": to_ts},
                 "truncated": truncated,
             }

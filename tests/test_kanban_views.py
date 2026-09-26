@@ -205,3 +205,160 @@ async def test_카드가_지워진_실행도_사라지지_않는다(aiohttp_clie
 
     assert [r["id"] for r in body["runs"]] == [run_id]
     assert body["runs"][0].get("tenant") is None
+
+
+# ---------------------------------------------------------------------------
+# Status transitions (`GET /kanban/events?kind=status`)
+# ---------------------------------------------------------------------------
+
+
+def _event(fake_api, conn, task_id, kind, payload, *, at):
+    """`_append_event` stamps the current time; window tests need explicit times."""
+    ev = fake_api.kanban._append_event(conn, task_id, kind, payload)
+    ev.created_at = at
+    return ev
+
+
+async def _events(client, query=""):
+    resp = await client.get(f"/deskrpg/kanban/events{B}{query}")
+    return resp.status, await resp.json()
+
+
+async def test_a_review_to_todo_transition_carries_its_from_status(aiohttp_client, fake_api):
+    conn = _conn(fake_api)
+    task = fake_api.kanban.create_task(conn, title="t")
+    _event(fake_api, conn, task, "review_requested", None, at=1000)
+    _event(fake_api, conn, task, "changes_requested", {"status": "todo", "reason": "x"}, at=2000)
+
+    client = await _client(aiohttp_client, fake_api)
+    status, body = await _events(client, "&kind=status&from=1500&to=2500")
+
+    assert status == 200
+    assert [(e["task_id"], e["from"], e["to"], e["created_at"]) for e in body["events"]] == [
+        (task, "review", "todo", 2000)
+    ]
+    assert body["window"] == {"from": 1500, "to": 2500}
+    assert body["kind"] == "status"
+    assert body["truncated"] is False
+
+
+async def test_from_is_taken_from_a_row_before_the_window(aiohttp_client, fake_api):
+    # The card went to review last week and came back today — the window only holds the return.
+    conn = _conn(fake_api)
+    task = fake_api.kanban.create_task(conn, title="t")
+    _event(fake_api, conn, task, "review_requested", None, at=100)
+    _event(fake_api, conn, task, "claimed", {"source_status": "review"}, at=150)
+    _event(fake_api, conn, task, "review_reopened", None, at=5000)
+
+    client = await _client(aiohttp_client, fake_api)
+    _status, body = await _events(client, "&from=4000&to=6000")
+
+    assert [(e["from"], e["to"]) for e in body["events"]] == [("review", "ready")]
+
+
+async def test_transitions_outside_the_window_are_not_returned(aiohttp_client, fake_api):
+    conn = _conn(fake_api)
+    task = fake_api.kanban.create_task(conn, title="t")
+    _event(fake_api, conn, task, "review_requested", None, at=100)
+    _event(fake_api, conn, task, "changes_requested", {"status": "todo"}, at=200)  # before the window
+    _event(fake_api, conn, task, "review_requested", None, at=1000)
+    _event(fake_api, conn, task, "changes_requested", {"status": "ready"}, at=1500)  # inside
+    _event(fake_api, conn, task, "review_requested", None, at=3000)  # after the window
+
+    client = await _client(aiohttp_client, fake_api)
+    _status, body = await _events(client, "&from=1000&to=2000")
+
+    assert [(e["from"], e["to"], e["created_at"]) for e in body["events"]] == [
+        ("todo", "review", 1000),
+        ("review", "ready", 1500),
+    ]
+
+
+async def test_window_bounds_are_inclusive(aiohttp_client, fake_api):
+    conn = _conn(fake_api)
+    task = fake_api.kanban.create_task(conn, title="t")
+    _event(fake_api, conn, task, "status", {"status": "review"}, at=1000)
+    _event(fake_api, conn, task, "status", {"status": "todo"}, at=2000)
+
+    client = await _client(aiohttp_client, fake_api)
+    _status, body = await _events(client, "&from=1000&to=2000")
+
+    assert [e["created_at"] for e in body["events"]] == [1000, 2000]
+
+
+async def test_a_repeated_status_and_an_unknown_status_are_not_transitions(aiohttp_client, fake_api):
+    conn = _conn(fake_api)
+    task = fake_api.kanban.create_task(conn, title="t")
+    _event(fake_api, conn, task, "status", {"status": "review"}, at=1000)
+    _event(fake_api, conn, task, "status", {"status": "review"}, at=1100)  # same status again
+    _event(fake_api, conn, task, "changes_requested", {"reason": "no status"}, at=1200)  # can't tell
+    _event(fake_api, conn, task, "status", {"status": "todo"}, at=1300)
+
+    client = await _client(aiohttp_client, fake_api)
+    _status, body = await _events(client, "&from=1050&to=2000")
+
+    assert [(e["from"], e["to"]) for e in body["events"]] == [("review", "todo")]
+
+
+async def test_each_card_keeps_its_own_previous_status(aiohttp_client, fake_api):
+    conn = _conn(fake_api)
+    a = fake_api.kanban.create_task(conn, title="a")
+    b = fake_api.kanban.create_task(conn, title="b")
+    _event(fake_api, conn, a, "status", {"status": "review"}, at=1000)
+    _event(fake_api, conn, b, "status", {"status": "running"}, at=1100)
+    _event(fake_api, conn, a, "status", {"status": "todo"}, at=1200)
+
+    client = await _client(aiohttp_client, fake_api)
+    _status, body = await _events(client, "&from=1150&to=2000")
+
+    assert [(e["task_id"], e["from"], e["to"]) for e in body["events"]] == [(a, "review", "todo")]
+
+
+async def test_events_carry_board_and_tenant_and_only_contract_keys(aiohttp_client, fake_api):
+    conn = _conn(fake_api)
+    task = fake_api.kanban.create_task(conn, title="t", tenant="research")
+    _event(fake_api, conn, task, "status", {"status": "review"}, at=1000)
+
+    client = await _client(aiohttp_client, fake_api)
+    _status, body = await _events(client, "&from=0&to=2000")
+
+    event = body["events"][0]
+    assert event["board"] == "default"
+    assert event["tenant"] == "research"
+    assert cf.KANBAN_STATUS_TRANSITION_REQUIRED <= set(event) <= cf.KANBAN_STATUS_TRANSITION_KEYS
+
+
+async def test_past_the_limit_the_most_recent_transitions_are_kept(aiohttp_client, fake_api):
+    conn = _conn(fake_api)
+    task = fake_api.kanban.create_task(conn, title="t")
+    for i, status in enumerate(["review", "todo", "review", "ready"]):
+        _event(fake_api, conn, task, "status", {"status": status}, at=1000 + i)
+
+    client = await _client(aiohttp_client, fake_api)
+    _status, body = await _events(client, "&from=0&to=2000&limit=2")
+
+    assert body["truncated"] is True
+    assert [e["created_at"] for e in body["events"]] == [1002, 1003]
+
+
+async def test_other_kinds_and_a_reversed_window_are_rejected(aiohttp_client, fake_api):
+    client = await _client(aiohttp_client, fake_api)
+
+    status, body = await _events(client, "&kind=comment")
+    assert (status, body["error"]) == (400, "invalid_query")
+    status, body = await _events(client, "&from=2000&to=1000")
+    assert (status, body["error"]) == (400, "invalid_query")
+
+
+async def test_events_on_a_missing_board_are_404(aiohttp_client, fake_api):
+    client = await _client(aiohttp_client, fake_api)
+    resp = await client.get("/deskrpg/kanban/events?board=ghost")
+    assert resp.status == 404
+    assert (await resp.json())["error"] == "board_not_found"
+
+
+async def test_the_default_window_is_the_last_seven_days(aiohttp_client, fake_api):
+    client = await _client(aiohttp_client, fake_api)
+    _status, body = await _events(client)
+    window = body["window"]
+    assert window["to"] - window["from"] == RUNS_WINDOW_DEFAULT_SECONDS

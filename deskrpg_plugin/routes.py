@@ -178,6 +178,7 @@ ROUTES = [
     # 같은 경로의 GET 은 POST/DELETE 와 충돌하지 않는다. 읽기를 위에 모아 둔다).
     ("GET", "/deskrpg/kanban/links", "kanban_list_links", Scope.DEFAULT),
     ("GET", "/deskrpg/kanban/runs", "kanban_list_runs", Scope.DEFAULT),
+    ("GET", "/deskrpg/kanban/events", "kanban_list_task_events", Scope.DEFAULT),
     ("POST", "/deskrpg/kanban/links", "kanban_add_link", Scope.DEFAULT),
     ("DELETE", "/deskrpg/kanban/links", "kanban_remove_link", Scope.DEFAULT),
     ("POST", "/deskrpg/kanban/dispatch", "kanban_dispatch", Scope.DEFAULT),
@@ -319,6 +320,7 @@ _HANDLERS = {
     "kanban_delete_attachment": lambda api: _kanban_files.delete_attachment_handler(api),
     "kanban_list_links": lambda api: _kanban_views.links_handler(api),
     "kanban_list_runs": lambda api: _kanban_views.runs_handler(api),
+    "kanban_list_task_events": lambda api: _kanban_views.task_events_handler(api),
     "kanban_add_link": lambda api: _kanban_board.link_handler(api, "add"),
     "kanban_remove_link": lambda api: _kanban_board.link_handler(api, "remove"),
     "kanban_dispatch": lambda api: _kanban_ops.dispatch_handler(api),

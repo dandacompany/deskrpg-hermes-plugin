@@ -36,7 +36,7 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
     assert body["version"] == routes.PLUGIN_VERSION
     # fake_api 는 스웜·피커 심볼을 모두 갖춘 빌드를 흉내 낸다 — capability 에 다 붙는다.
     assert body["capabilities"] == [
-        "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin", "kanban_attachment_list", "board_archive", "swarm",
+        "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin", "kanban_attachment_list", "board_archive", "kanban_task_events", "swarm",
         "profile_toolsets", "profile_skills", "profile_skill_admin", "profile_mcp_admin", "profile_approval_policy", "profile_clone", "profile_provider_keys",
         "profile_oauth", "profile_tool_providers", "initial_status",
     ]

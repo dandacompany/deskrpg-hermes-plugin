@@ -28,6 +28,7 @@ def make_app(api, *, authorized: bool = True) -> web.Application:
         ("POST", "/deskrpg/kanban/tasks/{task_id}/comments", kb.add_comment_handler(api)),
         ("GET", "/deskrpg/kanban/links", kv.links_handler(api)),
         ("GET", "/deskrpg/kanban/runs", kv.runs_handler(api)),
+        ("GET", "/deskrpg/kanban/events", kv.task_events_handler(api)),
         ("POST", "/deskrpg/kanban/links", kb.link_handler(api, "add")),
         ("DELETE", "/deskrpg/kanban/links", kb.link_handler(api, "remove")),
     ]
