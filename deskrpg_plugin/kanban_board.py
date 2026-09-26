@@ -345,9 +345,13 @@ def _parse_create_body(body: dict) -> dict:
 
 
 def _dispatcher_missing(api) -> bool:
-    """`_check_dispatcher_presence` 가 (False, …) 를 주면 True. 프로브 실패는 fail-open(경고 없음)."""
+    """`_check_dispatcher_presence` 가 (False, …) 를 주면 True. 프로브 실패는 fail-open(경고 없음).
+    The probe is an optional Hermes internal; without it there is no warning."""
+    probe = getattr(api, "_check_dispatcher_presence", None)
+    if probe is None:
+        return False
     try:
-        present, _message = api._check_dispatcher_presence(api.get_hermes_home())
+        present, _message = probe(api.get_hermes_home())
         return not bool(present)
     except Exception:
         return False
@@ -391,54 +395,78 @@ _PATCH_SUPPORTED = frozenset({
 })
 
 
+def _guard_status(api, conn, task_id: str, new_status: str) -> None:
+    """The policy core's mutation guard (patched Hermes only), for moves made with a public verb that does not
+    run it itself."""
+    if has_review_policy(api):
+        with api.write_txn(conn):
+            api.guard_task_mutation(conn, task_id, {"status": new_status})
+
+
 def _set_status_direct(api, conn, task_id: str, new_status: str) -> bool:
-    """구조화된 동사가 없는 이동(todo↔ready, running→ready …)의 직접 상태 쓰기 + `status` 사건.
-    running 에서 나오면 run 을 'reclaimed' 로 닫고 워커는 **커밋 뒤에** 죽인다."""
+    """A drag into ready/todo/triage that no structured verb covers.
+
+    Public Hermes verbs first, as the upstream dashboard does where one exists:
+    - leaving `running` → `reclaim_task`: it releases the claim, closes the run as reclaimed, stops the worker, and
+      returns the card to the column the run was claimed from (`review` for a reviewer run, else `ready`);
+    - `todo` → `ready` → `promote_task`, which refuses while a parent is unfinished.
+    What is left (ready→todo, →triage, reopening a done/archived card) has no public verb — the upstream dashboard
+    writes those directly too — so it goes through `_write_status`."""
+    current = api.get_task(conn, task_id)
+    if current is None:
+        return False
+    if current.status == "running":
+        _guard_status(api, conn, task_id, new_status)
+        if not api.reclaim_task(conn, task_id, reason=f"status changed to {new_status} (deskrpg)"):
+            return False
+        current = api.get_task(conn, task_id)
+        # A reviewer run goes back to review even when the drag asked for ready — the review is not done.
+        if current is None or current.status == new_status or (new_status == "ready" and current.status == "review"):
+            return current is not None
+    if current.status == "todo" and new_status == "ready":
+        _guard_status(api, conn, task_id, new_status)
+        ok, _reason = api.promote_task(conn, task_id, actor=DEFAULT_ACTOR)
+        return bool(ok)
+    return _write_status(api, conn, task_id, new_status)
+
+
+def _terminate(api, terminations) -> None:
+    """Stop the workers Hermes handed back. Hermes returns `(pid, claim_lock, started_at)`; `started_at` lets it
+    refuse to signal a recycled pid."""
+    for pid, claim_lock, *rest in terminations:
+        api._terminate_reclaimed_worker(pid, claim_lock, **({"started_at": rest[0]} if rest else {}))
+
+
+def _write_status(api, conn, task_id: str, new_status: str) -> bool:
+    """Direct status write + `status` event for a card that is not running (the cases with no public verb)."""
     terminations = []
-    effective = new_status
     with api.write_txn(conn):
         if has_review_policy(api):
             api.guard_task_mutation(conn, task_id, {"status": new_status})
-        prev = conn.execute(
-            "SELECT status, current_run_id, worker_pid, claim_lock FROM tasks WHERE id = ?", (task_id,)
-        ).fetchone()
-        if prev is None:
+        prev = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        # A card the dispatcher claimed in the meantime is its to move now.
+        if prev is None or prev["status"] == "running":
             return False
-        if prev["status"] == "running" and new_status == "ready":
-            if api._retry_status_for_run(conn, task_id, prev["current_run_id"]) == "review":
-                effective = "review" if api._parents_satisfied(conn, task_id) else "todo"
         # 부모가 전부 끝나기 전에는 ready 로 올리지 않는다 — 디스패처가 상류가 덜 된 자식을 띄운다.
-        if effective == "ready" and not api._parents_satisfied(conn, task_id):
+        if new_status == "ready" and api.unsatisfied_parents(conn, task_id):
             return False
-        was_running = prev["status"] == "running"
-        reopening_parent = prev["status"] in ("done", "archived") and effective not in ("done", "archived")
-        cur = conn.execute(
-            "UPDATE tasks SET status = ?, "
-            "claim_lock = CASE WHEN ? = 'running' THEN claim_lock ELSE NULL END, "
-            "claim_expires = CASE WHEN ? = 'running' THEN claim_expires ELSE NULL END, "
-            "worker_pid = CASE WHEN ? = 'running' THEN worker_pid ELSE NULL END "
-            "WHERE id = ?",
-            (effective,) * 4 + (task_id,),
-        )
+        reopening_parent = prev["status"] in ("done", "archived") and new_status not in ("done", "archived")
+        cur = conn.execute("UPDATE tasks SET status = ? WHERE id = ?", (new_status, task_id))
         if cur.rowcount != 1:
             return False
-        run_id = None
-        if was_running and effective != "running" and prev["current_run_id"]:
-            run_id = api._end_run(
-                conn, task_id, outcome="reclaimed", status="reclaimed",
-                summary=f"status changed to {effective} (deskrpg/direct)",
-            )
-            terminations.append((prev["worker_pid"], prev["claim_lock"]))
         conn.execute(
-            "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) VALUES (?, ?, 'status', ?, ?)",
-            (task_id, run_id, json.dumps({"status": effective, "requested_status": new_status}), int(time.time())),
+            "INSERT INTO task_events (task_id, run_id, kind, payload, created_at) VALUES (?, NULL, 'status', ?, ?)",
+            (task_id, json.dumps({"status": new_status, "requested_status": new_status}), int(time.time())),
         )
         if reopening_parent:
             result = api.invalidate_descendants_for_parent_reopen(conn, task_id, author=DEFAULT_ACTOR)
             terminations.extend(result["terminations"])
-    for pid, claim_lock in terminations:
-        api._terminate_reclaimed_worker(pid, claim_lock)
-    if effective in ("done", "ready", "review"):
+            if terminations and getattr(api, "_terminate_reclaimed_worker", None) is None:
+                # Raising rolls the whole move back: reopening without stopping the running descendants would
+                # leave workers on cards that are no longer theirs.
+                raise RuntimeError("this Hermes build cannot stop the running descendants of a reopened card")
+    _terminate(api, terminations)
+    if new_status in ("done", "ready", "review"):
         api.recompute_ready(conn)
     return True
 
@@ -501,37 +529,21 @@ def _patch_status(api, conn, task_id: str, status: str, assignee) -> None:
 
 
 def _patch_title_body(api, conn, task_id: str, title, body, board: str) -> None:
-    """한 번의 UPDATE + `edited` 사건, 커밋 뒤 관찰자 통지(필드 이름만)."""
-    sets, vals, changed = [], [], []
-    if title is not _MISSING:
-        sets.append("title = ?")
-        vals.append(title.strip())
-        changed.append("title")
-    if body is not _MISSING:
-        sets.append("body = ?")
-        vals.append(body)
-        changed.append("body")
-    with api.write_txn(conn):
-        if has_review_policy(api):
-            api.guard_task_mutation(conn, task_id, changed)
-        conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", (*vals, task_id))
-        conn.execute(
-            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'edited', NULL, ?)",
-            (task_id, int(time.time())),
-        )
-    api.notify_task_updated(conn, task_id, changed, board=board)
+    """Hermes' public `edit_task`: one UPDATE, an `edited` event naming the fields, then the post-commit observer."""
+    ok = api.edit_task(
+        conn, task_id,
+        title=None if title is _MISSING else title.strip(),
+        body=None if body is _MISSING else body,
+        board=board,
+    )
+    if not ok:
+        raise RequestError(404, "task_not_found", f"task {task_id} not found")
 
 
 def _set_priority(api, conn, task_id: str, priority: int, board: str) -> None:
-    with api.write_txn(conn):
-        if has_review_policy(api):
-            api.guard_task_mutation(conn, task_id, {"priority": priority})
-        conn.execute("UPDATE tasks SET priority = ? WHERE id = ?", (int(priority), task_id))
-        conn.execute(
-            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'reprioritized', ?, ?)",
-            (task_id, json.dumps({"priority": int(priority)}), int(time.time())),
-        )
-    api.notify_task_updated(conn, task_id, ("priority",), board=board)
+    """Hermes' public `edit_task` — the same call the upstream dashboard makes (`reprioritized` event)."""
+    if not api.edit_task(conn, task_id, priority=int(priority), board=board):
+        raise RequestError(404, "task_not_found", f"task {task_id} not found")
 
 
 def _parse_patch_body(body: dict) -> dict:

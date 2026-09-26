@@ -6,10 +6,9 @@ Hermes 가 전이를 거절하는 방식이 세 가지(False 반환 · RuntimeEr
 **어느 함수를 어떤 순서로 부를지**만 정한다.
 
 검토자 run 판정: Hermes 는 `review` 열에서 claim 한 run 의 `claimed` 사건 payload 에
-`source_status="review"` 를 남기고, `_retry_status_for_run(conn, task_id, run_id)` 가 그것을 읽어
-`"review"` 를 돌려준다(crash/timeout/reclaim 이 검토자 run 을 구현자 run 으로 둔갑시키지 않도록
-Hermes 자신이 쓰는 단일 판정). 우리도 그 함수를 쓴다 — run 의 `metadata` 나 profile 로
-추측하지 않는다.
+`source_status="review"` 를 남긴다(crash/timeout/reclaim 이 검토자 run 을 구현자 run 으로 둔갑시키지
+않도록 Hermes 자신이 쓰는 단일 판정). 우리는 그 사건을 공개 `list_events` 로 읽는다
+(`kanban_common.run_claimed_from_review`) — run 의 `metadata` 나 profile 로 추측하지 않는다.
 
 specify/decompose 는 보조 LLM 을 부른다. 타임아웃은 Hermes 인자(`timeout=`)로 넘기고 밖에서
 끊지 않는다 — 밖에서 끊으면 Hermes 는 계속 돌고 우리만 손을 놓는 꼴이 된다. 두 함수는
@@ -33,7 +32,7 @@ from .common import (
 from .contract_fields import KANBAN_TASK_ACTIONS, has_review_policy
 # 카드 조회(404)·KanbanTaskFull 직렬화·행위자 판정은 `kanban_common` 의 것을 쓴다 —
 # 상세·생성·수정 응답과 동작 응답의 모양이 갈라지면 안 된다.
-from .kanban_common import actor_from_request, open_board, require_task, task_payload
+from .kanban_common import actor_from_request, open_board, require_task, run_claimed_from_review, task_payload
 
 # 보조 LLM 호출의 타임아웃(초). Hermes 기본(120/180)과 같고, 운영에서 조정할 수 있게 상수로 둔다.
 SPECIFY_TIMEOUT_SECONDS = 120
@@ -60,7 +59,7 @@ def _active_run(api, conn, task_id: str):
 
 
 def _is_reviewer_run(api, conn, task_id: str, run) -> bool:
-    return api._retry_status_for_run(conn, task_id, run.id) == "review"
+    return run_claimed_from_review(api, conn, task_id, run.id)
 
 
 # ---------------------------------------------------------------------------

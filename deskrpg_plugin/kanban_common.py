@@ -199,3 +199,17 @@ __all__ = [
     "task_payload",
     "attachment_payload",
 ]
+
+
+def run_claimed_from_review(api, conn, task_id: str, run_id) -> bool:
+    """Whether run `run_id` was claimed from the `review` column — a reviewer run, not an implementation run.
+
+    Hermes records it on the run's `claimed` event (`source_status="review"`) and reads it back with its private
+    `_retry_status_for_run`. This reads the same event through the public `list_events`, so a reviewer run is never
+    mistaken for an implementation run and no Hermes internal is needed."""
+    if run_id is None:
+        return False
+    for event in reversed(api.list_events(conn, task_id)):
+        if event.kind == "claimed" and event.run_id == run_id:
+            return (event.payload or {}).get("source_status") == "review"
+    return False

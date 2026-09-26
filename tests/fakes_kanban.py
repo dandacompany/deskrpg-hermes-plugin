@@ -186,6 +186,7 @@ class FakeKanbanDb:
         self._seq = 0
         self.notified = []  # notify_task_updated 호출 기록 (task_id, changed_fields, board)
         self.calls: dict[str, list[dict]] = {}  # 전이 함수 이름 -> 호출 kwargs 목록
+        self.signals = []  # (pid, lock) the fake "sent" to a worker on reclaim — nothing is killed
         self.create_board(DEFAULT_BOARD, name="Default")
 
     # ---- 내부 ---------------------------------------------------------------
@@ -681,7 +682,62 @@ class FakeKanbanDb:
         )
 
     def reclaim_task(self, conn, task_id: str, *, reason=None, signal_fn=None):
-        raise NotImplementedError("reclaim_task 는 뒤 태스크가 채운다")
+        """Hermes: False when not running. Signals the worker, closes the run as reclaimed and returns the card to
+        the column the run was claimed from (`review` for a reviewer run, else `ready`)."""
+        self._record("reclaim_task", task_id=task_id, reason=reason)
+        task = self.get_task(conn, task_id)
+        if task is None or (task.status != "running" and task.claim_lock is None):
+            return False
+        self.signals.append((task.worker_pid, task.claim_lock))
+        retry_status = self._retry_status_for_run(conn, task_id)
+        self._end_run(conn, task_id, outcome="reclaimed", status="reclaimed", error=f"manual_reclaim: {reason}")
+        task.status = retry_status
+        task.claim_lock = task.claim_expires = task.worker_pid = None
+        task.consecutive_failures = 0
+        self._append_event(conn, task_id, "reclaimed", {"manual": True, "reason": reason, "retry_status": retry_status})
+        return True
+
+    def unsatisfied_parents(self, conn, task_id: str) -> list:
+        """Hermes: `(parent_id, status)` of every direct parent not done/archived, in id order."""
+        parents = (self._require_task(conn, p) for p in self.parent_ids(conn, task_id))
+        return sorted((p.id, p.status) for p in parents if p.status not in _SATISFIED)
+
+    def promote_task(self, conn, task_id: str, *, actor: str, reason=None, dry_run: bool = False):
+        """Hermes: todo/blocked → ready with a `promoted_manual` event; refused while a parent is unfinished."""
+        self._record("promote_task", task_id=task_id, actor=actor)
+        task = self.get_task(conn, task_id)
+        if task is None:
+            return False, f"task {task_id} not found"
+        if task.status not in ("todo", "blocked"):
+            return False, f"task {task_id} is {task.status!r}; promote only applies to 'todo' or 'blocked'"
+        blockers = self.unsatisfied_parents(conn, task_id)
+        if blockers:
+            return False, "unsatisfied parent dependencies: " + ", ".join(pid for pid, _s in blockers)
+        if dry_run:
+            return True, None
+        task.status = "ready"
+        self._append_event(conn, task_id, "promoted_manual", {"actor": actor, "reason": reason})
+        return True, None
+
+    def edit_task(self, conn, task_id: str, *, title=None, body=None, priority=None, result=None, summary=None,
+                  metadata=None, board=None) -> bool:
+        """Hermes: one UPDATE, `reprioritized` for a priority and `edited` naming the other fields, then the
+        post-commit observer."""
+        self._record("edit_task", task_id=task_id, title=title, body=body, priority=priority)
+        task = self.get_task(conn, task_id)
+        changed = [f for f, v in (("title", title), ("body", body), ("priority", priority)) if v is not None]
+        if task is None or not changed:
+            return False
+        for field, value in (("title", title), ("body", body), ("priority", priority)):
+            if value is not None:
+                setattr(task, field, value)
+        if priority is not None:
+            self._append_event(conn, task_id, "reprioritized", {"priority": priority})
+        others = [f for f in changed if f != "priority"]
+        if others:
+            self._append_event(conn, task_id, "edited", {"fields": others})
+        self.notify_task_updated(conn, task_id, changed, board=board)
+        return True
 
     def reassign_task(self, conn, task_id: str, profile: Optional[str], *, reclaim_first: bool = False, reason=None):
         raise NotImplementedError("reassign_task 는 뒤 태스크가 채운다")
@@ -701,7 +757,7 @@ class FakeKanbanDb:
                 continue
             run_id = None
             if task.status == "running":
-                terminations.append((task.worker_pid, task.claim_lock))
+                terminations.append((task.worker_pid, task.claim_lock, None))  # Hermes: (pid, lock, started_at)
                 run_id = self._end_run(conn, tid, outcome="reclaimed", status="reclaimed", summary=f"ancestor {task_id} reopened")
             task.status = "todo"
             task.claim_lock = task.claim_expires = task.worker_pid = None
@@ -884,8 +940,8 @@ KANBAN_DB_SYMBOLS = (
     "attachments_root", "read_worker_log", "latest_summaries", "latest_summary", "task_age",
     "task_graph_contexts", "notify_task_updated", "known_assignees", "write_txn", "VALID_STATUSES",
     "KANBAN_ATTACHMENT_MAX_BYTES", "kanban_home", "kanban_db_path", "board_dir", "AttachmentTooLarge",
-    "_retry_status_for_run", "_parents_satisfied", "_end_run", "invalidate_descendants_for_parent_reopen",
-    "recompute_ready",
+    "invalidate_descendants_for_parent_reopen", "recompute_ready", "unsatisfied_parents", "promote_task",
+    "edit_task",
 )
 
 

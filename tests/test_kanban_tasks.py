@@ -378,29 +378,61 @@ async def test_상태_review_에서_다른_상태는_reopen_review_task(aiohttp_
     assert _events(fake_api, t)[-1] == "review_reopened"
 
 
-async def test_상태_직접_전이는_status_사건을_남기고_running_에서_나오면_run_을_닫는다(aiohttp_client, fake_api):
+async def test_status_moves_use_public_hermes_verbs_where_one_exists(aiohttp_client, fake_api):
     db = fake_api.kanban
     conn = _conn(fake_api)
-    killed = []
-    fake_api._terminate_reclaimed_worker = lambda pid, lock: killed.append((pid, lock))
     client = await _client(aiohttp_client, fake_api)
 
+    # todo → ready is Hermes' `promote_task` (a `promoted_manual` event), not a raw status write.
     t = db.create_task(conn, title="todo->ready")
     db.get_task(conn, t).status = "todo"
     status, body = await _patch_status(client, t, "ready")
     assert status == 200 and body["task"]["status"] == "ready"
-    ev = db.list_events(conn, t)[-1]
-    assert ev.kind == "status" and ev.payload == {"status": "ready", "requested_status": "ready"}
+    assert db.calls["promote_task"][-1]["task_id"] == t
+    assert db.list_events(conn, t)[-1].kind == "promoted_manual"
 
+    # Leaving running is Hermes' `reclaim_task`: it closes the run and stops the worker; the rest of the move
+    # (ready → todo) is a plain status write.
     t = db.create_task(conn, title="running->todo")
     run_id = db.start_run(conn, t, profile="sophie", worker_pid=4242, claim_lock="lock-1")
     status, body = await _patch_status(client, t, "todo")
     assert status == 200 and body["task"]["status"] == "todo"
     run = db.get_run(conn, run_id)
     assert run.status == "reclaimed" and run.ended_at is not None
-    assert killed == [(4242, "lock-1")]
+    assert db.signals == [(4242, "lock-1")]
     assert body["task"]["worker_pid"] is None
-    assert db.list_events(conn, t)[-1].payload["status"] == "todo"
+    assert db.list_events(conn, t)[-1].payload == {"status": "todo", "requested_status": "todo"}
+
+
+async def test_reopening_a_done_parent_stops_running_descendants_with_their_start_time(aiohttp_client, fake_api):
+    db = fake_api.kanban
+    conn = _conn(fake_api)
+    killed = []
+    fake_api._terminate_reclaimed_worker = lambda pid, lock, **kw: killed.append((pid, lock, kw))
+    client = await _client(aiohttp_client, fake_api)
+    parent = db.create_task(conn, title="p")
+    child = db.create_task(conn, title="c", parents=[parent])
+    db.get_task(conn, parent).status = "done"
+    db.start_run(conn, child, profile="sophie", worker_pid=77, claim_lock="lock-c")
+    status, body = await _patch_status(client, parent, "todo")
+    assert status == 200 and body["task"]["status"] == "todo"
+    # Hermes hands back (pid, lock, started_at) — all three reach the terminator.
+    assert killed == [(77, "lock-c", {"started_at": None})]
+
+
+async def test_reopening_with_running_descendants_is_refused_without_a_terminator(aiohttp_client, fake_api):
+    # `_terminate_reclaimed_worker` is an optional Hermes internal. Without it the move is refused (and Hermes'
+    # write transaction rolls it back) rather than leaving workers on cards that are no longer theirs.
+    db = fake_api.kanban
+    conn = _conn(fake_api)
+    fake_api._terminate_reclaimed_worker = None
+    client = await _client(aiohttp_client, fake_api)
+    parent = db.create_task(conn, title="p")
+    child = db.create_task(conn, title="c", parents=[parent])
+    db.get_task(conn, parent).status = "done"
+    db.start_run(conn, child, profile="sophie", worker_pid=77, claim_lock="lock-c")
+    status, body = await _patch_status(client, parent, "todo")
+    assert status == 409 and body["error"] == "invalid_transition"
 
 
 async def test_상태_running_에서_ready_는_검토_run_이면_review_로_간다(aiohttp_client, fake_api):

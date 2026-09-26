@@ -43,6 +43,20 @@ def test_REQUIRED_는_SPEC_의_모든_이름이다():
     assert len(_hermes_api.REQUIRED) == len(set(_hermes_api.REQUIRED))
 
 
+def test_required_names_are_never_hermes_private():
+    # Hermes documents only its public surface as a plugin contract; an underscore name can move in any release,
+    # and a missing SPEC name stops the whole plugin from loading (decision 0017). Internals go to OPTIONAL_SPEC.
+    private = [name for _m, names in _hermes_api.SPEC for src, _dst in _hermes_api._pairs(names) if src.startswith("_")]
+    assert private == []
+
+
+def test_optional_internal_probes_can_be_missing(monkeypatch):
+    _install(monkeypatch, missing=("_check_dispatcher_presence", "_terminate_reclaimed_worker"))
+    api = _hermes_api.load()
+    assert api._check_dispatcher_presence is None
+    assert api._terminate_reclaimed_worker is None
+
+
 def test_심볼이_하나라도_없으면_던진다(monkeypatch):
     # 반쯤 동작하는 상태를 만들지 않는다 — 목록은 되는데 삭제만 조용히 실패하는 식.
     _install(monkeypatch, missing=("delete_profile",))
@@ -55,7 +69,7 @@ def test_심볼이_하나라도_없으면_던진다(monkeypatch):
     "create_task",          # hermes_cli.kanban_db
     "connect_closing",      # hermes_cli.kanban_db_connect
     "dispatch_once",        # hermes_cli.kanban_db_dispatch
-    "_check_dispatcher_presence",  # hermes_cli.kanban
+    "edit_task",            # hermes_cli.kanban_db (public verb that replaced direct SQL)
     "get_timezone",         # hermes_time
     "list_jobs",            # cron.jobs
     "CATALOG",              # cron.blueprint_catalog
