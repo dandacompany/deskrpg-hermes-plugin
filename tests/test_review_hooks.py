@@ -276,3 +276,43 @@ def test_capability_needs_the_public_kanban_verbs(monkeypatch, shared):
     monkeypatch.setattr(review_hooks, "HOOKS_REGISTERED", True)
     bare = _types.SimpleNamespace(kanban_home=lambda: "/nonexistent")
     assert contract_fields.has_review_hooks(bare) is False
+
+
+def test_agent_reviewer_completion_is_recorded_as_an_agent_approval(fake_api, shared, card):
+    task_id, claim = card
+    rs.put_policy(shared, rs.Policy(task_id, "agent", "impl", "rev", "card"))
+    claim("rev", from_review=True)
+    make_post_hook(fake_api)(tool_name="kanban_complete", args={"summary": "LGTM"}, result='{"ok": true}')
+    got = [(d["actor_kind"], d["actor"], d["verdict"], d["summary"]) for d in rs.decisions(shared, task_id)]
+    assert got == [("agent", "rev", "approve", "LGTM")]
+
+
+def test_agent_request_for_changes_is_recorded_as_a_rejection(fake_api, shared, card):
+    task_id, claim = card
+    rs.put_policy(shared, rs.Policy(task_id, "mixed", "impl", "rev", "card"))
+    claim("rev", from_review=True)
+    post = make_post_hook(fake_api)
+    post(tool_name="kanban_request_changes", args={"reason": "fix the header"}, result='{"ok": true}')
+    post(tool_name="kanban_request_review", args={"summary": "pass"}, result=REVIEW_DONE)  # an opinion, not recorded
+    got = [(d["actor_kind"], d["verdict"], d["summary"]) for d in rs.decisions(shared, task_id)]
+    assert got == [("agent", "reject", "fix the header")]
+
+
+def test_implementer_completion_and_failed_calls_are_not_recorded(fake_api, shared, card):
+    task_id, claim = card
+    rs.put_policy(shared, rs.Policy(task_id, "agent", "impl", "rev", "card"))
+    claim("impl")
+    make_post_hook(fake_api)(tool_name="kanban_complete", args={"summary": "x"}, result='{"ok": true}')
+    claim("rev", from_review=True)
+    make_post_hook(fake_api)(tool_name="kanban_complete", args={"summary": "x"}, result='{"error": "live claim"}')
+    assert rs.decisions(shared, task_id) == []
+
+
+def test_a_record_that_cannot_be_written_is_only_logged(fake_api, shared, card, monkeypatch, caplog):
+    task_id, claim = card
+    rs.put_policy(shared, rs.Policy(task_id, "agent", "impl", "rev", "card"))
+    claim("rev", from_review=True)
+    monkeypatch.setattr("deskrpg_plugin.review_hooks.record_decision",
+                        lambda *a, **k: (_ for _ in ()).throw(OSError("locked")))
+    assert make_post_hook(fake_api)(tool_name="kanban_complete", args={"summary": "x"}, result='{"ok": true}') is None
+    assert "review post hook failed" in caplog.text

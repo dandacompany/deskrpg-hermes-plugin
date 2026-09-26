@@ -175,11 +175,21 @@ async def test_agent_review_approves_or_sends_back(client, api, crew):
     await _board(client)
     ok = await _create(client, policy={"version": 1, "mode": "agent", "reviewer_profile": "rev"})
     assert (await _drive(client, api, ok, lambda t: t.status == "done")).status == "done"
+    # The AI reviewer's completion is its approval, recorded as such — not a completion outside DeskRPG.
+    review = await _review(client, ok)
+    assert review["approval"]["actor_kind"] == "agent"
+    assert review.get("reason") != "external_done"
 
     no = await _create(client, policy={"version": 1, "mode": "agent", "reviewer_profile": "rev_no"}, title="no")
     task = await _drive(client, api, no, lambda t: "changes_requested" in _events(api, no))
     assert "changes_requested" in _events(api, no)
     assert task.assignee == "impl" and task.status != "done"
+    store = review_store.open_store(review_store.sidecar_path(api))
+    try:
+        verdicts = [(d["actor_kind"], d["actor"], d["verdict"]) for d in review_store.decisions(store, no)]
+    finally:
+        store.close()
+    assert ("agent", "rev_no", "reject") in verdicts
 
 
 @upstream_only
