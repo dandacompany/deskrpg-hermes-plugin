@@ -10,6 +10,7 @@ A person is being waited on exactly when the card is in `review` with nobody ass
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from .kanban_common import run_claimed_from_review
 
@@ -17,6 +18,10 @@ log = logging.getLogger(__name__)
 
 POLICY_VERSION = 1
 POLICY_REVISION = 1
+
+
+def _iso(epoch: float) -> str:
+    return datetime.fromtimestamp(epoch, tz=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def submission_id(run_id) -> str:
@@ -96,7 +101,9 @@ def review_state(api, conn, store, task, board: str | None = None) -> dict | Non
             "submission_id": submission["id"] if submission else "",
             "policy_revision": POLICY_REVISION,
             "hash": "",
+            # `approved_at` is epoch seconds, as the patched core reports it; `at` is the same instant in ISO 8601.
             "approved_at": int(approval_row["at"]),
+            "at": _iso(approval_row["at"]),
             "request_id": None,
         }
     return {

@@ -1,5 +1,7 @@
 """The card's `review` field built from the approval store — one test per row of the state table."""
 
+from datetime import datetime
+
 import pytest
 
 from deskrpg_plugin.review_state import review_state, submission_id
@@ -89,6 +91,11 @@ def test_done_with_an_approval_is_approved_with_who_approved(fake_api, kanban, s
     assert got["state"] == "approved" and got["reason"] is None
     assert got["approval"]["actor_kind"] == "human" and got["approval"]["actor_id"] == "deskrpg:u1"
     assert got["approval"]["submission_id"] == submission_id(run)
+    # Epoch seconds as the patched core reports it, and the same instant in ISO 8601.
+    at = rs.decisions(store, task.id)[-1]["at"]
+    assert got["approval"]["approved_at"] == int(at)
+    assert datetime.fromisoformat(got["approval"]["at"].replace("Z", "+00:00")).timestamp() == pytest.approx(at)
+    assert got["approval"]["at"].endswith("Z")
 
 
 def test_done_without_a_recorded_approval_is_an_external_completion(fake_api, kanban, store):

@@ -115,8 +115,6 @@ async def test_board_default_validation_and_removal(client, fake_api, store, hoo
     assert bad.status == 400
     unknown = await client.put("/deskrpg/kanban/boards/default/default-policy", json={"mode": "human", "x": 1})
     assert unknown.status == 400
-    if not hasattr(rs, "clear_board_default"):
-        pytest.skip("the approval store cannot remove a board default in this build")
     await client.put("/deskrpg/kanban/boards/default/default-policy", json={"mode": "human", "reviewer_profile": None})
     cleared = await client.put("/deskrpg/kanban/boards/default/default-policy", json={"mode": None})
     assert cleared.status == 200 and (await cleared.json())["default"] is None
@@ -126,3 +124,24 @@ async def test_board_default_validation_and_removal(client, fake_api, store, hoo
 async def test_board_default_without_hooks_is_refused(client, fake_api, store):
     resp = await client.put("/deskrpg/kanban/boards/default/default-policy", json={"mode": "human", "reviewer_profile": None})
     assert resp.status == 428
+
+
+async def test_reading_the_board_default(client, fake_api, store, hooks_on):
+    # The exact shape DeskRPG (and its fake plugin server) relies on: `default` is null until one is set.
+    empty = await client.get("/deskrpg/kanban/boards/default/default-policy")
+    assert empty.status == 200 and await empty.json() == {"board": "default", "default": None}
+    await client.put("/deskrpg/kanban/boards/default/default-policy",
+                     json={"mode": "agent", "reviewer_profile": "rev"})
+    got = await client.get("/deskrpg/kanban/boards/default/default-policy")
+    assert await got.json() == {"board": "default",
+                                "default": {"version": 1, "mode": "agent", "reviewer_profile": "rev"}}
+
+
+async def test_reading_the_board_default_without_hooks_is_refused(client, fake_api, store):
+    resp = await client.get("/deskrpg/kanban/boards/default/default-policy")
+    assert resp.status == 428 and (await resp.json())["error"] == "review_policy_required"
+
+
+async def test_reading_an_unknown_board_default_is_404(client, fake_api, store, hooks_on):
+    resp = await client.get("/deskrpg/kanban/boards/deskrpg-nope/default-policy")
+    assert resp.status == 404

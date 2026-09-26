@@ -197,6 +197,39 @@ def create_board_handler(api):
     return handler
 
 
+def _default_payload(slug, current) -> dict:
+    return {"board": slug, "default": None if current is None else {
+        "version": 1, "mode": current[0], "reviewer_profile": current[1]}}
+
+
+def _require_hooks(api) -> None:
+    # Like a card policy on a Hermes that cannot enforce one: refused, never stored and ignored.
+    if not hooks_enabled(api):
+        raise RequestError(428, "review_policy_required", "Hermes approval policy support is required")
+
+
+def get_default_policy_handler(api):
+    """`GET /deskrpg/kanban/boards/{slug}/default-policy` — the board's default policy, or `default: null`."""
+
+    @guarded
+    async def handler(request):
+        from . import review_store
+
+        slug = _board_from_path(api, request)
+        _require_hooks(api)
+
+        def work():
+            store = require_approval_store(api)
+            try:
+                return _default_payload(slug, review_store.get_board_default(store, slug))
+            finally:
+                store.close()
+
+        return web.json_response(await run_blocking(work))
+
+    return handler
+
+
 def default_policy_handler(api):
     """`PUT /deskrpg/kanban/boards/{slug}/default-policy` — the policy a card on this board gets when it has none
     of its own. `{"mode": null}` removes it. The key is the board slug, which is also what a kanban worker sees
@@ -207,9 +240,7 @@ def default_policy_handler(api):
         from . import review_store
 
         slug = _board_from_path(api, request)
-        if not hooks_enabled(api):
-            # Like a card policy on a Hermes that cannot enforce one: refused, never stored and ignored.
-            raise RequestError(428, "review_policy_required", "Hermes approval policy support is required")
+        _require_hooks(api)
         body = await read_json_object(request)
         _reject_unknown_keys(body, ("mode", "reviewer_profile"))
         clearing = body.get("mode") is None
@@ -219,17 +250,13 @@ def default_policy_handler(api):
             store = require_approval_store(api)
             try:
                 if clearing:
-                    clear = getattr(review_store, "clear_board_default", None)
-                    if clear is None:
-                        raise RequestError(400, "invalid_field", "this plugin build cannot remove a board default yet")
-                    clear(store, slug)
+                    review_store.clear_board_default(store, slug)
                 else:
                     review_store.put_board_default(store, slug, *policy)
                 current = review_store.get_board_default(store, slug)
             finally:
                 store.close()
-            return {"board": slug, "default": None if current is None else {
-                "version": 1, "mode": current[0], "reviewer_profile": current[1]}}
+            return _default_payload(slug, current)
 
         return web.json_response(await run_blocking(work))
 
