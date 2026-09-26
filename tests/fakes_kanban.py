@@ -620,6 +620,12 @@ class FakeKanbanDb:
         if task is None or task.status != "review":
             return False
         task.status = self._gated_ready(conn, task_id)
+        # Hermes restores the implementer recorded on the latest `review_requested` event.
+        latest = next((e for e in reversed(self._state(conn).events)
+                       if e.task_id == task_id and e.kind == "review_requested"), None)
+        implementer = (latest.payload or {}).get("implementer") if latest else None
+        if implementer:
+            task.assignee = implementer
         self._append_event(conn, task_id, "review_reopened", {"status": task.status})
         return True
 

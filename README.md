@@ -80,6 +80,21 @@ Stop the gateway and back up its kanban databases before replacing core code. In
 
 New cards default to human approval. An explicitly delegated task can be approved by a different AI profile. Approvals bind to the submitted result; generic status changes cannot substitute for approval. AI reviewers must inspect the actual submitted text or artifacts; this does not guarantee the semantic quality of an AI review. Existing cards are not converted automatically.
 
+### Moving an install off the patched core
+
+The plugin can enforce approvals on upstream Hermes with its own hooks and approval store. To move an install that
+ran the patched core, carry its policies over first — the command reads the patch's table and never writes it:
+
+```bash
+# on the gateway host, in the Hermes environment, once per DeskRPG board
+python -m deskrpg_plugin.review_migrate --board <board-slug> --dry-run   # report only
+python -m deskrpg_plugin.review_migrate --board <board-slug>
+```
+
+It copies each card's policy and recorded approvals into the approval store and leaves a card that was waiting for
+a person in `review` with nobody assigned. Cards it cannot move are listed under `skipped`. Then stop the gateway,
+back up the kanban databases, reinstall upstream Hermes in the same environment, and restart the gateway.
+
 ## Upstream Hermes main
 
 CI also runs the integration suite on upstream Hermes `main` (job `integration-upstream`, non-blocking; locally

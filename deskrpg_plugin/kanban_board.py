@@ -49,6 +49,13 @@ from .contract_fields import (
     UPDATE_TASK_KEYS,
     WORKSPACE_KINDS,
 )
+from .review_state import (
+    hooks_enabled,
+    open_approval_store,
+    parse_policy,
+    require_approval_store,
+    review_field,
+)
 from .kanban_common import (
     ACTOR_MAX_CHARS,
     CARD_SUMMARY_PREVIEW_CHARS,
@@ -190,6 +197,45 @@ def create_board_handler(api):
     return handler
 
 
+def default_policy_handler(api):
+    """`PUT /deskrpg/kanban/boards/{slug}/default-policy` — the policy a card on this board gets when it has none
+    of its own. `{"mode": null}` removes it. The key is the board slug, which is also what a kanban worker sees
+    as its board, so the hooks find the same default."""
+
+    @guarded
+    async def handler(request):
+        from . import review_store
+
+        slug = _board_from_path(api, request)
+        if not hooks_enabled(api):
+            # Like a card policy on a Hermes that cannot enforce one: refused, never stored and ignored.
+            raise RequestError(428, "review_policy_required", "Hermes approval policy support is required")
+        body = await read_json_object(request)
+        _reject_unknown_keys(body, ("mode", "reviewer_profile"))
+        clearing = body.get("mode") is None
+        policy = None if clearing else parse_policy(api, {"version": 1, **body}, None)
+
+        def work():
+            store = require_approval_store(api)
+            try:
+                if clearing:
+                    clear = getattr(review_store, "clear_board_default", None)
+                    if clear is None:
+                        raise RequestError(400, "invalid_field", "this plugin build cannot remove a board default yet")
+                    clear(store, slug)
+                else:
+                    review_store.put_board_default(store, slug, *policy)
+                current = review_store.get_board_default(store, slug)
+            finally:
+                store.close()
+            return {"board": slug, "default": None if current is None else {
+                "version": 1, "mode": current[0], "reviewer_profile": current[1]}}
+
+        return web.json_response(await run_blocking(work))
+
+    return handler
+
+
 def patch_board_handler(api):
     @guarded
     async def handler(request):
@@ -246,12 +292,15 @@ def get_board_handler(api):
                 columns = {c: [] for c in BOARD_COLUMNS}
                 if include_archived:
                     columns["archived"] = []
+                store = open_approval_store(api) if hooks_enabled(api) else None
                 for t in tasks:
                     full = summary_map.get(t.id)
                     d = task_dict(t, latest_summary=(full[:CARD_SUMMARY_PREVIEW_CHARS] if full else None))
-                    d["review"] = api.get_review_state(conn, t.id) if has_review_policy(api) else None
+                    d["review"] = review_field(api, conn, t, slug, store=store)
                     decorate(d, t.id, link_counts, comment_counts, progress, diagnostics.get(t.id))
                     columns[t.status if t.status in columns else "todo"].append(project(d, KANBAN_TASK_KEYS))
+                if store is not None:
+                    store.close()
                 tenants = [
                     r["tenant"]
                     for r in conn.execute("SELECT DISTINCT tenant FROM tasks WHERE tenant IS NOT NULL ORDER BY tenant")
@@ -288,7 +337,7 @@ def get_task_handler(api):
 
         def work():
             with board_conn(api, slug) as conn:
-                task = task_payload(api, conn, task_id)
+                task = task_payload(api, conn, task_id, board=slug)
                 return {
                     "task": task,
                     "comments": [project(asdict(c), KANBAN_COMMENT_KEYS) for c in api.list_comments(conn, task_id)],
@@ -357,23 +406,51 @@ def _dispatcher_missing(api) -> bool:
         return False
 
 
+def _store_card_policy(api, conn, store, task_id, policy, implementer, *, replayable: bool) -> None:
+    """Store a new card's policy; if that fails, delete the card rather than leave it without its policy.
+
+    A request with an idempotency key may have returned an existing card, which is never deleted here."""
+    from . import review_store
+
+    mode, reviewer = policy
+    try:
+        review_store.put_policy(store, review_store.Policy(task_id, mode, implementer, reviewer, "card"))
+    except Exception:
+        if not replayable:
+            api.delete_task(conn, task_id)
+        raise RequestError(503, "approval_store_unavailable", "the card's approval policy could not be stored") from None
+
+
 def create_task_handler(api):
     @guarded
     async def handler(request):
         slug = _board_from_query(api, request)
         body = await read_json_object(request)
         fields = _parse_create_body(body)
+        hooks_policy = None
         if "review_policy" in fields and not has_review_policy(api):
-            raise RequestError(428, "review_policy_required", "Hermes approval policy support is required")
+            if not hooks_enabled(api):
+                raise RequestError(428, "review_policy_required", "Hermes approval policy support is required")
+            # Upstream Hermes: create the card with the public `create_task`, then store its policy. A worker that
+            # claims it in between is covered by the board default.
+            hooks_policy = parse_policy(api, fields.pop("review_policy"), fields.get("assignee"))
         created_by = actor_from_request(request)
 
         def work():
-            with board_conn(api, slug) as conn:
-                try:
-                    task_id = api.create_task(conn, created_by=created_by, board=slug, **fields)
-                except ValueError as exc:
-                    raise RequestError(400, "invalid_task", str(exc))
-                out = {"task": task_payload(api, conn, task_id)}
+            store = require_approval_store(api) if hooks_policy else None
+            try:
+                with board_conn(api, slug) as conn:
+                    try:
+                        task_id = api.create_task(conn, created_by=created_by, board=slug, **fields)
+                    except ValueError as exc:
+                        raise RequestError(400, "invalid_task", str(exc))
+                    if hooks_policy:
+                        _store_card_policy(api, conn, store, task_id, hooks_policy, fields.get("assignee"),
+                                           replayable=bool(fields.get("idempotency_key")))
+                    out = {"task": task_payload(api, conn, task_id, board=slug)}
+            finally:
+                if store is not None:
+                    store.close()
             if _dispatcher_missing(api):
                 out["warning"] = "dispatcher_missing"
             log_event("task.create", board=slug, task_id=task_id, title_len=len(fields["title"]))
@@ -581,6 +658,24 @@ def _parse_patch_body(body: dict) -> dict:
     return out
 
 
+def _patch_hooks_policy(api, task, raw_policy, expected_revision) -> None:
+    """Change a card's policy in the approval store (upstream Hermes). The revision is always 1 there."""
+    from . import review_store
+    from .review_state import POLICY_REVISION
+
+    if expected_revision is not None and expected_revision != POLICY_REVISION:
+        raise RequestError(409, "invalid_transition", "the card's policy changed — reload it before editing")
+    store = require_approval_store(api)
+    try:
+        current = review_store.get_policy(store, task.id)
+        implementer = (current.implementer if current else None) or task.assignee
+        mode, reviewer = parse_policy(api, raw_policy, implementer)
+        review_store.put_policy(store, review_store.Policy(task.id, mode, implementer, reviewer,
+                                                           current.source if current else "card"))
+    finally:
+        store.close()
+
+
 def patch_task_handler(api):
     @guarded
     async def handler(request):
@@ -590,10 +685,12 @@ def patch_task_handler(api):
 
         def work():
             with board_conn(api, slug) as conn:
-                require_task(api, conn, task_id)
+                task = require_task(api, conn, task_id)
                 supported = has_review_policy(api)
                 if "review_policy" in p and not supported:
-                    raise RequestError(428, "review_policy_required")
+                    if not hooks_enabled(api):
+                        raise RequestError(428, "review_policy_required")
+                    _patch_hooks_policy(api, task, p.pop("review_policy"), p.pop("expected_revision", None))
                 review = api.get_review_state(conn, task_id) if supported else None
                 if review is not None or "review_policy" in p:
                     if "status" in p and len(p) > 1:
@@ -607,7 +704,7 @@ def patch_task_handler(api):
                                 policy=p.get("review_policy"), expected_revision=p.get("expected_revision"))
                     except (ValueError, RuntimeError) as exc:
                         raise RequestError(409, "invalid_transition", str(exc))
-                    return {"task": task_payload(api, conn, task_id)}
+                    return {"task": task_payload(api, conn, task_id, board=slug)}
                 status = p.get("status")
                 assignee = p.get("assignee", _MISSING)
                 # 담당자+review 를 함께 주면 request_review 가 구현자를 먼저 기록해야 하므로 assign 을 미룬다.
@@ -640,7 +737,7 @@ def patch_task_handler(api):
                 if "title" in p or "body" in p:
                     _patch_title_body(api, conn, task_id, p.get("title", _MISSING), p.get("body", _MISSING), slug)
                 log_event("task.patch", board=slug, task_id=task_id, fields=sorted(p))
-                return {"task": task_payload(api, conn, task_id)}
+                return {"task": task_payload(api, conn, task_id, board=slug)}
 
         return web.json_response(await run_blocking(work))
 

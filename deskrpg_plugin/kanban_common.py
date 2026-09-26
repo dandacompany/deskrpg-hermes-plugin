@@ -153,15 +153,16 @@ def decorate(d: dict, task_id: str, link_counts, comment_counts, progress, diagn
         d["diagnostics"] = diagnostics
 
 
-def task_payload(api, conn, task_id: str) -> dict:
-    """KanbanTaskFull — 상세·생성·수정·동작 응답이 전부 이것을 쓴다. latest_summary 는 전문. 없으면 404."""
+def task_payload(api, conn, task_id: str, board: str | None = None) -> dict:
+    """KanbanTaskFull — 상세·생성·수정·동작 응답이 전부 이것을 쓴다. latest_summary 는 전문. 없으면 404.
+    `board` lets the approval store resolve a board-default policy for the `review` field."""
     task = require_task(api, conn, task_id)
     d = task_dict(task, latest_summary=api.latest_summary(conn, task_id))
     link_counts, comment_counts, progress = rollups(conn)
     diagnostics = compute_diagnostics(api, conn, task_ids=[task_id]).get(task_id)
-    from .contract_fields import has_review_policy
+    from .review_state import review_field
 
-    d["review"] = api.get_review_state(conn, task_id) if has_review_policy(api) else None
+    d["review"] = review_field(api, conn, task, board)
     decorate(d, task_id, link_counts, comment_counts, progress, diagnostics)
     return project(d, KANBAN_TASK_FULL_KEYS)
 

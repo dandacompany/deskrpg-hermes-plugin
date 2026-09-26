@@ -20,6 +20,7 @@ from .common import (
 )
 from .contract_fields import has_review_policy, has_swarm_policy_symbols
 from .kanban_common import actor_from_request, open_board, require_task
+from .review_state import hooks_enabled, parse_policy, require_approval_store
 from .kanban_swarm_policy import SwarmPolicyConflict, create_swarm_with_policy
 
 
@@ -61,7 +62,7 @@ def _worker_policy(api, body):
     unapproved, so it is refused — 428 when this build cannot attach them (`swarm_review_policy` missing), 400
     when the caller did not send one."""
     if not has_review_policy(api):
-        if "review_policy" in body:
+        if "review_policy" in body and not hooks_enabled(api):
             raise RequestError(428, "review_policy_required", "Hermes approval policy support is required")
         return None
     if not has_swarm_policy_symbols(api):
@@ -72,6 +73,39 @@ def _worker_policy(api, body):
     if not isinstance(policy, dict):
         raise RequestError(400, "invalid_field", "review_policy is required for a swarm on an approval-policy board")
     return policy
+
+
+def _hooks_worker_policy(api, raw, workers):
+    """The workers' policy on upstream Hermes. An AI reviewer cannot be one of the workers it would review."""
+    mode, reviewer = parse_policy(api, raw, None)
+    if reviewer is not None and reviewer in {w.profile for w in workers}:
+        raise RequestError(400, "invalid_swarm", "the reviewer cannot be one of the swarm's workers")
+    return mode, reviewer
+
+
+def _create_swarm_with_hooks_policy(api, conn, policy, **swarm):
+    """Hermes' public `create_swarm`, then a policy per result card in the approval store.
+
+    Workers get the requested policy; the verifier and the synthesizer are always reviewed by a person; the root is
+    a structure card and gets none. Hermes makes the workers ready as it creates the swarm, so a worker may start
+    before its row is written — the board default covers that window. Replaying an idempotency key rewrites the
+    same rows."""
+    from . import review_store
+
+    mode, reviewer = policy
+    store = require_approval_store(api)
+    try:
+        created = api.create_swarm(conn, **swarm)
+        ids = created.as_dict()
+        for task_id in ids["worker_ids"]:
+            implementer = api.get_task(conn, task_id).assignee
+            review_store.put_policy(store, review_store.Policy(task_id, mode, implementer, reviewer, "swarm"))
+        for task_id, profile in ((ids["verifier_id"], swarm["verifier_assignee"]),
+                                 (ids["synthesizer_id"], swarm["synthesizer_assignee"])):
+            review_store.put_policy(store, review_store.Policy(task_id, "human", profile, None, "swarm"))
+        return created
+    finally:
+        store.close()
 
 
 def create_swarm_handler(api):
@@ -88,8 +122,18 @@ def create_swarm_handler(api):
         idempotency_key = require_str(body, "idempotency_key", required=False, default=None)
         created_by = actor_from_request(request)
         worker_policy = _worker_policy(api, body)
+        hooks_policy = None
+        if worker_policy is None and "review_policy" in body:
+            hooks_policy = _hooks_worker_policy(api, body["review_policy"], workers)
 
         def work():
+            if hooks_policy is not None:
+                with open_board(api, slug) as conn:
+                    return _create_swarm_with_hooks_policy(
+                        api, conn, hooks_policy, goal=goal, workers=workers, verifier_assignee=verifier,
+                        synthesizer_assignee=synthesizer, tenant=tenant, created_by=created_by, priority=priority,
+                        idempotency_key=idempotency_key,
+                    )
             with open_board(api, slug) as conn:
                 if worker_policy is None:
                     # A Hermes without approval policies: nothing to bypass, Hermes builds the swarm as before.
