@@ -432,3 +432,22 @@ async def test_칸반_프로필_목록은_default_와_만든_프로필을_준다
     names = {p["name"]: p for p in body["profiles"]}
     assert set(names) == {"default", profile}
     assert names["default"]["is_default"] is True and names[profile]["is_default"] is False
+
+
+async def test_status_transitions_report_a_request_changes_as_review_to_ready(client):
+    # The rework metric counts review → todo/ready. On real Hermes the `from` of that return has to be
+    # recovered from the earlier review row; the fake DB alone can't prove the SQL runs on the real schema.
+    await _board(client)
+    task = await _task(client)
+    await _patch(client, task["id"], status="review")
+    status, _body = await _action(client, task["id"], "request-changes", {"comment": "again"})
+    assert status == 200
+
+    resp = await client.get(f"/deskrpg/kanban/events{B}&kind=status&from=0")
+    assert resp.status == 200, await resp.text()
+    body = await resp.json()
+    mine = [(e["from"], e["to"]) for e in body["events"] if e["task_id"] == task["id"]]
+    assert ("ready", "review") in mine
+    assert mine[-1] == ("review", "ready")
+    for event in body["events"]:
+        assert cf.KANBAN_STATUS_TRANSITION_REQUIRED <= set(event) <= cf.KANBAN_STATUS_TRANSITION_KEYS

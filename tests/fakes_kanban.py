@@ -28,6 +28,8 @@ import types
 from dataclasses import asdict, dataclass, field
 from typing import Iterable, Optional
 
+from deskrpg_plugin import kanban_views
+
 DEFAULT_BOARD = "default"
 VALID_STATUSES = frozenset(
     {"triage", "todo", "scheduled", "ready", "running", "blocked", "review", "done", "archived"}
@@ -266,6 +268,21 @@ class FakeKanbanDb:
                 picked.append(row)
             picked.sort(key=lambda r: (r["started_at"], r["id"]), reverse=True)
             return _FakeCursor(picked[: int(limit)])
+        # Status history for `GET /kanban/events`. Mirrors the real window/kind filter and ordering exactly —
+        # a more lenient fake would let a window-boundary bug pass.
+        if sql == kanban_views.SQL_STATUS_HISTORY:
+            to_ts, *kinds = params
+            picked = []
+            for ev in state.events:
+                if ev.created_at > to_ts or ev.kind not in kinds:
+                    continue
+                task = state.tasks.get(ev.task_id)
+                picked.append({
+                    "id": ev.id, "task_id": ev.task_id, "kind": ev.kind, "payload": ev.payload,
+                    "created_at": ev.created_at, "tenant": task.tenant if task else None,
+                })
+            picked.sort(key=lambda r: (r["task_id"], r["id"]))
+            return _FakeCursor(picked)
         if sql == "SELECT task_id, COUNT(*) AS n FROM task_comments GROUP BY task_id":
             counts: dict[str, int] = {}
             for c in state.comments:

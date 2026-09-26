@@ -31,9 +31,11 @@ PLUGIN_INFO_KANBAN_KEYS = frozenset({"dispatcher_present", "attachments", "attac
 # `kanban_attachment_list` = `GET /deskrpg/kanban/attachments?board=` (보드 전체 첨부, 결과물 갤러리용).
 # `board_archive` = `PATCH /deskrpg/kanban/boards/{slug}` 의 `archived` 키와 목록의 `?include_archived=`.
 # 옛 플러그인은 그 키에 `unknown_field` 400 을 내므로 호출부는 이 값으로 판정한다.
+# `kanban_task_events` = `GET /deskrpg/kanban/events?board=&from=&to=&kind=status` (status transitions in a window,
+# for the rework metric). Reads only the board DB, so it is always available when kanban is.
 CAPABILITIES = (
     "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin",
-    "kanban_attachment_list", "board_archive",
+    "kanban_attachment_list", "board_archive", "kanban_task_events",
 )
 
 
@@ -274,6 +276,12 @@ KANBAN_RUN_KEYS = KANBAN_RUN_REQUIRED | KANBAN_RUN_OPTIONAL
 KANBAN_TIMELINE_RUN_REQUIRED = KANBAN_RUN_REQUIRED | frozenset({"task_id", "board"})
 KANBAN_TIMELINE_RUN_OPTIONAL = KANBAN_RUN_OPTIONAL | frozenset({"task_title", "tenant", "step_key"})
 KANBAN_TIMELINE_RUN_KEYS = KANBAN_TIMELINE_RUN_REQUIRED | KANBAN_TIMELINE_RUN_OPTIONAL
+
+# Status transitions for the rework metric (`GET /kanban/events?kind=status`). `from` is null when no earlier
+# status is known; `tenant` is null for a card that has since been deleted.
+KANBAN_STATUS_TRANSITION_REQUIRED = frozenset({"id", "task_id", "board", "from", "to", "created_at"})
+KANBAN_STATUS_TRANSITION_OPTIONAL = frozenset({"tenant"})
+KANBAN_STATUS_TRANSITION_KEYS = KANBAN_STATUS_TRANSITION_REQUIRED | KANBAN_STATUS_TRANSITION_OPTIONAL
 
 KANBAN_COMMENT_REQUIRED = frozenset({"id", "author", "body", "created_at"})
 KANBAN_COMMENT_KEYS = KANBAN_COMMENT_REQUIRED
