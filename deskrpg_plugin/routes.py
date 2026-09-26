@@ -38,6 +38,7 @@ from . import mcp_probe as _mcp_probe
 from . import mcp_oauth_routes as _mcp_oauth
 from . import mcp_catalog_routes as _mcp_catalog
 from . import approval_policy as _approval_policy
+from . import session_sources as _session_sources
 from .artifacts_tool import artifact_upload_max_bytes as _artifact_upload_max_bytes
 
 
@@ -142,6 +143,8 @@ ROUTES = [
     ("PUT", "/p/{profile}/deskrpg/approval-policy", "approval_policy_put", Scope.PROFILE),
     ("POST", "/p/{profile}/deskrpg/approval-policy/allowlist", "approval_allowlist_add", Scope.PROFILE),
     ("DELETE", "/p/{profile}/deskrpg/approval-policy/allowlist", "approval_allowlist_delete", Scope.PROFILE),
+    # What a session read (web pages, files) — derived from the profile's state.db, nothing stored.
+    ("GET", "/p/{profile}/deskrpg/sessions/{session_id}/sources", "session_sources", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets/{toolset}/providers", "get_tool_providers", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/toolsets/{toolset}/provider", "put_tool_provider", Scope.PROFILE),
     ("PUT", "/p/{profile}/deskrpg/provider-keys/{provider}", "put_provider_key", Scope.PROFILE),
@@ -293,6 +296,7 @@ _HANDLERS = {
     "mcp_reload": lambda api: _mcp_catalog.reload_handler(api),
     "mcp_export": lambda api: _mcp_catalog.export_handler(api),
     "approval_policy_get": lambda api: _approval_policy.get_handler(api),
+    "session_sources": lambda api: _session_sources.get_handler(api),
     "approval_policy_put": lambda api: _approval_policy.put_handler(api),
     "approval_allowlist_add": lambda api: _approval_policy.allowlist_add_handler(api),
     "approval_allowlist_delete": lambda api: _approval_policy.allowlist_delete_handler(api),
