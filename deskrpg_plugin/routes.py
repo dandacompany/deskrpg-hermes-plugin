@@ -478,8 +478,11 @@ def _info_dispatcher_present(api) -> bool:
     Hermes 의 `_check_dispatcher_presence` 자체도 fail-open 이다 — 경고를 놓치는 쪽이
     멀쩡한 게이트웨이에 "디스패처 없음" 을 외치는 쪽보다 낫다.
     """
+    probe = getattr(api, "_check_dispatcher_presence", None)
+    if probe is None:  # optional Hermes internal — without it, assume present (fail-open)
+        return True
     try:
-        present, _message = api._check_dispatcher_presence(api.get_hermes_home())
+        present, _message = probe(api.get_hermes_home())
         return bool(present)
     except Exception:
         return True

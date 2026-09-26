@@ -108,18 +108,19 @@ SPEC = (
             "kanban_db_path",
             "board_dir",
             "AttachmentTooLarge",
-            "_retry_status_for_run",
-            "_parents_satisfied",
-            "_end_run",
             "invalidate_descendants_for_parent_reopen",
             "recompute_ready",
+            # Public verbs the upstream dashboard uses — they replace the underscore internals and direct SQL
+            # this list used to require.
+            "unsatisfied_parents",
+            "promote_task",
+            "edit_task",
         ),
     ),
-    ("hermes_cli.kanban_db_dispatch", ("dispatch_once", "_terminate_reclaimed_worker")),
+    ("hermes_cli.kanban_db_dispatch", ("dispatch_once",)),
     ("hermes_cli.kanban_specify", ("specify_task",)),
     ("hermes_cli.kanban_decompose", ("decompose_task",)),
     ("hermes_cli.kanban_diagnostics", ("compute_task_diagnostics", "config_from_runtime_config")),
-    ("hermes_cli.kanban", ("_check_dispatcher_presence",)),
     ("hermes_cli.config", ("load_config", "save_config")),
     ("hermes_constants", ("set_hermes_home_override", "reset_hermes_home_override", "get_hermes_home")),
     ("hermes_time", ("get_timezone",)),
@@ -157,6 +158,11 @@ SPEC = (
 # 않으므로 반쯤 되는 상태가 생기지 않는다. 반대로 이걸 `SPEC` 에 넣으면 `kanban_swarm`
 # 이 없는 구버전 Hermes 에서 칸반·크론까지 전부 죽는다.
 OPTIONAL_SPEC = (
+    # Hermes internals with no public replacement. Upstream can move them at any time, so the plugin must still
+    # load without them: a missing probe drops only the "dispatcher missing" warning, and a missing terminator
+    # only refuses reopening a finished card whose descendants are running (kanban_board._write_status).
+    ("hermes_cli.kanban", ("_check_dispatcher_presence",)),
+    ("hermes_cli.kanban_db_dispatch", ("_terminate_reclaimed_worker",)),
     ("hermes_cli.kanban_review_policy", ("API_VERSION", "get_review_state", "approve_task",
         "update_review_policy", "guard_task_mutation", "patch_review_task")),
     # 계획 B — 디바이스 코드 로그인. 대시보드 라우터 모듈이라 fastapi 가 없는 빌드에서는 통째로 빠진다.

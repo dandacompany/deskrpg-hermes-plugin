@@ -80,6 +80,16 @@ Stop the gateway and back up its kanban databases before replacing core code. In
 
 New cards default to human approval. An explicitly delegated task can be approved by a different AI profile. Approvals bind to the submitted result; generic status changes cannot substitute for approval. AI reviewers must inspect the actual submitted text or artifacts; this does not guarantee the semantic quality of an AI review. Existing cards are not converted automatically.
 
+## Upstream Hermes main
+
+CI also runs the integration suite on upstream Hermes `main` (job `integration-upstream`, non-blocking; locally
+`scripts/ci-local.sh --upstream`). Tests that need the approval-policy core patch are excluded there. Known
+upstream breaks, excluded from that job with the `upstream_known_break` marker:
+
+- **NPC skill management** (`profile_skill_admin`): Hermes main removed
+  `hermes_cli.web_server_gateway._dashboard_spawn_executable`, which skill jobs use to start `hermes` commands.
+  On such a build the capability is not announced and the skill routes are not registered.
+
 ## Release
 
 0.25.0 creates swarms on boards with review policies (capability `swarm_review_policy`): workers get the requested policy and verifiers and synthesizers get human review, attached in the same write transaction that creates the swarm so no card becomes ready without its policy; the root stays a policy-free structure card. The capability is announced only when the Hermes internals it relies on are present with the expected signatures; otherwise a policy swarm answers `428 swarm_review_policy_unsupported`.

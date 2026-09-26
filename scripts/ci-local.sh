@@ -8,6 +8,7 @@
 #
 #   scripts/ci-local.sh              # 단위 스위트만 (빠름, 몇 초)
 #   scripts/ci-local.sh --full       # CI 와 동일 (Hermes 를 받아 editable 설치)
+#   scripts/ci-local.sh --upstream   # the integration-upstream job: upstream Hermes main on Python 3.14
 #
 # 작업 산출물은 전부 gitignore 된 .ci-venv/ · .ci-hermes/ 에 들어가고 재사용된다.
 set -euo pipefail
@@ -39,6 +40,29 @@ REF="$(tr -d '[:space:]' < "$ROOT/.hermes-ref")"
 REPO="$(tr -d '[:space:]' < "$ROOT/.hermes-repo")"
 FULL=0
 [ "${1:-}" = "--full" ] && FULL=1
+
+# Upstream main mode — mirrors the `integration-upstream` CI job. Separate venv and checkout so the pinned
+# run keeps its own. Upstream main installs its core dependencies only on Python 3.14.
+if [ "${1:-}" = "--upstream" ]; then
+  VENV="$ROOT/.ci-venv-upstream"
+  HERMES_SRC="$ROOT/.ci-hermes-upstream"
+  UPSTREAM_REPO="$(tr -d '[:space:]' < "$ROOT/.hermes-upstream-repo")"
+  PY314="${PYTHON314:-$(command -v python3.14 || true)}"
+  [ -n "$PY314" ] || { echo "python3.14 is required for upstream Hermes main (set PYTHON314)" >&2; exit 1; }
+  [ -d "$VENV" ] || "$PY314" -m venv "$VENV"
+  PY="$VENV/bin/python"
+  "$PY" -m pip install -q --upgrade pip
+  "$PY" -m pip install -q -r requirements-dev.txt
+  [ -d "$HERMES_SRC/.git" ] || git clone --filter=blob:none "$UPSTREAM_REPO" "$HERMES_SRC"
+  git -C "$HERMES_SRC" fetch -q --depth 1 origin main
+  git -C "$HERMES_SRC" checkout -q --detach FETCH_HEAD
+  printf '\nHermes upstream main: %s\n' "$(git -C "$HERMES_SRC" rev-parse --short=10 HEAD)"
+  "$PY" -m pip install -q -e "$HERMES_SRC[mcp]"
+  "$PY" -c "import hermes_cli, cron, hermes_state; print('hermes ok')"
+  HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m "integration and not patch_only and not upstream_known_break" tests/integration
+  HERMES_INTEGRATION_REQUIRED=1 "$PY" -m pytest -q -m "not patch_only and not upstream_known_break"
+  exit 0
+fi
 
 say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 

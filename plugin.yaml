@@ -4,6 +4,11 @@ description: "DeskRPG backend — adds DeskRPG routes to the Hermes API Server: 
 author: Dante Labs
 kind: standalone
 requires_hermes: ">=0.21.1"
+# Third-party packages the plugin imports that Hermes core does not guarantee. Upstream Hermes dropped PyYAML
+# from its core dependencies; without this the plugin fails to import there. `aiohttp` is not listed: the plugin
+# runs inside the API server, which already requires it.
+python_dependencies:
+  - "PyYAML>=6,<7"
 
 provides_tools:
   - artifact_save

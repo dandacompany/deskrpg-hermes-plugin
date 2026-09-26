@@ -22,7 +22,6 @@ class FakeKanbanActionsDb(FakeKanbanDb):
 
     def __init__(self, root):
         super().__init__(root)
-        self.signals = []  # reclaim 이 워커에 보낸 (pid, lock) 기록 — 실제 kill 은 하지 않는다
 
     # ---- 테스트 도우미 --------------------------------------------------------
     def write_worker_log(self, task_id: str, text: str, *, board=None):
@@ -41,21 +40,6 @@ class FakeKanbanActionsDb(FakeKanbanDb):
         return None
 
     # ---- 되찾기·재배정·재작업 -------------------------------------------------
-    def reclaim_task(self, conn, task_id: str, *, reason=None, signal_fn=None):
-        """Hermes: 실행 중이 아니면 False. 워커에 신호를 보내고 run 을 닫은 뒤 원래 열로 되돌린다."""
-        self._record("reclaim_task", task_id=task_id, reason=reason)
-        task = self.get_task(conn, task_id)
-        if task is None or (task.status != "running" and task.claim_lock is None):
-            return False
-        self.signals.append((task.worker_pid, task.claim_lock))
-        retry_status = self._retry_status_for_run(conn, task_id)
-        self._end_run(conn, task_id, outcome="reclaimed", status="reclaimed", error=f"manual_reclaim: {reason}")
-        task.status = retry_status
-        task.claim_lock = task.claim_expires = task.worker_pid = None
-        task.consecutive_failures = 0
-        self._append_event(conn, task_id, "reclaimed", {"manual": True, "reason": reason, "retry_status": retry_status})
-        return True
-
     def reassign_task(self, conn, task_id: str, profile: Optional[str], *, reclaim_first: bool = False, reason=None):
         """Hermes: `assign_task` 의 RuntimeError(실행 중)를 삼켜 False 로 돌려준다."""
         self._record("reassign_task", task_id=task_id, profile=profile, reclaim_first=reclaim_first, reason=reason)

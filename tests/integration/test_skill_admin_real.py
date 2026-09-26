@@ -9,7 +9,10 @@ import pytest
 
 from deskrpg_plugin.contract_fields import has_skill_admin_symbols
 
-pytestmark = pytest.mark.integration
+# Known upstream break: Hermes main removed `web_server_gateway._dashboard_spawn_executable`, which skill jobs
+# need, so `profile_skill_admin` is off there. The upstream job deselects this module until the plugin stops
+# depending on that internal; the pinned job still runs it.
+pytestmark = [pytest.mark.integration, pytest.mark.upstream_known_break]
 
 SKILL = "---\nname: invoice-check\ndescription: 청구서 확인 절차\n---\n# 청구서 확인\n\n1. 금액을 대조한다.\n"
 
