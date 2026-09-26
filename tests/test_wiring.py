@@ -49,7 +49,7 @@ async def client(aiohttp_client, fake_api, kanban, cron_store):
 
 async def test_info_가_예순아홉_라우트와_capability_전부를_보고한다(client):
     body = await (await client.get("/deskrpg/info")).json()
-    assert body["version"] == "0.24.3"
+    assert body["version"] == "0.24.4"
     assert len(body["routes"]) == 125
     # fake_api 는 스웜·피커 심볼을 모두 갖춘 빌드를 흉내 낸다 — capability 에 다 붙는다.
     assert body["capabilities"] == [
