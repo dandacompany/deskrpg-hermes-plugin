@@ -1,5 +1,5 @@
 name: deskrpg
-version: 0.19.0
+version: 0.20.0
 description: "DeskRPG backend — adds DeskRPG routes to the Hermes API Server: profile list/create/delete, SOUL.md read/write, kanban, cron and event streams, NPC skill management, an artifact store and the artifact_save tool. Install it through the DeskRPG setup wizard."
 author: Dante Labs
 kind: standalone
