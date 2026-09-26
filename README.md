@@ -17,7 +17,7 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.25.0 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.26.0 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -91,6 +91,8 @@ upstream breaks, excluded from that job with the `upstream_known_break` marker:
   On such a build the capability is not announced and the skill routes are not registered.
 
 ## Release
+
+0.26.0 runs on upstream Hermes main without Dante Labs patches for everything except review policies: the required Hermes API list no longer names underscore internals, status and field edits go through the public kanban verbs the upstream dashboard uses (`reclaim_task`, `promote_task`, `edit_task`), reopening a finished card whose descendants are running no longer fails, and PyYAML is declared in `python_dependencies` because upstream Hermes no longer ships it. `hermes plugins enable deskrpg` prepares the dependency. CI also runs the integration suite against upstream main.
 
 0.25.0 creates swarms on boards with review policies (capability `swarm_review_policy`): workers get the requested policy and verifiers and synthesizers get human review, attached in the same write transaction that creates the swarm so no card becomes ready without its policy; the root stays a policy-free structure card. The capability is announced only when the Hermes internals it relies on are present with the expected signatures; otherwise a policy swarm answers `428 swarm_review_policy_unsupported`.
 
