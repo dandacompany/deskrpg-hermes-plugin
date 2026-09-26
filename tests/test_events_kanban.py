@@ -72,7 +72,7 @@ def test_spawned_는_task_run_started_에_run_id_를_싣고_claimed_는_무시�
     evs = _tail(fake_api, conn, since=created_id)
     assert [e["kind"] for e in evs] == ["task.run.started"]
     assert evs[0]["run_id"] == 7
-    assert evs[0]["payload"] == {"pid": 123}
+    assert evs[0]["payload"]["pid"] == 123
 
 
 @pytest.mark.parametrize(
@@ -328,3 +328,19 @@ def test_spawn_failed_and_rate_limited_close_the_run_with_its_run_id(fake_api, k
     assert evs[0]["run_id"] == 12
     assert evs[0]["payload"]["outcome"] == kind
     assert evs[0]["payload"]["error"] == "boom"
+
+
+def test_run_started_names_the_card_assignee_so_a_client_knows_whose_work_started(fake_api, kanban, conn):
+    task = kanban.make_task(conn, title="card", assignee="sophie")
+    created_id = kanban.boards["default"].events[-1].id
+    kanban.emit("default", task.id, "spawned", {"pid": 9, "started_at": 100}, run_id=3)
+    evs = _tail(fake_api, conn, since=created_id)
+    assert evs[0]["payload"] == {"pid": 9, "started_at": 100, "assignee": "sophie"}
+
+
+def test_run_started_without_an_assignee_adds_nothing(fake_api, kanban, conn):
+    task = kanban.make_task(conn, title="card")
+    created_id = kanban.boards["default"].events[-1].id
+    kanban.emit("default", task.id, "spawned", {"pid": 9}, run_id=3)
+    evs = _tail(fake_api, conn, since=created_id)
+    assert evs[0]["payload"] == {"pid": 9}

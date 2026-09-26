@@ -275,7 +275,12 @@ def map_kanban_row(api, conn, slug, row) -> list:
     if kind in ("linked", "unlinked"):
         return [_base_event(slug, row, "task.link", {**payload, "action": kind})]
     if kind == "spawned":
-        return [_base_event(slug, row, "task.run.started", payload)]
+        # Hermes' `spawned` carries only pid/started_at. The card's assignee (the profile the worker runs as) is
+        # what tells a client whose work started — without it DeskRPG could not mark the employee as working
+        # until its next restart resync. Omitted if the card is already gone.
+        _status, _title, assignee, _parents = _task_snapshot(api, conn, row["task_id"])
+        started = {**payload, "assignee": assignee} if assignee else payload
+        return [_base_event(slug, row, "task.run.started", started)]
     if kind in STATUS_KINDS:
         return [_base_event(slug, row, "task.status", _status_payload(api, conn, row, kind, payload))]
     if kind in UPDATED_KINDS:
