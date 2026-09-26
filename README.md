@@ -17,7 +17,7 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.26.0 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.27.0 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -106,6 +106,8 @@ upstream breaks, excluded from that job with the `upstream_known_break` marker:
   On such a build the capability is not announced and the skill routes are not registered.
 
 ## Release
+
+0.27.0 enforces approval policies on upstream Hermes without a core patch (capability `review_hooks_v1`). Cards and swarms can carry a human, agent or mixed (AI review, then a person) policy, kept in a plugin-owned store outside Hermes' schema next to the shared kanban home. Worker hooks stop an implementer from completing its own card and route it through `kanban_request_review`; a card waiting for a person sits in `review` with no assignee until someone approves or sends it back through the existing `approve` and `request_changes` actions. AI reviewer approvals and rejections are recorded, boards get a default policy (`GET`/`PUT /deskrpg/kanban/boards/{slug}/default-policy`), `/deskrpg/info` lists profiles that would run without the hooks, and `python -m deskrpg_plugin.review_migrate` moves policies from a patched core. On a patched core the existing policy path is still used.
 
 0.26.0 runs on upstream Hermes main without Dante Labs patches for everything except review policies: the required Hermes API list no longer names underscore internals, status and field edits go through the public kanban verbs the upstream dashboard uses (`reclaim_task`, `promote_task`, `edit_task`), reopening a finished card whose descendants are running no longer fails, and PyYAML is declared in `python_dependencies` because upstream Hermes no longer ships it. `hermes plugins enable deskrpg` prepares the dependency. CI also runs the integration suite against upstream main.
 
