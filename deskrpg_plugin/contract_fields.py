@@ -254,6 +254,9 @@ KANBAN_TASK_OPTIONAL = frozenset({
     "body", "assignee", "priority", "tenant", "created_at", "latest_summary",
     "comment_count", "link_counts", "progress", "warnings", "started_at",
     "worker_pid", "last_heartbeat_at", "review",
+    # Since 0.21.0 (`kanban_run_events`): lets the board tell a card blocked after repeated failures from one
+    # blocked for another reason, without a detail call per card.
+    "consecutive_failures",
 })
 KANBAN_TASK_KEYS = KANBAN_TASK_REQUIRED | KANBAN_TASK_OPTIONAL
 
@@ -261,7 +264,7 @@ KANBAN_TASK_KEYS = KANBAN_TASK_REQUIRED | KANBAN_TASK_OPTIONAL
 KANBAN_TASK_FULL_EXTRA_OPTIONAL = frozenset({
     "result", "created_by", "model_override", "provider_override", "reasoning_effort",
     "completed_at", "last_failure_error", "workspace_kind", "workspace_path",
-    "branch_name", "consecutive_failures", "diagnostics",
+    "branch_name", "diagnostics",
 })
 KANBAN_TASK_FULL_REQUIRED = KANBAN_TASK_REQUIRED
 KANBAN_TASK_FULL_OPTIONAL = KANBAN_TASK_OPTIONAL | KANBAN_TASK_FULL_EXTRA_OPTIONAL
