@@ -17,7 +17,7 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.20.0 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.21.0 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -81,6 +81,8 @@ Stop the gateway and back up its kanban databases before replacing core code. In
 New cards default to human approval. An explicitly delegated task can be approved by a different AI profile. Approvals bind to the submitted result; generic status changes cannot substitute for approval. AI reviewers must inspect the actual submitted text or artifacts; this does not guarantee the semantic quality of an AI review. Existing cards are not converted automatically.
 
 ## Release
+
+0.21.0 adds run history for cards (capability `kanban_run_events`): card detail events carry the `run_id` of the run they belong to (null for card-level events), the event stream now closes runs that end as `spawn_failed` or `rate_limited` instead of dropping them, and board cards include `consecutive_failures`.
 
 0.20.0 adds board status transitions for rework metrics (capability `kanban_task_events`): `GET /deskrpg/kanban/events?board=&from=&to=&kind=status&limit=` returns the status changes that happened inside the window (epoch seconds, inclusive, default 7 days), each with the status the card left even when that was set before the window; up to 1000 by default (5000 max), keeping the most recent with `truncated: true`.
 
