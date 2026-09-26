@@ -35,6 +35,8 @@ CHOICE_MAX = 80
 # 등록이 run 시작 직후에 오므로 도구가 먼저 불리는 경쟁을 흡수한다. 그 뒤로도 없으면 답할 사람이 없는 것이다.
 REGISTRATION_GRACE_SECONDS = 5.0
 REGISTRATION_TTL_SECONDS = 24 * 3600
+# DeskRPG 가 등록 때 붙이는 불투명 식별자(누구의 대화인가). 해석하지 않고 질문과 함께 돌려준다.
+CONTEXT_MAX_BYTES = 1024
 WAIT_SLICE_SECONDS = 1.0
 
 UNATTENDED = {
@@ -65,7 +67,7 @@ TOOL_SCHEMA = {
 }
 
 _lock = threading.Lock()
-_sessions: dict = {}  # (profile, session_id) -> registered_at (monotonic)
+_sessions: dict = {}  # (profile, session_id) -> (registered_at monotonic, context dict)
 _questions: dict = {}  # question_id -> entry
 
 
@@ -95,23 +97,27 @@ def _session_kind(api, session_id: str) -> str:
     return context.resolve_context(api, session_id=session_id).source_kind
 
 
-def register_session(profile: str, session_id: str) -> None:
+def register_session(profile: str, session_id: str, session_context=None) -> None:
     now = time.monotonic()
     with _lock:
-        for key, at in list(_sessions.items()):
+        for key, (at, _ctx) in list(_sessions.items()):
             if now - at > REGISTRATION_TTL_SECONDS:
                 del _sessions[key]
-        _sessions[(profile, session_id)] = now
+        _sessions[(profile, session_id)] = (now, dict(session_context or {}))
 
 
-def _registered(profile: str, session_id: str) -> bool:
+def _registration(profile: str, session_id: str):
+    """등록돼 있으면 그 context, 없으면 None."""
     with _lock:
-        at = _sessions.get((profile, session_id))
-    return at is not None and time.monotonic() - at <= REGISTRATION_TTL_SECONDS
+        found = _sessions.get((profile, session_id))
+    if found is None or time.monotonic() - found[0] > REGISTRATION_TTL_SECONDS:
+        return None
+    return found[1]
 
 
 def _public(entry: dict) -> dict:
-    return {key: entry[key] for key in ("id", "session_id", "question", "choices", "allow_other", "created_at")}
+    keys = ("id", "session_id", "question", "choices", "allow_other", "created_at", "context")
+    return {key: entry[key] for key in keys}
 
 
 def pending(profile: str, session_id=None) -> list:
@@ -157,13 +163,15 @@ def _arguments(args: dict):
     }, None
 
 
-def _wait_for_registration(profile: str, session_id: str) -> bool:
+def _wait_for_registration(profile: str, session_id: str):
+    """등록 context, 유예 안에 등록이 오지 않으면 None."""
     deadline = time.monotonic() + REGISTRATION_GRACE_SECONDS
     while True:
-        if _registered(profile, session_id):
-            return True
+        found = _registration(profile, session_id)
+        if found is not None:
+            return found
         if time.monotonic() >= deadline or _interrupted():
-            return False
+            return None
         time.sleep(0.05)
 
 
@@ -175,11 +183,12 @@ def _ask(api, args: dict, kwargs: dict) -> str:
     profile = kwargs.get("profile") or context.current_profile(api)
     if not session_id or _session_kind(api, session_id) != "chat":
         return json.dumps(UNATTENDED, ensure_ascii=False)
-    if not _wait_for_registration(profile, session_id):
+    session_context = _wait_for_registration(profile, session_id)
+    if session_context is None:
         return json.dumps(UNATTENDED, ensure_ascii=False)
 
     entry = {
-        "id": uuid.uuid4().hex, "profile": profile, "session_id": session_id,
+        "id": uuid.uuid4().hex, "profile": profile, "session_id": session_id, "context": session_context,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "event": threading.Event(), "answer": None, **parsed,
     }
@@ -221,7 +230,11 @@ def register_handler(api):
         session_id = body.get("session_id")
         if not isinstance(session_id, str) or not session_id.strip():
             return json_error(400, "invalid_field", "session_id is required")
-        register_session(request.match_info["profile"], session_id.strip())
+        session_context = body.get("context", {})
+        if (not isinstance(session_context, dict)
+                or len(json.dumps(session_context, ensure_ascii=False).encode()) > CONTEXT_MAX_BYTES):
+            return json_error(400, "invalid_field", f"context must be an object of at most {CONTEXT_MAX_BYTES} bytes")
+        register_session(request.match_info["profile"], session_id.strip(), session_context)
         return web.Response(status=204)
 
     return handler

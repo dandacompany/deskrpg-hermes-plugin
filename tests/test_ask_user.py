@@ -158,7 +158,7 @@ async def test_routes_register_list_and_answer(client, tmp_api):
 
     listed = await (await client.get("/p/noah/deskrpg/questions?session_id=sess-1")).json()
     [question] = listed["questions"]
-    assert set(question) == {"id", "session_id", "question", "choices", "allow_other", "created_at"}
+    assert set(question) == {"id", "session_id", "question", "choices", "allow_other", "created_at", "context"}
     assert (await (await client.get("/p/noah/deskrpg/questions?session_id=other")).json())["questions"] == []
     assert (await (await client.get("/p/mia/deskrpg/questions")).json())["questions"] == []
 
@@ -181,6 +181,24 @@ async def test_answer_route_rejects_an_empty_or_off_list_response(client, tmp_ap
         assert resp.status == 400
     ask_user.answer("noah", row["id"], "표 중심")
     thread.join(3)
+
+
+async def test_registration_context_is_echoed_with_the_question(client, tmp_api):
+    ctx = {"userId": "u-1", "npcId": "npc-9"}
+    resp = await client.post("/p/noah/deskrpg/ask-user/sessions", json={"session_id": "sess-1", "context": ctx})
+    assert resp.status == 204
+    thread, _out = _run_in_thread(ask_user.make_handler(tmp_api), ARGS, session_id="sess-1")
+    [row] = _wait_pending()
+    listed = await (await client.get("/p/noah/deskrpg/questions")).json()
+    assert listed["questions"][0]["context"] == ctx
+    ask_user.answer("noah", row["id"], "표 중심")
+    thread.join(3)
+
+
+async def test_registration_context_must_be_a_small_object(client):
+    for bad in ("text", ["x"], {"blob": "x" * 2000}):
+        resp = await client.post("/p/noah/deskrpg/ask-user/sessions", json={"session_id": "s", "context": bad})
+        assert resp.status == 400
 
 
 async def test_register_route_requires_a_session_id(client):
