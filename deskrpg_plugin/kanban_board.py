@@ -417,7 +417,8 @@ def _set_status_direct(api, conn, task_id: str, new_status: str) -> bool:
         return False
     if current.status == "running":
         _guard_status(api, conn, task_id, new_status)
-        if not api.reclaim_task(conn, task_id, reason=f"status changed to {new_status} (deskrpg)"):
+        # The `(deskrpg/direct)` marker is what DeskRPG's run history reads to label the attempt "moved".
+        if not api.reclaim_task(conn, task_id, reason=f"status changed to {new_status} (deskrpg/direct)"):
             return False
         current = api.get_task(conn, task_id)
         # A reviewer run goes back to review even when the drag asked for ready — the review is not done.
