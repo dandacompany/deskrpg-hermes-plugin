@@ -150,40 +150,34 @@ async def test_baseHash_가_다르면_409_이고_파일은_그대로다(aiohttp_
     assert (base / "SKILL.md").read_text(encoding="utf-8") == before
 
 
-async def test_부속_파일은_write_file_로_쓰고_새_파일은_baseHash_null(aiohttp_client, fake_api):
+async def test_reference_files_are_read_only_and_answer_410_with_a_way_on(aiohttp_client, fake_api):
     _profile(fake_api)
     base = fake_api.skills.seed("sophie", "weekly")
     client = await _client(aiohttp_client, fake_api)
     resp = await _put(client, "/p/sophie/deskrpg/skills/weekly/file",
                       {"path": "references/new.md", "content": "새 참고", "baseHash": None})
-    assert resp.status == 200
-    assert (base / "references" / "new.md").read_text(encoding="utf-8") == "새 참고"
-    again = await _put(client, "/p/sophie/deskrpg/skills/weekly/file",
-                       {"path": "references/new.md", "content": "덮기", "baseHash": None})
-    assert again.status == 409
-    assert (await again.json())["error"] == "file_exists"
-
+    assert resp.status == 410
+    body = await resp.json()
+    assert body["error"] == "skill_reference_edit_removed" and "chat" in body["detail"]
+    assert not (base / "references" / "new.md").exists()
 
 async def test_scripts_와_hub_스킬은_쓰지_않는다(aiohttp_client, fake_api):
     _profile(fake_api)
-    fake_api.skills.seed("sophie", "weekly")
     fake_api.skills.seed("sophie", "pdf-tools", source="hub")
     client = await _client(aiohttp_client, fake_api)
-    r1 = await _put(client, "/p/sophie/deskrpg/skills/weekly/file",
-                    {"path": "scripts/x.py", "content": "print(1)", "baseHash": None})
-    r2 = await _put(client, "/p/sophie/deskrpg/skills/pdf-tools/file",
-                    {"path": "SKILL.md", "content": "---\nname: pdf-tools\n---\n", "baseHash": None})
-    assert (r1.status, r2.status) == (403, 403)
-
+    resp = await _put(client, "/p/sophie/deskrpg/skills/pdf-tools/file",
+                      {"path": "SKILL.md", "content": "---\nname: pdf-tools\n---\n", "baseHash": None})
+    assert resp.status == 403
 
 async def test_256KB_를_넘는_본문은_413(aiohttp_client, fake_api):
     _profile(fake_api)
-    fake_api.skills.seed("sophie", "weekly")
+    base = fake_api.skills.seed("sophie", "weekly")
+    from deskrpg_plugin.skills_common import sha256_text
+    cur = (base / "SKILL.md").read_text(encoding="utf-8")
     client = await _client(aiohttp_client, fake_api)
     resp = await _put(client, "/p/sophie/deskrpg/skills/weekly/file",
-                      {"path": "references/big.md", "content": "가" * 100000, "baseHash": None})
+                      {"path": "SKILL.md", "content": "가" * 100000, "baseHash": sha256_text(cur)})
     assert resp.status == 413
-
 
 async def test_hermes_가_거절하면_사유를_400_으로_전한다(aiohttp_client, fake_api):
     _profile(fake_api)
@@ -272,28 +266,23 @@ async def test_hub_스킬_보관은_hermes_사유로_거절(aiohttp_client, fake
     assert (await resp.json())["error"] == "skill_not_local"
 
 
-async def test_영구_삭제는_보관된_것만_ledger_를_남기고_지운다(aiohttp_client, fake_api):
+async def test_single_permanent_delete_is_removed_and_touches_nothing(aiohttp_client, fake_api):
     _profile(fake_api)
     fake_api.skills.seed("sophie", "weekly")
     client = await _client(aiohttp_client, fake_api)
-    not_archived = await client.delete("/p/sophie/deskrpg/skills/archive/weekly")
-    assert not_archived.status == 404
     await client.post("/p/sophie/deskrpg/skills/weekly/archive")
     resp = await client.delete("/p/sophie/deskrpg/skills/archive/weekly", headers={"X-DeskRPG-Actor": "u-7"})
-    assert resp.status == 200
-    entry = fake_api.skills.ledger[-1]
-    assert entry["action"] == "purge" and entry["actor"] == "user"
-    assert entry["evidence"] == {"reason": "deskrpg_single_purge", "deskrpgUserId": "u-7"}
-    assert not (fake_api.get_profile_dir("sophie") / "skills" / ".archive" / "weekly").exists()
-
+    assert resp.status == 410
+    body = await resp.json()
+    assert body["error"] == "skill_purge_removed" and "curator purge" in body["detail"]
+    assert (fake_api.get_profile_dir("sophie") / "skills" / ".archive" / "weekly").exists()
 
 async def test_영구_삭제_이름에_경로를_넣을_수_없다(aiohttp_client, fake_api):
     _profile(fake_api)
     client = await _client(aiohttp_client, fake_api)
     resp = await client.delete("/p/sophie/deskrpg/skills/archive/..%2F..%2Fconfig.yaml")
-    assert resp.status in (400, 404)
+    assert resp.status in (400, 404, 410)
     assert (fake_api.get_profile_dir("sophie") / "config.yaml").exists()
-
 
 async def test_복원_이름에도_경로를_넣을_수_없다(aiohttp_client, fake_api):
     _profile(fake_api)

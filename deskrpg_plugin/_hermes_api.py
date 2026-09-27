@@ -225,8 +225,8 @@ OPTIONAL_SPEC = (
             "list_archived_skill_names", "_archive_dir", "_find_skill_dir", "_find_external_skill_dir",
         ),
     ),
-    ("tools.skill_ledger", ("capture_before", "append_entry", "set_ledger_actor", "reset_ledger_actor")),
-    ("tools.skill_manager_tool", ("_create_skill", "_edit_skill", "_write_file", "_find_skill")),
+    ("tools.skill_ledger", ("set_ledger_actor", "reset_ledger_actor")),
+    ("tools.skill_manager_tool", ("_create_skill", "_edit_skill", "_find_skill")),
     ("agent.prompt_builder", ("clear_skills_system_prompt_cache",)),
     (
         "agent.curator",

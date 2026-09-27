@@ -2,7 +2,7 @@
 
 **스킬 정본은 Hermes 다.** 목록·사용량·보관 상태를 여기서 따로 저장하지 않는다. 분류·위치·경로 검사·
 쓰기 컨텍스트는 `skills_common` 에 있고, 쓰기는 Hermes 의 사용자 쓰기 경로
-(`_create_skill`·`_edit_skill`·`_write_file`)를 거친다 — 대시보드와 같은 가드·ledger 가 적용된다.
+(`_create_skill`·`_edit_skill`)를 거친다 — 대시보드와 같은 가드·ledger 가 적용된다.
 
 모든 Hermes 호출은 요청 프로필 홈 스코프(`picker._home_scope`) 안의 워커 스레드에서 한다.
 """
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import re
-import shutil
 from pathlib import Path
 
 from aiohttp import web
@@ -147,8 +146,23 @@ def _check_size(content: str) -> None:
         raise RequestError(413, "payload_too_large", f"max {MAX_EDIT_BYTES} bytes")
 
 
+# Removed with upstream Hermes (decision 2026-09-27): writing reference files and permanently deleting a single
+# archived skill have no public Hermes surface. Old clients get an explicit 410 with a reason code and a way on.
+REFERENCE_EDIT_REMOVED = (
+    "skill_reference_edit_removed",
+    "Reference files are read-only here. Ask the employee in chat to change them.",
+)
+PURGE_REMOVED = (
+    "skill_purge_removed",
+    "Permanently deleting one archived skill is not available. Use the Hermes dashboard or "
+    "`hermes -p <profile> curator purge`.",
+)
+
+
 def _write_file(api, home, name, rel, content, base_hash):
-    """`baseHash` 가 null 이면 새 파일(있으면 409 `file_exists`), 아니면 현재 내용 해시와 같아야 쓴다."""
+    """Replace SKILL.md. `baseHash` null means a new file (409 `file_exists` if present), else it must match."""
+    if rel != "SKILL.md":
+        raise RequestError(410, *REFERENCE_EDIT_REMOVED)
     _check_size(content)
     with _home_scope(api, home):
         ref = require_skill(api, name)
@@ -163,10 +177,7 @@ def _write_file(api, home, name, rel, content, base_hash):
                 raise RequestError(409, "skill_changed", rel)
         # Hermes 는 스킬을 **폴더 이름**으로 찾는다(`_find_skill`) — 프론트매터 이름이 아니다.
         with user_write(api):
-            if rel == "SKILL.md":
-                result = api._edit_skill(ref.path.name, content)
-            else:
-                result = api._write_file(ref.path.name, rel, content)
+            result = api._edit_skill(ref.path.name, content)
         _check_hermes(result)
         return {"path": rel, "hash": sha256_text(content)}
 
@@ -320,21 +331,6 @@ def _restore(api, home, name):
         return {"name": name}
 
 
-def _purge(api, home, name, actor):
-    """보관된 스킬 하나를 지운다 — Hermes `curator purge`(TTL 일괄)와 같은 부품: capture_before → rmtree → append_entry."""
-    _require_archive_name(name)
-    with _home_scope(api, home):
-        root = Path(api._archive_dir()).resolve()
-        target = root / name
-        if not target.is_dir() or target.is_symlink() or target.resolve().parent != root:
-            raise RequestError(404, "archived_not_found", name)
-        before = api.capture_before(target, complete_package=True, skill=name)
-        shutil.rmtree(target)
-        entry = api.append_entry("purge", name, before=before or [], after=[], actor="user",
-                                 evidence={"reason": "deskrpg_single_purge", "deskrpgUserId": actor})
-        return {"name": name, "ledgerId": entry}
-
-
 def pinned_handler(api):
     """`PUT /p/{profile}/deskrpg/skills/{name}/pinned`"""
 
@@ -382,12 +378,10 @@ def restore_handler(api):
 
 
 def purge_handler(api):
-    """`DELETE /p/{profile}/deskrpg/skills/archive/{name}`"""
+    """`DELETE /p/{profile}/deskrpg/skills/archive/{name}` — removed; answers 410 so old clients can say why."""
 
     @guarded
     async def handler(request):
-        home = resolve_profile_home(api, request.match_info["profile"])
-        return web.json_response(
-            await run_blocking(_purge, api, home, request.match_info["name"], actor_of(request)))
+        raise RequestError(410, *PURGE_REMOVED)
 
     return handler
