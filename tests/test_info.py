@@ -49,6 +49,9 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api,
     # DeskRPG 는 이 문자열의 유무로 기능을 판별한다.
     assert "card_proposals" in body["capabilities"]
     assert body["timezone"] == "Asia/Seoul"
+    # The running plugin commit, or None when the checkout cannot be read.
+    assert set(body["install"]) == {"commit"}
+    assert body["install"]["commit"] is None or len(body["install"]["commit"]) == 40
     assert set(body["kanban"]) == PLUGIN_INFO_KANBAN_KEYS
     assert body["kanban"] == {
         "dispatcher_present": True,
