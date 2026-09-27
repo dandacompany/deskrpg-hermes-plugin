@@ -239,7 +239,6 @@ OPTIONAL_SPEC = (
     ("hermes_cli.skills_hub", ("_resolve_source_meta_and_bundle",)),
     ("tools.skills_hub_install", ("quarantine_bundle",)),
     ("tools.skills_guard", ("scan_skill", "should_allow_install")),
-    ("hermes_cli.web_server_gateway", ("_profile_action_environment", "_dashboard_spawn_executable")),
     # 0.17.0 — NPC MCP 커넥터 관리. 전부 있을 때만 profile_mcp_admin 을 알린다(contract_fields).
     # 모듈 간 흔한 이름(start·registry·list_catalog …)은 `(원래 이름, 평면 이름)` 쌍으로 별칭을 준다.
     ("hermes_cli.mcp_config", (

@@ -2,8 +2,16 @@ import asyncio
 
 import pytest
 
+from deskrpg_plugin import skill_jobs
 from deskrpg_plugin.common import RequestError
-from deskrpg_plugin.skill_jobs import JobTable, mask_secrets
+from deskrpg_plugin.skill_jobs import JobTable, child_environment, hermes_command, mask_secrets
+
+REAL_HERMES_COMMAND = hermes_command  # the autouse fixture below stubs the module attribute
+
+
+@pytest.fixture(autouse=True)
+def _hermes_on_path(monkeypatch):
+    monkeypatch.setattr(skill_jobs, "hermes_command", lambda: ["/opt/hermes/bin/hermes"])
 
 
 class FakeProc:
@@ -36,19 +44,17 @@ async def test_성공_작업은_끝나면_succeeded_와_출력_끝부분(fake_ap
     got = table.get("sophie", job)
     assert got["state"] == "succeeded" and got["exitCode"] == 0
     assert "installed pdf-extract" in got["outputTail"]
-    assert calls[0]["cmd"] == ["/usr/bin/python3", "-m", "hermes_cli.main", "-p", "sophie",
-                               "skills", "install", "x", "--yes"]
+    assert calls[0]["cmd"] == ["/opt/hermes/bin/hermes", "-p", "sophie", "skills", "install", "x", "--yes"]
 
 
-async def test_작업_환경은_hermes_의_정리_함수를_거친다(fake_api):
-    seen = []
-    fake_api._profile_action_environment = lambda sub, env_overrides=None: (seen.append(sub), {"PATH": "/p"})[1]
+async def test_the_job_runs_with_the_scrubbed_profile_environment(fake_api, monkeypatch):
+    monkeypatch.setattr(skill_jobs, "child_environment", lambda api, profile: {"PATH": "/p", "HERMES_HOME": profile})
     spawn, calls = _spawn_recorder([FakeProc(b"", 0)])
     table = JobTable(spawn=spawn)
     job = table.start(fake_api, "sophie", "curator_run", ["curator", "run"])
     await table.wait(job)
-    assert seen == [["-p", "sophie", "curator", "run"]]
-    assert calls[0]["env"] == {"PATH": "/p"}
+    assert calls[0]["cmd"][-4:] == ["-p", "sophie", "curator", "run"]
+    assert calls[0]["env"] == {"PATH": "/p", "HERMES_HOME": "sophie"}
 
 
 async def test_같은_프로필의_두번째_작업은_409(fake_api):
@@ -113,16 +119,16 @@ def test_마스킹_규칙():
     assert mask_secrets("Bearer abcdefghijklmnop") == "Bearer ***"
 
 
-async def test_환경_준비가_실패하면_작업을_등록하지_않아_프로필이_잠기지_않는다(fake_api):
-    def boom(sub, env_overrides=None):
+async def test_환경_준비가_실패하면_작업을_등록하지_않아_프로필이_잠기지_않는다(fake_api, monkeypatch):
+    def boom(api, profile):
         raise RuntimeError("no profile")
 
-    fake_api._profile_action_environment = boom
+    monkeypatch.setattr(skill_jobs, "child_environment", boom)
     spawn, calls = _spawn_recorder([FakeProc(b"", 0)])
     table = JobTable(spawn=spawn)
     with pytest.raises(RuntimeError):
         table.start(fake_api, "sophie", "hub_install", ["skills", "install", "x", "--yes"])
-    fake_api._profile_action_environment = lambda sub, env_overrides=None: {}
+    monkeypatch.setattr(skill_jobs, "child_environment", lambda api, profile: {})
     job = table.start(fake_api, "sophie", "hub_install", ["skills", "install", "x", "--yes"])
     await table.wait(job)
     assert calls and table.get("sophie", job)["state"] == "succeeded"
@@ -148,3 +154,81 @@ async def test_종료_코드가_0이어도_확인이_거짓이면_failed(fake_ap
     ok = table.start(fake_api, "sophie", "hub_install", ["skills", "install", "x", "--yes"], verify=lambda: True)
     await table.wait(ok)
     assert table.get("sophie", ok)["state"] == "succeeded"
+
+
+
+# --- The CLI child: which hermes, which environment, how long -----------------------------------------------------
+
+
+def test_child_environment_carries_no_gateway_secret(fake_api, monkeypatch):
+    home = fake_api.get_hermes_home()
+    (home / ".env").write_text("CUSTOM_PROVIDER_THING=abc\nexport OTHER_VALUE='x'\n")
+    secrets_in_env = {
+        "API_SERVER_KEY": "k1", "OPENAI_API_KEY": "k2", "ANTHROPIC_APIKEY": "k3", "GITHUB_TOKEN": "k4",
+        "BWS_ACCESS_TOKEN": "k5", "DB_PASSWORD": "k6", "MY_SECRET": "k7", "AWS_SECRET_ACCESS_KEY": "k8",
+        "_HERMES_GATEWAY": "1", "HERMES_DASHBOARD_SESSION_TOKEN": "k9", "CUSTOM_PROVIDER_THING": "abc",
+        "OTHER_VALUE": "x", "SLACK_COOKIE": "c", "GOOGLE_CREDENTIALS": "c",
+    }
+    for name, value in secrets_in_env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("PATH", "/usr/bin")
+    monkeypatch.setenv("LANG", "ko_KR.UTF-8")
+    env = child_environment(fake_api, "sophie")
+    assert not set(secrets_in_env) & set(env)
+    assert env["PATH"] == "/usr/bin" and env["LANG"] == "ko_KR.UTF-8"
+    assert env["HERMES_HOME"] == str(fake_api.get_profile_dir("sophie"))
+    assert env["HERMES_NONINTERACTIVE"] == "1"
+
+
+def test_child_environment_survives_a_missing_gateway_env_file(fake_api, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    env = child_environment(fake_api, "sophie")
+    assert "OPENAI_API_KEY" not in env
+
+
+def test_hermes_command_prefers_an_explicit_binary_then_path_then_this_interpreter(tmp_path, monkeypatch):
+    binary = tmp_path / "hermes-custom"
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    for name in ("DESKRPG_HERMES_BIN", "HERMES_BIN"):
+        monkeypatch.delenv(name, raising=False)
+
+    monkeypatch.setenv("DESKRPG_HERMES_BIN", str(binary))
+    assert REAL_HERMES_COMMAND() == [str(binary)]
+    monkeypatch.setenv("DESKRPG_HERMES_BIN", str(tmp_path / "missing"))
+    monkeypatch.setattr(skill_jobs.shutil, "which", lambda name: "/usr/local/bin/hermes")
+    assert REAL_HERMES_COMMAND() == ["/usr/local/bin/hermes"]
+    monkeypatch.setattr(skill_jobs.shutil, "which", lambda name: None)
+    assert REAL_HERMES_COMMAND() == [skill_jobs.sys.executable, "-m", "hermes_cli.main"]
+
+
+class HangingProc:
+    pid = 4242
+
+    def __init__(self):
+        self.returncode = None
+        self._stopped = asyncio.Event()
+
+    async def communicate(self):
+        await self._stopped.wait()
+        self.returncode = -15
+        return b"partial output", b""
+
+
+async def test_a_job_past_its_timeout_is_stopped_and_failed(fake_api, monkeypatch):
+    proc = HangingProc()
+    signals = []
+
+    def killpg(pid, sig):
+        signals.append((pid, sig))
+        proc._stopped.set()
+
+    monkeypatch.setattr(skill_jobs.os, "killpg", killpg)
+    spawn, _ = _spawn_recorder([proc])
+    table = JobTable(spawn=spawn, timeout=0.05)
+    job = table.start(fake_api, "sophie", "curator_run", ["curator", "run"])
+    await table.wait(job)
+    got = table.get("sophie", job)
+    assert got["state"] == "failed"
+    assert "timed out after 0.05s" in got["outputTail"] and "partial output" in got["outputTail"]
+    assert signals[0] == (4242, skill_jobs.signal.SIGTERM)

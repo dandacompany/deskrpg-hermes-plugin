@@ -280,8 +280,6 @@ def install_fake_skills(api) -> FakeSkills:
         scan_skill=lambda path, source=None: types.SimpleNamespace(
             skill_name="x", source="community", trust_level="community", verdict="safe", summary="", findings=[]),
         should_allow_install=lambda result, force=False: (True, ""),
-        _profile_action_environment=lambda subcommand, env_overrides=None: {"PATH": "/usr/bin", "HERMES_HOME": "x"},
-        _dashboard_spawn_executable=lambda: "/usr/bin/python3",
     )
     api.skills = fs
     return fs

@@ -75,7 +75,6 @@ _SKILL_ADMIN_SYMBOLS = (
     "build_learning_graph", "node_detail", "edit_node", "delete_node", "parse_node_kind",
     "create_source_router", "parallel_search_sources", "_resolve_source_meta_and_bundle",
     "quarantine_bundle", "scan_skill", "should_allow_install",
-    "_profile_action_environment", "_dashboard_spawn_executable",
 )
 
 
