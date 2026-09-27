@@ -159,9 +159,10 @@ SPEC = (
 # 이 없는 구버전 Hermes 에서 칸반·크론까지 전부 죽는다.
 OPTIONAL_SPEC = (
     # Hermes internals with no public replacement. Upstream can move them at any time, so the plugin must still
-    # load without them: a missing probe drops only the "dispatcher missing" warning, and a missing terminator
-    # only refuses reopening a finished card whose descendants are running (kanban_board._write_status).
-    ("hermes_cli.kanban", ("_check_dispatcher_presence",)),
+    # load without them: a missing terminator only refuses reopening a finished card whose descendants are running
+    # (kanban_board._write_status). `_check_dispatcher_presence` is not used — from inside the gateway it asks the
+    # gateway's own control socket and stalls (POSIX) or deadlocks (Windows) its event loop; see
+    # routes._info_dispatcher_present.
     ("hermes_cli.kanban_db_dispatch", ("_terminate_reclaimed_worker",)),
     ("hermes_cli.kanban_review_policy", ("API_VERSION", "get_review_state", "approve_task",
         "update_review_policy", "guard_task_mutation", "patch_review_task")),

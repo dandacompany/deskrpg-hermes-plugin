@@ -296,7 +296,6 @@ def _add_automation_fakes(api, tmp_path):
         decompose_task=lambda *a, **k: [],
         compute_task_diagnostics=lambda *a, **k: [],
         config_from_runtime_config=lambda *a, **k: {},
-        _check_dispatcher_presence=lambda hermes_home=None: (True, ""),
         # hermes_cli.config
         load_config=lambda *a, **k: config,
         save_config=lambda cfg, *a, **k: None,

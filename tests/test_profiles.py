@@ -354,3 +354,37 @@ async def test_잘못된_cloneKeys_는_만들기_전에_400(aiohttp_client, fake
     resp = await client.post("/deskrpg/profiles", json=payload)
     assert resp.status == 400
     assert not fake_api.profile_exists("noah")
+
+
+async def _loop_lag_during(coro, interval=0.02):
+    lags, done = [], asyncio.Event()
+
+    async def tick():
+        while not done.is_set():
+            start = asyncio.get_running_loop().time()
+            await asyncio.sleep(interval)
+            lags.append(asyncio.get_running_loop().time() - start - interval)
+
+    ticker = asyncio.create_task(tick())
+    try:
+        result = await coro
+    finally:
+        done.set()
+        await ticker
+    return result, max(lags, default=0.0)
+
+
+async def test_listing_and_creating_profiles_run_off_the_event_loop(aiohttp_client, fake_api):
+    # Both walk the disk (every profile's SOUL.md; a new profile's tree). On the gateway's loop that stalls every
+    # other request — and, long enough, gets the gateway killed by its loop watchdog.
+    import time
+
+    list_profiles, create_profile = fake_api.list_profiles, fake_api.create_profile
+    fake_api.list_profiles = lambda *a, **k: time.sleep(0.4) or list_profiles(*a, **k)
+    fake_api.create_profile = lambda *a, **k: time.sleep(0.4) or create_profile(*a, **k)
+    client = await _client(aiohttp_client, fake_api)
+
+    resp, lag = await _loop_lag_during(client.get("/deskrpg/profiles"))
+    assert resp.status == 200 and lag < 0.2, f"listing blocked the loop for {lag:.2f}s"
+    resp, lag = await _loop_lag_during(client.post("/deskrpg/profiles", json={"name": "ivy"}))
+    assert resp.status == 201 and lag < 0.2, f"creating blocked the loop for {lag:.2f}s"

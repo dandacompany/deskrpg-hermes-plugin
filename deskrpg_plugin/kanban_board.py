@@ -421,16 +421,13 @@ def _parse_create_body(body: dict) -> dict:
 
 
 def _dispatcher_missing(api) -> bool:
-    """`_check_dispatcher_presence` 가 (False, …) 를 주면 True. 프로브 실패는 fail-open(경고 없음).
-    The probe is an optional Hermes internal; without it there is no warning."""
-    probe = getattr(api, "_check_dispatcher_presence", None)
-    if probe is None:
-        return False
-    try:
-        present, _message = probe(api.get_hermes_home())
-        return not bool(present)
-    except Exception:
-        return False
+    """True when this gateway does not run the kanban dispatcher (`kanban.dispatch_in_gateway` off).
+
+    Decided in process for the same reason as `/deskrpg/info` (`routes._info_dispatcher_present`): the gateway serving
+    this request is alive, and probing its own control socket from here stalls or deadlocks its event loop."""
+    from .kanban_ops import _dispatch_in_gateway
+
+    return not _dispatch_in_gateway(api)
 
 
 def _store_card_policy(api, conn, store, task_id, policy, implementer, *, replayable: bool) -> None:
