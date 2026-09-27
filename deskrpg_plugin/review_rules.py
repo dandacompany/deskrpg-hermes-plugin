@@ -61,7 +61,7 @@ def decide_pre(tool, args, s):
         # Hermes shallow-merges a modify directive into the original arguments, so a reviewer the model chose is
         # cleared by setting it to None — leaving the key out would keep the model's choice.
         rest = {k: v for k, v in args.items() if k != "reviewer"}
-        if s.policy.mode == "human" or (s.policy.mode == "mixed" and s.reviewer_run):
+        if _goes_to_a_person(s):
             return {"action": "modify", "args": {**rest, "reviewer": None}}
         return {"action": "modify", "args": {**rest, "reviewer": s.policy.reviewer_profile}}
     if tool in TERMINAL_TOOLS and is_terminal_completion(str(args.get("command", ""))):
@@ -78,7 +78,21 @@ def should_release_to_human(tool, result, s):
         return False
     if not (isinstance(result, dict) and result.get("ok") and result.get("status") == "review"):
         return False
-    return s.policy.mode == "human" or (s.policy.mode == "mixed" and s.reviewer_run)
+    return _goes_to_a_person(s)
+
+
+def _goes_to_a_person(s) -> bool:
+    """Whether a submission from this run waits for a person instead of an AI reviewer.
+
+    Besides human cards and a mixed reviewer's verdict: a run on a card already waiting for a person (including a
+    reviewer that would review its own work), and an implementation run by the policy's own reviewer profile —
+    handing it to that reviewer would let one profile implement and approve the same card."""
+    p = s.policy
+    if p.mode == "human" or s.waiting_human:
+        return True
+    if p.mode == "mixed" and s.reviewer_run:
+        return True
+    return not s.reviewer_run and bool(p.reviewer_profile) and s.caller == p.reviewer_profile
 
 
 def agent_decision(tool, args, result, s):

@@ -193,6 +193,27 @@ async def test_agent_review_approves_or_sends_back(client, api, crew):
 
 
 @upstream_only
+async def test_a_card_assigned_to_its_own_reviewer_waits_for_a_person(client, api, crew):
+    """A card reopened on its policy reviewer (as a migrated card was) must not be implemented and approved by the
+    same profile: the submission goes to a person instead of back to that reviewer."""
+    await _board(client)
+    task_id = await _create(client, policy={"version": 1, "mode": "agent", "reviewer_profile": "rev"},
+                            title="own reviewer")
+    with api.connect_closing(board=BOARD) as conn:
+        assert api.assign_task(conn, task_id, "rev")
+    task = await _drive(client, api, task_id, _waiting_for_a_person)
+    assert _waiting_for_a_person(task), (task.status, task.assignee, _events(api, task_id))
+    with api.connect_closing(board=BOARD) as conn:
+        runs = [(r.profile, r.outcome) for r in api.list_runs(conn, task_id)]
+    assert ("rev", "completed") not in runs
+    store = review_store.open_store(review_store.sidecar_path(api))
+    try:
+        assert not [d for d in review_store.decisions(store, task_id) if d["verdict"] == "approve"]
+    finally:
+        store.close()
+
+
+@upstream_only
 async def test_mixed_card_gets_an_ai_verdict_then_a_person_who_sends_it_to_the_implementer(client, api, crew):
     await _board(client)
     tid = await _create(client, policy={"version": 1, "mode": "mixed", "reviewer_profile": "rev"})

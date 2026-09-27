@@ -76,7 +76,8 @@ def situation(api, ctx: WorkerContext) -> Situation:
 
     A run claimed from the `review` column is a review run. On a human card, or on a mixed card when the run's
     profile is not the policy's reviewer, such a run can only have started in the moment between a submission and
-    the hook unassigning the card — the card is waiting for a person, so the run is sent back."""
+    the hook unassigning the card — the card is waiting for a person, so the run is sent back. The same holds for a
+    review run by the profile that made the submission: no profile approves its own work."""
     try:
         store = open_store(sidecar_path(api))
     except Exception as exc:  # noqa: BLE001
@@ -91,12 +92,25 @@ def situation(api, ctx: WorkerContext) -> Situation:
         task = api.get_task(conn, ctx.task_id)
         run_id = ctx.run_id if ctx.run_id is not None else getattr(task, "current_run_id", None)
         from_review = run_claimed_from_review(api, conn, ctx.task_id, run_id)
+        submitted_by = last_implementer(api, conn, ctx.task_id) if from_review else None
     policy = resolve_policy(card, board_default, ctx.task_id, getattr(task, "assignee", None))
+    # A review run by the profile that made the submission would approve its own work: it goes to a person too.
+    self_review = from_review and submitted_by is not None and submitted_by == ctx.profile
     waiting = bool(
         policy is not None and from_review
-        and (policy.mode == "human" or (policy.mode == "mixed" and ctx.profile != policy.reviewer_profile))
+        and (policy.mode == "human" or self_review
+             or (policy.mode == "mixed" and ctx.profile != policy.reviewer_profile))
     )
     return Situation(policy, ctx.profile, from_review and not waiting, waiting, store_ok=True)
+
+
+def last_implementer(api, conn, task_id: str):
+    """The profile Hermes recorded as the implementer of the latest submission (`review_requested` payload)."""
+    for event in reversed(api.list_events(conn, task_id)):
+        if event.kind == "review_requested":
+            value = (event.payload or {}).get("implementer")
+            return value if isinstance(value, str) and value else None
+    return None
 
 
 def _result_dict(result) -> dict:
