@@ -97,7 +97,7 @@ async def test_보드_PATCH_는_이름과_설명을_바꾼다(client):
 # ---------------------------------------------------------------------------
 
 
-async def test_카드_생성은_보드_보기의_ready_열에_나타나고_dispatcher_missing_경고가_붙는다(client):
+async def test_카드_생성은_보드_보기의_ready_열에_나타난다(client):
     await _board(client)
     resp = await client.post(
         f"/deskrpg/kanban/tasks{B}", json={"title": "일", "body": "본문", "priority": 2},
@@ -108,8 +108,8 @@ async def test_카드_생성은_보드_보기의_ready_열에_나타나고_dispa
     task = body["task"]
     assert cf.KANBAN_TASK_FULL_REQUIRED <= set(task) <= cf.KANBAN_TASK_FULL_KEYS, set(task) ^ cf.KANBAN_TASK_FULL_KEYS
     assert task["status"] == "ready" and task["created_by"] == "deskrpg:dante"
-    # 임시 홈에는 게이트웨이가 없다 — 실제 `_check_dispatcher_presence` 가 거짓을 준다.
-    assert body.get("warning") == "dispatcher_missing"
+    # Decided in process from `kanban.dispatch_in_gateway` (default on): the routes only ever run inside the gateway.
+    assert "warning" not in body
 
     view = await (await client.get(f"/deskrpg/kanban/board{B}")).json()
     columns = {c["name"]: c["tasks"] for c in view["columns"]}

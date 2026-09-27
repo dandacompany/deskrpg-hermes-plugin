@@ -128,17 +128,15 @@ async def test_카드_생성은_201_이고_created_by_는_actor_헤더를_따른
 
 
 async def test_카드_생성은_디스패처가_없으면_경고를_싣는다(aiohttp_client, fake_api):
+    # Decided in process from `kanban.dispatch_in_gateway` — the gateway serving this request is alive, and
+    # probing its own control pipe from its own loop deadlocked on Windows.
     probed = []
-
-    def probe(hermes_home=None):
-        probed.append(hermes_home)
-        return (False, "no gateway")
-
-    fake_api._check_dispatcher_presence = probe
+    fake_api._check_dispatcher_presence = lambda hermes_home=None: probed.append(hermes_home) or (True, "")
+    fake_api.load_config = lambda *a, **k: {"kanban": {"dispatch_in_gateway": False}}
     client = await _client(aiohttp_client, fake_api)
     body = await (await client.post(f"/deskrpg/kanban/tasks{B}", json={"title": "x"})).json()
     assert body["warning"] == "dispatcher_missing"
-    assert probed == [fake_api.get_hermes_home()]
+    assert probed == []
 
 
 @pytest.mark.parametrize(

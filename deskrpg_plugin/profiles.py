@@ -26,7 +26,7 @@ def _validated_name(raw, api):
 
 
 def list_handler(api):
-    async def handler(request):
+    def collect():
         out = []
         for info in api.list_profiles():
             name = getattr(info, "name", str(info))
@@ -61,7 +61,11 @@ def list_handler(api):
                     "hasCustomPersona": has_custom_persona,
                 }
             )
-        return web.json_response({"profiles": out})
+        return out
+
+    async def handler(request):
+        # Every profile's SOUL.md is read from disk — off the gateway's event loop.
+        return web.json_response({"profiles": await asyncio.to_thread(collect)})
 
     return handler
 
@@ -90,9 +94,10 @@ def create_handler(api):
                 raise web.HTTPBadRequest(reason="cloneKeys requires cloneFrom")
             if clone_keys not in cloneprofile.KEY_SCOPES:
                 raise web.HTTPBadRequest(reason=f"cloneKeys must be one of: {', '.join(cloneprofile.KEY_SCOPES)}")
-        if api.profile_exists(name):
+        if await asyncio.to_thread(api.profile_exists, name):
             return web.json_response({"error": "already_exists", "name": name}, status=409)
-        api.create_profile(name)
+        # Creating a profile writes a directory tree — off the gateway's event loop.
+        await asyncio.to_thread(api.create_profile, name)
         logger.info("[deskrpg] profile created: %s", name)
 
         body = {"name": name}
@@ -131,7 +136,7 @@ def create_handler(api):
         # 사용자는 만들어진 프로필을 모른 채 같은 이름으로 다시 시도하고 409 를
         # 만난다. 만들어졌다는 사실(201)과 키가 없다는 사실을 함께 말한다.
         try:
-            body["apiKey"] = keyissue.issue(api.get_profile_dir(name))
+            body["apiKey"] = await asyncio.to_thread(keyissue.issue, api.get_profile_dir(name))
             body["keyIssued"] = True
         except keyissue.KeyIssueFailed as exc:
             body["keyIssued"] = False

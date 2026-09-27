@@ -51,9 +51,8 @@ def test_required_names_are_never_hermes_private():
 
 
 def test_optional_internal_probes_can_be_missing(monkeypatch):
-    _install(monkeypatch, missing=("_check_dispatcher_presence", "_terminate_reclaimed_worker"))
+    _install(monkeypatch, missing=("_terminate_reclaimed_worker",))
     api = _hermes_api.load()
-    assert api._check_dispatcher_presence is None
     assert api._terminate_reclaimed_worker is None
 
 

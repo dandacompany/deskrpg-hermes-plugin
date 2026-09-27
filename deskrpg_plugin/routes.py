@@ -4,6 +4,7 @@
 require_auth 로 감싸므로, 핸들러를 빠뜨릴 자리가 없다.
 """
 
+import asyncio
 import logging
 import os
 from pathlib import Path
@@ -477,19 +478,16 @@ def _info_timezone(api):
 
 
 def _info_dispatcher_present(api) -> bool:
-    """디스패처(게이트웨이의 kanban.dispatch_in_gateway)가 살아 있는지. 예외는 fail-open(true).
+    """Whether this gateway runs the kanban dispatcher (`kanban.dispatch_in_gateway`, default true).
 
-    Hermes 의 `_check_dispatcher_presence` 자체도 fail-open 이다 — 경고를 놓치는 쪽이
-    멀쩡한 게이트웨이에 "디스패처 없음" 을 외치는 쪽보다 낫다.
+    Answered in process: this route is served by the gateway, so the gateway is alive. Hermes'
+    `_check_dispatcher_presence` finds that out by asking the gateway's control socket — from here that is the
+    gateway asking itself on its own event loop, which on Windows (a pipe read with no timeout) deadlocked the loop
+    until the watchdog killed the gateway, and on POSIX stalls the loop for the socket timeout.
     """
-    probe = getattr(api, "_check_dispatcher_presence", None)
-    if probe is None:  # optional Hermes internal — without it, assume present (fail-open)
-        return True
-    try:
-        present, _message = probe(api.get_hermes_home())
-        return bool(present)
-    except Exception:
-        return True
+    from .kanban_ops import _dispatch_in_gateway
+
+    return _dispatch_in_gateway(api)
 
 
 _FALSY = {"", "0", "false", "no", "off"}
@@ -560,37 +558,59 @@ def _info_dashboard_url(api):
     return url if isinstance(url, str) and url.startswith(("https://", "http://")) else None
 
 
+# How long `/deskrpg/info` waits for a slow check before answering "not known yet", and how long an answer is reused.
+INFO_PROBE_TIMEOUT_SECONDS = 2.0
+INFO_PROBE_TTL_SECONDS = 30.0
+
+
+def _info_body(api) -> dict:
+    """The parts of `/deskrpg/info` that only read config, files and symbols. Run off the event loop."""
+    from .contract_fields import capabilities, freshness
+
+    return {
+        "plugin": "deskrpg",
+        "version": PLUGIN_VERSION,
+        "routes": [f"{m} {p}" for m, p, _h, _s in routes_for(api)],
+        "capabilities": list(capabilities(api)),
+        **freshness(api),
+        "timezone": _info_timezone(api),
+        "dashboard_url": _info_dashboard_url(api),
+        "artifact_max_bytes": _artifact_upload_max_bytes(api),
+        "install": _info_install(),
+        "kanban": {
+            "dispatcher_present": _info_dispatcher_present(api),
+            "attachments": True,
+            # 첨부는 요청 본문에 실려 오므로 api_server 의 본문 상한과 칸반 자체 상한
+            # 중 작은 쪽이 실효 상한이다. 클라이언트가 이 값으로 업로드 전에 거른다.
+            "attachment_max_bytes": min(int(api.MAX_REQUEST_BYTES), int(api.KANBAN_ATTACHMENT_MAX_BYTES)),
+        },
+    }
+
+
 def _make_info(api):
     from aiohttp import web
 
-    from .contract_fields import capabilities, freshness
+    from .common import run_blocking
+    from .slow_probe import SlowProbe
+
+    # Checks that shell out (worker launch) or walk every profile (plugin links): waited for briefly, then cached.
+    worker_launch_probe = SlowProbe(_info_worker_launch, ttl=INFO_PROBE_TTL_SECONDS)
+    profiles_probe = SlowProbe(
+        lambda: {"worker_plugin": _info_worker_plugin(api), "review_hooks": _info_review_hooks(api)},
+        ttl=INFO_PROBE_TTL_SECONDS,
+    )
 
     async def handler(request):
-        return web.json_response(
-            {
-                "plugin": "deskrpg",
-                "version": PLUGIN_VERSION,
-                "routes": [f"{m} {p}" for m, p, _h, _s in routes_for(api)],
-                "capabilities": list(capabilities(api)),
-                **freshness(api),
-                "timezone": _info_timezone(api),
-                "dashboard_url": _info_dashboard_url(api),
-                "artifact_max_bytes": _artifact_upload_max_bytes(api),
-                "worker_plugin": _info_worker_plugin(api),
-                "install": _info_install(),
-                "kanban": {
-                    "dispatcher_present": _info_dispatcher_present(api),
-                    "attachments": True,
-                    # 첨부는 요청 본문에 실려 오므로 api_server 의 본문 상한과 칸반 자체 상한
-                    # 중 작은 쪽이 실효 상한이다. 클라이언트가 이 값으로 업로드 전에 거른다.
-                    "attachment_max_bytes": min(
-                        int(api.MAX_REQUEST_BYTES), int(api.KANBAN_ATTACHMENT_MAX_BYTES)
-                    ),
-                    "review_hooks": _info_review_hooks(api),
-                    "worker_launch": _info_worker_launch(),
-                },
-            }
+        body = await run_blocking(_info_body, api)
+        launch, profiles = await asyncio.gather(
+            worker_launch_probe.get(INFO_PROBE_TIMEOUT_SECONDS),
+            profiles_probe.get(INFO_PROBE_TIMEOUT_SECONDS),
         )
+        profiles = profiles or {}
+        body["worker_plugin"] = profiles.get("worker_plugin")
+        body["kanban"]["review_hooks"] = profiles.get("review_hooks")
+        body["kanban"]["worker_launch"] = launch
+        return web.json_response(body)
 
     return handler
 

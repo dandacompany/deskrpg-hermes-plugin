@@ -1,5 +1,8 @@
 """`GET /deskrpg/info` — 0.6.0 이 더한 capabilities·timezone·kanban 필드."""
 
+import asyncio
+import time
+
 from aiohttp import web
 
 from deskrpg_plugin import _hermes_api, routes
@@ -116,34 +119,6 @@ async def test_첨부_상한은_두_상한_중_작은_쪽이다(aiohttp_client, 
     fake_api.KANBAN_ATTACHMENT_MAX_BYTES = 50
     body = await _info(aiohttp_client, fake_api)
     assert body["kanban"]["attachment_max_bytes"] == 50
-
-
-async def test_디스패처가_없으면_false(aiohttp_client, fake_api):
-    fake_api._check_dispatcher_presence = lambda hermes_home=None: (False, "no gateway is running")
-    body = await _info(aiohttp_client, fake_api)
-    assert body["kanban"]["dispatcher_present"] is False
-
-
-async def test_디스패처_확인이_던지면_fail_open_true(aiohttp_client, fake_api):
-    def boom(hermes_home=None):
-        raise OSError("probe failed")
-
-    fake_api._check_dispatcher_presence = boom
-    body = await _info(aiohttp_client, fake_api)
-    assert body["kanban"]["dispatcher_present"] is True
-
-
-async def test_디스패처_확인에_hermes_home_을_넘긴다(aiohttp_client, fake_api):
-    # 프로필별 HERMES_HOME 으로 스코프하지 않으면 멀쩡한 프로필 게이트웨이에 "없음" 을 외친다.
-    seen = []
-    fake_api._check_dispatcher_presence = lambda hermes_home=None: (seen.append(hermes_home), (True, ""))[1]
-    await _info(aiohttp_client, fake_api)
-    assert seen == [fake_api.get_hermes_home()]
-
-
-# ---------------------------------------------------------------------------
-# 0.7.1 — dashboard_url: DeskRPG 가 게이트웨이 화면에서 대시보드로 바로 보내는 링크
-# ---------------------------------------------------------------------------
 
 
 async def test_대시보드_공개_주소가_있으면_dashboard_url_로_낸다(aiohttp_client, fake_api, monkeypatch):
@@ -273,3 +248,78 @@ async def test_info_fingerprint_follows_a_core_that_loses_a_symbol(aiohttp_clien
     after = await _info(aiohttp_client, fake_api)
     assert "swarm" not in after["capabilities"]
     assert after["capabilities_fingerprint"] != before
+
+
+async def _with_loop_lag(coro, interval=0.02):
+    """Run `coro` while a ticker measures how late the event loop wakes it — the loop is blocked by that much."""
+    lags, done = [], asyncio.Event()
+
+    async def tick():
+        while not done.is_set():
+            start = time.monotonic()
+            await asyncio.sleep(interval)
+            lags.append(time.monotonic() - start - interval)
+
+    ticker = asyncio.create_task(tick())
+    try:
+        result = await coro
+    finally:
+        done.set()
+        await ticker
+    return result, max(lags, default=0.0)
+
+
+async def test_dispatcher_presence_is_answered_in_process_without_querying_the_gateway(aiohttp_client, fake_api):
+    # The route is served by this gateway, so it is alive; asking its own control pipe from its own event loop
+    # deadlocked a Windows gateway (the pipe read has no timeout there) until the loop watchdog killed it.
+    calls = []
+    fake_api._check_dispatcher_presence = lambda hermes_home=None: calls.append(hermes_home) or (False, "")
+    body = await _info(aiohttp_client, fake_api)
+    assert body["kanban"]["dispatcher_present"] is True
+    assert calls == []
+
+
+async def test_dispatcher_is_absent_when_the_gateway_does_not_run_it(aiohttp_client, fake_api):
+    fake_api.load_config = lambda *a, **k: {"kanban": {"dispatch_in_gateway": False}}
+    body = await _info(aiohttp_client, fake_api)
+    assert body["kanban"]["dispatcher_present"] is False
+
+
+async def test_a_slow_probe_neither_blocks_the_loop_nor_holds_info_past_its_cutoff(aiohttp_client, fake_api, monkeypatch):
+    from deskrpg_plugin import worker_launch
+
+    monkeypatch.setattr(routes, "INFO_PROBE_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(worker_launch, "report", lambda: time.sleep(1.5) or {"ok": True})
+    client = await _client(aiohttp_client, fake_api)
+
+    started = time.monotonic()
+    resp, lag = await _with_loop_lag(client.get("/deskrpg/info"))
+    body = await resp.json()
+    assert time.monotonic() - started < 1.0, "info waits for a slow probe only up to its cutoff"
+    assert body["kanban"]["worker_launch"] is None, "not known yet"
+    assert lag < 0.2, f"event loop blocked for {lag:.2f}s"
+
+
+async def test_a_probe_that_finishes_late_fills_the_cache_for_the_next_call(aiohttp_client, fake_api, monkeypatch):
+    from deskrpg_plugin import worker_launch
+
+    calls = []
+    monkeypatch.setattr(routes, "INFO_PROBE_TIMEOUT_SECONDS", 0.1)
+    monkeypatch.setattr(worker_launch, "report", lambda: calls.append(1) or time.sleep(0.3) or {"ok": True})
+    client = await _client(aiohttp_client, fake_api)
+
+    first = await (await client.get("/deskrpg/info")).json()
+    assert first["kanban"]["worker_launch"] is None
+    await asyncio.sleep(0.4)
+    second = await (await client.get("/deskrpg/info")).json()
+    assert second["kanban"]["worker_launch"] == {"ok": True}
+    assert calls == [1], "a cached answer is reused, not recomputed"
+
+
+async def test_a_blocking_cheap_part_of_info_does_not_block_the_loop(aiohttp_client, fake_api):
+    # Timezone, dashboard URL and the rest read files and config — they run off the loop too.
+    fake_api.get_timezone = lambda: time.sleep(0.5)
+    client = await _client(aiohttp_client, fake_api)
+    resp, lag = await _with_loop_lag(client.get("/deskrpg/info"))
+    assert resp.status == 200
+    assert lag < 0.2, f"event loop blocked for {lag:.2f}s"
