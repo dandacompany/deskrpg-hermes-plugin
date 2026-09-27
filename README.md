@@ -153,6 +153,9 @@ Environment="HERMES_BIN=<checkout>/.hermes/bin/hermes"
 Then `systemctl --user daemon-reload`, start the gateway, and check `/deskrpg/info`: `review_hooks_v1` present,
 `kanban_review_policy_v1` absent.
 
+Known gap: the DeskRPG setup wizard does not set `HERMES_BIN` for a gateway on the PM runtime yet; set it by hand as
+above.
+
 ## Upstream Hermes main
 
 CI also runs the integration suite on upstream Hermes `main` (job `integration-upstream`, non-blocking; locally
