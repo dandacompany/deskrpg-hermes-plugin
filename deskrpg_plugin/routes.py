@@ -514,6 +514,17 @@ def _info_review_hooks(api):
         return None
 
 
+def _info_worker_launch():
+    """Whether kanban workers can start (`worker_launch`). None when it cannot be told."""
+    try:
+        from . import worker_launch
+
+        return worker_launch.report()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[deskrpg] worker launch check failed: %s", type(exc).__name__)
+        return None
+
+
 def _info_dashboard_url(api):
     """Hermes 대시보드 공개 주소, 또는 None.
 
@@ -563,6 +574,7 @@ def _make_info(api):
                         int(api.MAX_REQUEST_BYTES), int(api.KANBAN_ATTACHMENT_MAX_BYTES)
                     ),
                     "review_hooks": _info_review_hooks(api),
+                    "worker_launch": _info_worker_launch(),
                 },
             }
         )
