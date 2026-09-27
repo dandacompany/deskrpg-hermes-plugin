@@ -14,11 +14,29 @@ repo="$(git rev-parse --show-toplevel)"
 # 삭제 푸시(로컬 ref 가 없음)는 검사할 것이 없다.
 zero="0000000000000000000000000000000000000000"
 only_deletes=1
-while read -r _local_ref local_sha _remote_ref _remote_sha; do
+# The checks below test the working tree. Every ref pushed must be the commit checked out here, with no uncommitted
+# change to a tracked file — otherwise a tag or branch would be "verified" by other code (2026-09-27: release tags
+# pushed from a checkout on an old commit passed on that old commit's tests).
+head="$(git rev-parse HEAD)"
+wrong=""
+while read -r local_ref local_sha _remote_ref _remote_sha; do
   [ -z "${local_sha:-}" ] && continue
-  [ "$local_sha" = "$zero" ] || only_deletes=0
+  [ "$local_sha" = "$zero" ] && continue
+  only_deletes=0
+  commit="$(git rev-parse --verify --quiet "${local_sha}^{commit}" || true)"
+  [ "$commit" = "$head" ] || wrong="$wrong $local_ref"
 done
 [ "$only_deletes" -eq 1 ] && exit 0
+
+if [ -n "$wrong" ]; then
+  printf '\n\033[1;31m[pre-push] not the checked-out commit:%s\033[0m\n' "$wrong"
+  printf 'The checks test this working tree (HEAD %s). Push from a checkout of that commit.\n\n' "$head"
+  exit 1
+fi
+if ! git diff --quiet HEAD --; then
+  printf '\n\033[1;31m[pre-push] tracked files have uncommitted changes — the checks would not test the pushed commit.\033[0m\n\n'
+  exit 1
+fi
 
 printf '\n\033[1m[pre-push] CI 와 같은 검사를 돌린다 (약 1분). 건너뛰려면 --no-verify.\033[0m\n'
 if ! "$repo/scripts/ci-local.sh" --full; then

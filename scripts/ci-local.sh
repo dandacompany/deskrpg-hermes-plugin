@@ -67,13 +67,24 @@ fi
 say() { printf '\n\033[1m== %s\033[0m\n' "$1"; }
 
 say "venv 준비"
-[ -d "$VENV" ] || python3 -m venv "$VENV"
+# Two venvs, as CI has two jobs. The test job runs without Hermes; the one venv reused for both let the first --full
+# run install Hermes into it, and every later run's test-job step then collected the integration tests the pinned job
+# deselects and failed (2026-09-27: every release tag pushed after a master push from the same worktree).
+UNIT_VENV="$ROOT/.ci-venv-unit"
+for dir in "$UNIT_VENV" "$VENV"; do
+  [ -d "$dir" ] || python3 -m venv "$dir"
+  "$dir/bin/python" -m pip install -q --upgrade pip
+  "$dir/bin/python" -m pip install -q -r requirements-dev.txt
+done
+UNIT_PY="$UNIT_VENV/bin/python"
 PY="$VENV/bin/python"
-"$PY" -m pip install -q --upgrade pip
-"$PY" -m pip install -q -r requirements-dev.txt
 
 say "단위 스위트 (CI 의 test 잡)"
-"$PY" -m pytest -q
+if ! "$UNIT_PY" -c "import importlib.util, sys; sys.exit(importlib.util.find_spec('hermes_cli') is not None)"; then
+  printf '\n%s has Hermes installed; the CI test job runs without it. Remove that venv and run again.\n' "$UNIT_VENV" >&2
+  exit 1
+fi
+"$UNIT_PY" -m pytest -q
 
 if [ "$FULL" -eq 0 ]; then
   printf '\n단위 스위트 통과. 통합까지 보려면 --full 로 다시 돌린다.\n'
