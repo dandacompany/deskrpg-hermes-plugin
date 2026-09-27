@@ -17,7 +17,7 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.29.1 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.30.0 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -167,6 +167,8 @@ Skill management is announced per feature (`profile_skill_read`, `profile_skill_
 `profile_skill_admin` is still announced when all five are on.
 
 ## Release
+
+0.30.0 adds `install.commit` to `/deskrpg/info`: the git commit of the plugin code the gateway loaded, read from the plugin folder's `.git` files (null when there is none). DeskRPG uses it to tell container installs still on the old compose file, which track the plugin's development branch, to download the new compose once.
 
 0.29.1 makes `kanban.worker_launch` match how Hermes actually starts workers: on a multiplexed root gateway every worker loses the gateway's PYTHONPATH, so `HERMES_BIN` is required; on a standalone profile gateway the answer can depend on the assignee and is reported as `ok: null, reason: "assignee_dependent"`.
 
