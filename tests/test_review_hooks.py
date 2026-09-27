@@ -316,3 +316,36 @@ def test_a_record_that_cannot_be_written_is_only_logged(fake_api, shared, card, 
                         lambda *a, **k: (_ for _ in ()).throw(OSError("locked")))
     assert make_post_hook(fake_api)(tool_name="kanban_complete", args={"summary": "x"}, result='{"ok": true}') is None
     assert "review post hook failed" in caplog.text
+
+
+def _submitted_by(fake_api, task_id, profile):
+    with fake_api.connect_closing(board=DEFAULT_BOARD) as conn:
+        fake_api.kanban._append_event(conn, task_id, "review_requested",
+                                      {"implementer": profile, "reviewer": "rev"})
+
+
+def test_a_reviewer_cannot_approve_a_submission_it_made_itself(fake_api, shared, card):
+    task_id, claim = card
+    rs.put_policy(shared, rs.Policy(task_id, "agent", "impl", "rev", "card"))
+    claim("rev")  # the card was reassigned to its reviewer, which implemented it
+    pre, post = make_pre_hook(fake_api), make_post_hook(fake_api)
+    assert pre(tool_name="kanban_request_review", args={"summary": "s"}) == {
+        "action": "modify", "args": {"summary": "s", "reviewer": None}}
+    post(tool_name="kanban_request_review", args={}, result=REVIEW_DONE)
+    assert _assigned(fake_api) == [(task_id, None)]
+
+    # Second line of defence: the same profile claims the review of its own submission.
+    _submitted_by(fake_api, task_id, "rev")
+    claim("rev", from_review=True)
+    assert pre(tool_name="kanban_complete", args={"summary": "LGTM"}) == {
+        "action": "block", "message": BLOCK_RETURN_MESSAGE}
+    post(tool_name="kanban_complete", args={"summary": "LGTM"}, result='{"ok": true}')
+    assert rs.decisions(shared, task_id) == []  # no agent approval recorded
+
+
+def test_an_independent_reviewer_still_approves(fake_api, shared, card):
+    task_id, claim = card
+    rs.put_policy(shared, rs.Policy(task_id, "agent", "impl", "rev", "card"))
+    _submitted_by(fake_api, task_id, "impl")
+    claim("rev", from_review=True)
+    assert make_pre_hook(fake_api)(tool_name="kanban_complete", args={"summary": "LGTM"}) is None

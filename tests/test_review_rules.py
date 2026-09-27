@@ -116,3 +116,19 @@ def test_agent_decisions_are_the_reviewers_completion_and_request_for_changes():
     assert agent_decision("kanban_complete", {"summary": "x"}, ok, s(A)) is None
     assert agent_decision("kanban_complete", {"summary": "x"}, ok, s(None, reviewer_run=True)) is None
     assert agent_decision("kanban_complete", {"summary": "x"}, {"error": "no"}, rev(A)) is None
+
+
+def test_the_policy_reviewer_submitting_its_own_work_goes_to_a_person():
+    # The card was reassigned to the reviewer (e.g. a migrated card reopened): it must not review itself.
+    got = decide_pre("kanban_request_review", {"summary": "s", "reviewer": "rev"}, s(A, caller="rev"))
+    assert got == {"action": "modify", "args": {"summary": "s", "reviewer": None}}
+    ok = {"ok": True, "status": "review"}
+    assert should_release_to_human("kanban_request_review", ok, s(A, caller="rev"))
+    assert should_release_to_human("kanban_request_review", ok, s(M, caller="rev"))
+
+
+def test_a_run_waiting_for_a_person_resubmits_to_a_person_not_to_the_ai():
+    got = decide_pre("kanban_request_review", {"summary": "s"}, s(M, caller="impl", waiting=True))
+    assert got == {"action": "modify", "args": {"summary": "s", "reviewer": None}}
+    assert should_release_to_human("kanban_request_review", {"ok": True, "status": "review"},
+                                   s(A, caller="rev", waiting=True))
