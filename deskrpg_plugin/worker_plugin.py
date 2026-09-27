@@ -244,12 +244,12 @@ def ensure_handler(api):
                 not isinstance(names, list) or not all(isinstance(n, str) and n for n in names)
             ):
                 raise web.HTTPBadRequest(reason="profiles must be a list of profile names")
-        if names is None:
-            names = [getattr(p, "name", str(p)) for p in api.list_profiles()]
-
         def run():
+            # Hermes' list_profiles asks the gateway's control pipe whether each profile's gateway runs — only a
+            # worker thread may do that; on the gateway's own loop the pipe can never answer.
+            targets = names if names is not None else [getattr(p, "name", str(p)) for p in api.list_profiles()]
             results = []
-            for name in names:
+            for name in targets:
                 try:
                     results.append(ensure(api, name))
                 except EnsureFailed as exc:
