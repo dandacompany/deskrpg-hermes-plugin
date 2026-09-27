@@ -83,27 +83,75 @@ New cards default to human approval. An explicitly delegated task can be approve
 
 ### Moving an install off the patched core
 
-The plugin can enforce approvals on upstream Hermes with its own hooks and approval store. To move an install that
-ran the patched core, carry its policies over first, then remove the patch's database triggers:
+The plugin can enforce approvals on upstream Hermes with its own hooks and approval store. The order below is what
+moving a source install (a checkout with a Python 3.11 virtualenv and a systemd user unit) actually took.
+
+**1. Back up the Hermes home** with the gateway stopped, including the core checkout, its virtualenv and the unit
+file, so the whole step can be undone.
+
+**2. Carry the policies over, with the gateway stopped.** The patched core recreates its triggers
+(`CREATE TRIGGER IF NOT EXISTS`) whenever a board database is opened, so a running gateway would put them back:
 
 ```bash
-# on the gateway host, in the Hermes environment, once per DeskRPG board
+systemctl --user stop hermes-gateway
+# in the old Hermes environment, once per DeskRPG board
 python -m deskrpg_plugin.review_migrate --board <board-slug> --dry-run --drop-patch-triggers   # report only
 python -m deskrpg_plugin.review_migrate --board <board-slug> --drop-patch-triggers
 ```
 
 It copies each card's policy and recorded approvals into the approval store and leaves a card that was waiting for
 a person in `review` with nobody assigned. Cards it cannot move are listed under `skipped`. The patch's tables are
-only read and are kept as a record.
+only read and are kept as a record. `--drop-patch-triggers` removes the eleven triggers the patch installed in the
+board database (listed under `dropped_triggers`; nothing else is touched). They outlive the patched core: without
+this, a card the patch had not approved could never be completed on upstream Hermes, not even through an approval in
+DeskRPG.
 
-`--drop-patch-triggers` removes the eleven triggers the patch installed in the board database (listed under
-`dropped_triggers`; nothing else is touched). They outlive the patched core: without this, a card the patch had not
-approved could never be completed on upstream Hermes, not even through an approval in DeskRPG.
+**3. Install upstream Hermes with its own installer.** Current upstream runs only on Python 3.14: every runtime
+dependency in `pyproject.toml` carries a `python_version >= '3.14'` marker, so `pip install -e .` into an older
+virtualenv installs no dependencies (upstream `website/docs/getting-started/updating.md`, "Python 3.14 and older
+interpreters"). From the checkout, at the commit you pin, run the upstream package manager — tools first, then the
+environment with the extras you use named explicitly:
 
-Then stop the gateway, back up the Hermes home, and install upstream Hermes with its own installer — current
-upstream runs on Python 3.14, so an older virtualenv cannot simply be reinstalled into; from the source checkout,
-`python -m pm.cli install` (or `hermes update`) prepares the new environment and launcher. Point any service unit at
-the new launcher and restart the gateway.
+```bash
+cd <hermes checkout> && git checkout --detach <commit>
+./venv/bin/python -m pm.cli install --tools-only
+./venv/bin/python -m pm.cli install --extra messaging --extra mcp   # plus the extras the old venv had
+```
+
+`pm.cli install` given only `--extra` does not install the tool closure (ffmpeg, node, ripgrep…) and stops with
+"tools not on PATH before venv sync" (`pm/cli.py`, `cmd_install`); `--tools-only` first avoids that. The API
+server needs `aiohttp`, which comes with the `messaging` extra. PM publishes a Python 3.14 under `<HERMES_HOME>/tools`,
+the environment under `<HERMES_HOME>/installs`, and repoints `~/.local/bin/hermes` to the launcher
+`<checkout>/.hermes/bin/hermes`. (`hermes update` does the same but moves to the latest `main`; use it when you do not
+pin a commit.)
+
+**4. Give the checkout an install stamp.** Without `install-stamp.json` Hermes reports a placeholder version
+(`0.19.1`), and this plugin (`requires_hermes: ">=0.21.1"`) is skipped at load — every `/deskrpg/*` route disappears.
+Write one with the upstream script; Hermes rewrites it from git on the next start:
+
+```bash
+<hermes python> scripts/write_install_stamp.py --output install-stamp.json \
+    --base-version <nearest release> --distance <commits since it> --update-mechanism self
+```
+
+**5. Regenerate the service unit** with upstream's own template (`hermes_cli.gateway.generate_systemd_unit()`, the same
+text `hermes gateway install` writes): its `ExecStart`, `ExecStop` and `ExecStopPost` run the launcher, and the old
+virtualenv leaves `PATH` and `VIRTUAL_ENV`.
+
+**6. Point kanban workers at the launcher.** Under the PM runtime the gateway imports Hermes through a `PYTHONPATH`
+that Hermes strips from child environments (`tools/environments/local.py`), and the dispatcher's default worker
+command is `python -m hermes_cli.main` unless `$HERMES_BIN` is set (`hermes_cli/kanban_db_dispatch.py`,
+`_resolve_hermes_argv`). Without it every worker exits with `No module named 'hermes_cli'` and the card is given up.
+Set it for the gateway service, for example in a drop-in:
+
+```ini
+# ~/.config/systemd/user/hermes-gateway.service.d/hermes-bin.conf
+[Service]
+Environment="HERMES_BIN=<checkout>/.hermes/bin/hermes"
+```
+
+Then `systemctl --user daemon-reload`, start the gateway, and check `/deskrpg/info`: `review_hooks_v1` present,
+`kanban_review_policy_v1` absent.
 
 ## Upstream Hermes main
 
