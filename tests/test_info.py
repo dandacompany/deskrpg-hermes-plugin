@@ -29,7 +29,11 @@ def test_fake_api_가_REQUIRED_의_모든_심볼을_갖는다(fake_api):
     assert not missing, f"fake_api 에 없는 심볼: {missing}"
 
 
-async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api):
+async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api, monkeypatch):
+    from deskrpg_plugin import worker_launch
+
+    launch = {"ok": True, "reason": None, "hermes_bin": None, "launcher": None}
+    monkeypatch.setattr(worker_launch, "report", lambda: dict(launch))
     body = await _info(aiohttp_client, fake_api)
     assert set(body) == PLUGIN_INFO_KEYS
     assert body["plugin"] == "deskrpg"
@@ -52,6 +56,7 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api)
         "attachment_max_bytes": 10_000_000,
         # No profiles yet, propagation off by default.
         "review_hooks": {"propagation": False, "profiles_without_plugin": []},
+        "worker_launch": launch,
     }
     # 기존 필드는 그대로다 — DeskRPG 구버전 파서가 routes 를 읽는다.
     assert "GET /deskrpg/info" in body["routes"]
