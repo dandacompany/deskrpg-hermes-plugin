@@ -210,7 +210,8 @@ OPTIONAL_SPEC = (
     # 툴셋 목록이 구독 기능 판정을 한 번만 계산하는 데 쓴다. 없으면 툴셋마다 Hermes 가 다시 계산한다.
     ("hermes_cli.nous_subscription", ("get_nous_subscription_features",)),
     ("tools.skills_tool", ("_find_all_skills", "_sort_skills")),
-    ("agent.skill_utils", ("ESSENTIAL_SKILLS", "parse_config_string_list", "is_external_skill_path")),
+    ("agent.skill_utils", ("ESSENTIAL_SKILLS", "parse_config_string_list", "is_external_skill_path",
+                           "iter_skill_index_files", "get_all_skills_dirs")),
     # `_plugin_aliases` 는 복제가 설정의 프로바이더 id 를 Hermes 와 같이 정식 id 로 푸는 데 쓴다.
     (
         "hermes_cli.auth",
@@ -223,6 +224,7 @@ OPTIONAL_SPEC = (
             "load_usage", "activity_count", "latest_activity_at", "is_curator_managed",
             "is_hub_installed", "is_bundled", "set_pinned", "archive_skill", "restore_skill",
             "list_archived_skill_names", "_archive_dir", "_find_skill_dir", "_find_external_skill_dir",
+            "_skills_dir", "_read_skill_name", "is_excluded_skill_path",
         ),
     ),
     ("tools.skill_ledger", ("capture_before", "append_entry", "set_ledger_actor", "reset_ledger_actor")),

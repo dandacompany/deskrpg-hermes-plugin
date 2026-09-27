@@ -69,11 +69,7 @@ def write_text_atomic(path: Path, text: str) -> None:
                 break
             except PermissionError:
                 if attempt == max_attempts - 1:
-                    with open(path, "w", encoding="utf-8") as handle:
-                        handle.write(text)
-                    with contextlib.suppress(OSError):
-                        os.unlink(tmp)
-                    break
+                    raise
                 time.sleep(0.05 * (2 ** attempt))
     except BaseException:
         with contextlib.suppress(OSError):

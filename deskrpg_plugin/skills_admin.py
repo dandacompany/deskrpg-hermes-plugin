@@ -46,30 +46,32 @@ from .skills_common import (
 )
 
 
-def _build_dir_map(api) -> dict[str, Path]:
+def _build_dir_map(api) -> dict[str, Path] | None:
+    required = ("_skills_dir", "iter_skill_index_files", "get_all_skills_dirs", "is_external_skill_path")
+    if not all(callable(getattr(api, n, None)) for n in required):
+        return None
     dir_map: dict[str, Path] = {}
     try:
-        from agent.skill_utils import iter_skill_index_files, get_all_skills_dirs
-        from tools.skill_usage import _skills_dir, is_external_skill_path, is_excluded_skill_path, _read_skill_name
-
-        base = _skills_dir()
-        if base.exists():
-            for p in iter_skill_index_files(base, "SKILL.md"):
-                if not is_external_skill_path(p):
-                    name = _read_skill_name(p, fallback=p.parent.name)
+        base = api._skills_dir()
+        if base and base.exists():
+            for p in api.iter_skill_index_files(base, "SKILL.md"):
+                if not api.is_external_skill_path(p):
+                    name = api._read_skill_name(p, fallback=p.parent.name) if callable(getattr(api, "_read_skill_name", None)) else p.parent.name
                     if name not in dir_map:
                         dir_map[name] = p.parent
 
-        for ext_base in get_all_skills_dirs()[1:]:
-            if ext_base.exists():
+        for ext_base in api.get_all_skills_dirs()[1:]:
+            if ext_base and ext_base.exists():
                 for p in ext_base.rglob("SKILL.md"):
-                    if not is_excluded_skill_path(p):
-                        name = _read_skill_name(p, fallback=p.parent.name)
-                        if name not in dir_map:
-                            dir_map[name] = p.parent
+                    if callable(getattr(api, "is_excluded_skill_path", None)) and api.is_excluded_skill_path(p):
+                        continue
+                    name = api._read_skill_name(p, fallback=p.parent.name) if callable(getattr(api, "_read_skill_name", None)) else p.parent.name
+                    if name not in dir_map:
+                        dir_map[name] = p.parent
+        return dir_map
     except Exception as exc:
         logger.warning("[deskrpg] _build_dir_map fallback: %s", exc)
-    return dir_map
+        return None
 
 
 def _row_extra(api, name: str, usage: dict, dir_map: dict[str, Path] | None = None) -> dict:

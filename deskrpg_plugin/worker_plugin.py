@@ -27,6 +27,7 @@ collect_directory_manifests`), 활성화도 **그 홈의** `config.yaml` `plugin
 
 from __future__ import annotations
 
+import contextlib
 import os
 import time
 from pathlib import Path
@@ -172,16 +173,23 @@ def _ensure_link(link: Path) -> str:
         link.unlink()
     elif os.name == "nt" and (link.is_dir() or not link.exists()):
         try:
-            link.unlink()
+            link.rmdir()
         except OSError:
-            pass
+            with contextlib.suppress(OSError):
+                link.unlink()
     link.parent.mkdir(parents=True, exist_ok=True)
     try:
         os.symlink(plugin_root(), link, target_is_directory=True)
-    except OSError:
-        if os.name == "nt":
+    except OSError as exc:
+        is_privilege_error = getattr(exc, "winerror", None) == 1314 or isinstance(exc, PermissionError)
+        if os.name == "nt" and is_privilege_error:
             import _winapi
-            _winapi.CreateJunction(str(plugin_root()), str(link))
+            try:
+                _winapi.CreateJunction(str(plugin_root()), str(link))
+            except Exception:
+                with contextlib.suppress(OSError):
+                    link.rmdir()
+                raise
         else:
             raise
     return "created"
