@@ -420,3 +420,33 @@ async def test_info_reports_null_when_coverage_cannot_be_told(aiohttp_client, fa
 
     assert resp.status == 200
     assert (await resp.json())["kanban"]["review_hooks"] is None
+
+
+async def test_the_owner_route_lists_profiles_off_the_event_loop(aiohttp_client, fake_api, propagation_on):
+    # Hermes' list_profiles checks whether each profile's gateway runs by asking the gateway's control pipe. From the
+    # gateway's own event loop that pipe can never answer: a native Windows gateway froze here until its loop watchdog
+    # killed it (2026-09-27, WinServer, the wizard's "apply to employees" step).
+    import asyncio
+    import time
+
+    _profile(fake_api, "sophie")
+    real = fake_api.list_profiles
+    fake_api.list_profiles = lambda *a, **k: time.sleep(0.4) or real(*a, **k)
+    client = await _client(aiohttp_client, fake_api)
+
+    lags, done = [], asyncio.Event()
+
+    async def tick():
+        while not done.is_set():
+            start = time.monotonic()
+            await asyncio.sleep(0.02)
+            lags.append(time.monotonic() - start - 0.02)
+
+    ticker = asyncio.create_task(tick())
+    try:
+        resp = await client.post("/deskrpg/worker-plugin")
+    finally:
+        done.set()
+        await ticker
+    assert resp.status == 200
+    assert max(lags, default=0.0) < 0.2, f"event loop blocked for {max(lags):.2f}s"
