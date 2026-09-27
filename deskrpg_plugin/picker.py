@@ -114,9 +114,9 @@ def skill_rows(api, home) -> list[dict]:
             for s in found
         ]
         # 0.15.0 심볼이 없는 빌드는 예전 행 그대로.
-        from .contract_fields import has_skill_admin_symbols
+        from .contract_fields import has_skill_read
 
-        if has_skill_admin_symbols(api):
+        if has_skill_read(api):
             from .skills_admin import enrich_rows
 
             rows = enrich_rows(api, rows)
