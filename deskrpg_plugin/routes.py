@@ -514,6 +514,17 @@ def _info_review_hooks(api):
         return None
 
 
+def _info_install():
+    """Which plugin commit is running (`install`). `commit` is None when it cannot be told."""
+    try:
+        from . import install_info
+
+        return install_info.report()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[deskrpg] install check failed: %s", type(exc).__name__)
+        return {"commit": None}
+
+
 def _info_worker_launch():
     """Whether kanban workers can start (`worker_launch`). None when it cannot be told."""
     try:
@@ -566,6 +577,7 @@ def _make_info(api):
                 "dashboard_url": _info_dashboard_url(api),
                 "artifact_max_bytes": _artifact_upload_max_bytes(api),
                 "worker_plugin": _info_worker_plugin(api),
+                "install": _info_install(),
                 "kanban": {
                     "dispatcher_present": _info_dispatcher_present(api),
                     "attachments": True,
