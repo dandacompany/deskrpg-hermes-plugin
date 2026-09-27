@@ -11,6 +11,7 @@ docs/
 
 # ci-local.sh 작업 산출물
 .ci-venv/
+.ci-venv-unit/
 .ci-hermes/
 .ci-venv-upstream/
 .ci-hermes-upstream/
