@@ -35,9 +35,7 @@ def test_without_hermes_bin_an_importable_hermes_is_fine():
     assert (got["ok"], got["reason"]) == (True, None)
 
 
-def test_without_hermess_strip_the_whole_pythonpath_is_dropped(tmp_path, monkeypatch):
-    # A Hermes without tools.environments.local_pythonpath: its workers lose the whole PYTHONPATH.
-    monkeypatch.setitem(sys.modules, "tools.environments.local_pythonpath", None)
+def test_a_scrubbed_worker_gets_no_pythonpath(tmp_path, monkeypatch):
     monkeypatch.setattr(worker_launch, "_multiplex_active", lambda: True)
     (tmp_path / "only_on_pythonpath.py").write_text("")
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
@@ -92,63 +90,60 @@ def test_info_reports_null_when_the_check_fails(monkeypatch):
 
 # The worker's environment is what Hermes's dispatcher builds: `build_subprocess_env(scrub_secrets=
 # is_multiplex_active() or routed)` (hermes_cli/kanban_db_dispatch.py). Only the scrubbed build strips the
-# Hermes-owned PYTHONPATH entries (tools/environments/local_pythonpath.py); a worker for the gateway's own profile
-# on a gateway without multiplexing keeps the gateway's PYTHONPATH and starts without HERMES_BIN.
+# PYTHONPATH the PM bootstrap exports; a worker for the gateway's own profile on a gateway without multiplexing keeps
+# it. The three cases below are the ones measured on upstream main's PM runtime (2026-09-27).
 
 
-def _hermes_env(monkeypatch, tmp_path, *, multiplex):
-    """Fake Hermes modules: a strip that removes exactly `owned` from PYTHONPATH, and the multiplex flag."""
+def _hermes(monkeypatch, tmp_path, *, multiplex):
+    """Hermes reachable only through the gateway's PYTHONPATH (the PM runtime), and the multiplex flag."""
     import types
 
-    owned, user = tmp_path / "owned", tmp_path / "user"
-    owned.mkdir()
-    user.mkdir()
-
-    def strip(env):
-        kept = [e for e in env.get("PYTHONPATH", "").split(os.pathsep) if e and e != str(owned)]
-        if kept:
-            env["PYTHONPATH"] = os.pathsep.join(kept)
-        else:
-            env.pop("PYTHONPATH", None)
-
-    monkeypatch.setitem(
-        sys.modules,
-        "tools.environments.local_pythonpath",
-        types.SimpleNamespace(_strip_hermes_owned_pythonpath_and_runtime_markers=strip),
-    )
+    pm = tmp_path / "pm"
+    pm.mkdir()
+    (pm / "probe_hermes_on_pm_path.py").write_text("")
+    monkeypatch.setenv("PYTHONPATH", str(pm))
     monkeypatch.setitem(
         sys.modules, "agent.secret_scope", types.SimpleNamespace(is_multiplex_active=lambda: multiplex)
     )
-    monkeypatch.setenv("PYTHONPATH", f"{owned}{os.pathsep}{user}")
-    return owned, user
+    return "probe_hermes_on_pm_path"
 
 
-def test_under_multiplex_only_hermes_owned_entries_are_dropped(monkeypatch, tmp_path):
-    owned, user = _hermes_env(monkeypatch, tmp_path, multiplex=True)
-    (user / "probe_on_user_path.py").write_text("")
-    (owned / "probe_on_owned_path.py").write_text("")
-    assert worker_launch.report(module="probe_on_user_path")["ok"] is True
-    got = worker_launch.report(module="probe_on_owned_path")
+def test_measured_multiplex_gateway_without_hermes_bin_cannot_start_workers(monkeypatch, tmp_path):
+    module = _hermes(monkeypatch, tmp_path, multiplex=True)
+    got = worker_launch.report(module=module)
     assert (got["ok"], got["reason"]) == (False, "hermes_bin_unset")
 
 
-def test_without_multiplex_own_profile_workers_keep_pythonpath_so_it_depends_on_the_assignee(
-    monkeypatch, tmp_path
-):
-    owned, _ = _hermes_env(monkeypatch, tmp_path, multiplex=False)
-    (owned / "probe_on_owned_path.py").write_text("")
-    got = worker_launch.report(module="probe_on_owned_path")
-    # Cards for this gateway's own profile start; cards for any other profile are scrubbed and do not.
+def test_measured_standalone_profile_gateway_depends_on_the_assignee(monkeypatch, tmp_path):
+    module = _hermes(monkeypatch, tmp_path, multiplex=False)
+    got = worker_launch.report(module=module)
+    # Its own profile's cards start; any other profile's cards are scrubbed and do not.
     assert (got["ok"], got["reason"]) == (None, "assignee_dependent")
 
 
+def test_measured_multiplex_gateway_with_hermes_bin_starts_workers(monkeypatch, tmp_path):
+    module = _hermes(monkeypatch, tmp_path, multiplex=True)
+    monkeypatch.setenv("HERMES_BIN", _script(tmp_path / "hermes"))
+    got = worker_launch.report(module=module)
+    assert (got["ok"], got["reason"]) == (True, None)
+
+
 def test_without_multiplex_a_hermes_every_worker_can_import_is_fine(monkeypatch, tmp_path):
-    _, user = _hermes_env(monkeypatch, tmp_path, multiplex=False)
-    (user / "probe_on_user_path.py").write_text("")
-    assert worker_launch.report(module="probe_on_user_path")["ok"] is True
+    _hermes(monkeypatch, tmp_path, multiplex=False)
+    assert worker_launch.report(module="json")["ok"] is True
 
 
-def test_without_multiplex_a_hermes_no_worker_can_import_is_reported(monkeypatch, tmp_path):
-    _hermes_env(monkeypatch, tmp_path, multiplex=False)
-    got = worker_launch.report(module="deskrpg_worker_launch_probe_missing")
-    assert (got["ok"], got["reason"]) == (False, "hermes_bin_unset")
+def test_a_hermes_without_the_multiplex_flag_is_treated_as_multiplexing(monkeypatch, tmp_path):
+    module = _hermes(monkeypatch, tmp_path, multiplex=True)
+    monkeypatch.setitem(sys.modules, "agent.secret_scope", None)
+    assert worker_launch.report(module=module)["reason"] == "hermes_bin_unset"
+
+
+def test_only_public_hermes_names_are_used():
+    import ast
+    import inspect
+
+    tree = ast.parse(inspect.getsource(worker_launch))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in ("agent", "tools"):
+            assert all(not alias.name.startswith("_") for alias in node.names), node.module

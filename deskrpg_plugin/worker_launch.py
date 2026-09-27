@@ -12,9 +12,9 @@ only the scrubbed build strips the Hermes-owned `PYTHONPATH` entries
   any other (routed) profile is scrubbed.
 
 The check mirrors that: with `HERMES_BIN` set it only checks that the file can be run; without it, it tries the
-import in the environment each kind of worker gets, stripped by Hermes's own function where it exists (older Hermes:
-the whole `PYTHONPATH` is dropped). When the two kinds disagree the answer depends on the card's assignee:
-`ok: null`, reason `assignee_dependent`. The answer cannot change while the process lives, so it is computed once.
+import without `PYTHONPATH` (a scrubbed worker) and, when the gateway does not multiplex, also with it (a worker for
+the gateway's own profile). When the two disagree the answer depends on the card's assignee: `ok: null`, reason
+`assignee_dependent`. Only public Hermes names are used (`agent.secret_scope.is_multiplex_active`). The answer cannot change while the process lives, so it is computed once.
 It never raises — an inconclusive probe reports `ok: null`.
 """
 
@@ -65,15 +65,9 @@ def _module_importable(executable: str, module: str, env: dict) -> bool | None:
 
 
 def _scrubbed_env() -> dict:
-    """The gateway's environment with the Hermes-owned `PYTHONPATH` entries removed the way Hermes removes them."""
-    env = dict(os.environ)
-    try:
-        from tools.environments.local_pythonpath import _strip_hermes_owned_pythonpath_and_runtime_markers
-    except Exception:  # noqa: BLE001 — a Hermes without that module; its workers lose the whole PYTHONPATH
-        env.pop("PYTHONPATH", None)
-        return env
-    _strip_hermes_owned_pythonpath_and_runtime_markers(env)
-    return env
+    """The gateway's environment without `PYTHONPATH`. On the PM runtime every entry there is one Hermes put in
+    (the checkout and its dependency environment), and Hermes strips exactly those from a scrubbed worker."""
+    return {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
 
 
 def _multiplex_active() -> bool:
