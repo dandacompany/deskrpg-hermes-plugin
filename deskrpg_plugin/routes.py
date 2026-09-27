@@ -552,7 +552,7 @@ def _info_dashboard_url(api):
 def _make_info(api):
     from aiohttp import web
 
-    from .contract_fields import capabilities
+    from .contract_fields import capabilities, freshness
 
     async def handler(request):
         return web.json_response(
@@ -561,6 +561,7 @@ def _make_info(api):
                 "version": PLUGIN_VERSION,
                 "routes": [f"{m} {p}" for m, p, _h, _s in routes_for(api)],
                 "capabilities": list(capabilities(api)),
+                **freshness(api),
                 "timezone": _info_timezone(api),
                 "dashboard_url": _info_dashboard_url(api),
                 "artifact_max_bytes": _artifact_upload_max_bytes(api),
