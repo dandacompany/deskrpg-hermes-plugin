@@ -29,6 +29,7 @@ from pathlib import Path
 from aiohttp import web
 
 from . import artifacts_store as _artifacts
+from .contract_fields import freshness
 from . import cron as _cron
 from . import cron_results
 from . import deleted_log
@@ -993,7 +994,8 @@ def events_handler(api):
             log_event("events.tail", board=slug, count=len(result["events"]), has_more=result["has_more"])
             return result
 
-        return web.json_response(await run_blocking(work))
+        # Poller calls land here every tick, so they also carry the gateway freshness markers.
+        return web.json_response({**await run_blocking(work), **freshness(api)})
 
     return handler
 

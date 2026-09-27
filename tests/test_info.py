@@ -244,3 +244,29 @@ def test_스킬_관리_심볼이_하나라도_없으면_광고하지_않는다(f
 
     fake_api.build_learning_graph = None
     assert "profile_skill_admin" not in capabilities(fake_api)
+
+
+async def test_info_carries_a_capability_fingerprint_and_start_time(aiohttp_client, fake_api):
+    from deskrpg_plugin.contract_fields import capabilities_fingerprint
+
+    body = await _info(aiohttp_client, fake_api)
+    assert body["capabilities_fingerprint"] == capabilities_fingerprint(body["capabilities"])
+    assert isinstance(body["started_at"], int) and body["started_at"] > 1_700_000_000
+
+
+def test_fingerprint_ignores_order_and_changes_with_the_set():
+    from deskrpg_plugin.contract_fields import capabilities_fingerprint
+
+    base = capabilities_fingerprint(["kanban", "swarm", "cron"])
+    assert base == capabilities_fingerprint(["cron", "kanban", "swarm"])
+    assert len(base) == 16
+    assert base != capabilities_fingerprint(["kanban", "cron"])
+
+
+async def test_info_fingerprint_follows_a_core_that_loses_a_symbol(aiohttp_client, fake_api, monkeypatch):
+    # Same plugin version, different core: the fingerprint must move so DeskRPG can refresh its cache.
+    before = (await _info(aiohttp_client, fake_api))["capabilities_fingerprint"]
+    monkeypatch.setattr(fake_api, "create_swarm", None, raising=False)
+    after = await _info(aiohttp_client, fake_api)
+    assert "swarm" not in after["capabilities"]
+    assert after["capabilities_fingerprint"] != before

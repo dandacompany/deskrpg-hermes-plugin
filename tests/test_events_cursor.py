@@ -7,7 +7,7 @@ import pytest
 
 from deskrpg_plugin import events
 from deskrpg_plugin.common import RequestError
-from deskrpg_plugin.contract_fields import EVENTS_PAGE_KEYS
+from deskrpg_plugin.contract_fields import EVENTS_PAGE_KEYS, STARTED_AT, capabilities, capabilities_fingerprint
 from tests.fakes_cron import install_fake_cron
 from tests.fakes_events import append_deleted, events_client, install_fake_events
 
@@ -92,6 +92,9 @@ async def test_커서가_없으면_빈_목록과_지금_토큰을_돌려준다(a
     assert set(body) == EVENTS_PAGE_KEYS
     assert body["events"] == []
     assert body["has_more"] is False
+    # The same freshness marker /deskrpg/info reports, so a poller can spot a changed gateway for free.
+    assert body["capabilities_fingerprint"] == capabilities_fingerprint(capabilities(fake_api))
+    assert body["started_at"] == STARTED_AT
 
     state = events.decode_cursor(body["cursor"])
     assert state["k"] == max(e.id for e in kanban.boards["default"].events)

@@ -8,6 +8,9 @@ TS 타입을 파이썬 쪽에 그대로 베낀 것이다 — 핸들러가 응답
 `*_KEYS` 는 둘의 합집합이다. 계약 파일을 고치면 여기도 같이 고친다.
 """
 
+import hashlib
+import time
+
 # ---------------------------------------------------------------------------
 # 공통 — /deskrpg/info
 # ---------------------------------------------------------------------------
@@ -17,7 +20,9 @@ PLUGIN_INFO_REQUIRED = frozenset({
 })
 # `routes` 는 0.1.0 부터 내던 필드라 유지한다. 계약 타입에는 없지만 해가 없다.
 # `worker_plugin` 은 0.11.2 에서 더했다 — 옛 플러그인에는 없으므로 계약상 선택 키다.
-PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | frozenset({"routes", "worker_plugin"})
+PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | frozenset(
+    {"routes", "worker_plugin", "capabilities_fingerprint", "started_at"}
+)
 PLUGIN_INFO_KANBAN_KEYS = frozenset(
     {"dispatcher_present", "attachments", "attachment_max_bytes", "review_hooks", "worker_launch"}
 )
@@ -331,6 +336,27 @@ def capabilities(api) -> tuple[str, ...]:
         extra.append("initial_status")
     return CAPABILITIES + tuple(extra)
 
+
+# When this gateway process loaded the plugin (epoch seconds). A restart can change what /deskrpg/info
+# reports (worker launch, hook coverage) even when the capability list stays the same.
+STARTED_AT = int(time.time())
+
+
+def capabilities_fingerprint(caps) -> str:
+    """Order-independent short hash of a capability list.
+
+    Swapping the Hermes core can add or drop capabilities without changing the plugin version, so a
+    client caching /deskrpg/info by version alone keeps a stale verdict. Comparing this value on a
+    call it already makes lets it notice the change without an extra request.
+    """
+    joined = "\n".join(sorted(set(caps)))
+    return hashlib.sha256(joined.encode()).hexdigest()[:16]
+
+
+def freshness(api) -> dict:
+    """The markers /deskrpg/info and /deskrpg/events both carry so a client can spot a changed gateway."""
+    return {"capabilities_fingerprint": capabilities_fingerprint(capabilities(api)), "started_at": STARTED_AT}
+
 # ---------------------------------------------------------------------------
 # A.1 칸반 — 상태·열
 # ---------------------------------------------------------------------------
@@ -504,7 +530,7 @@ PLUGIN_EVENT_REQUIRED = frozenset({"id", "ts", "kind", "payload"})
 PLUGIN_EVENT_OPTIONAL = frozenset({"board", "task_id", "profile", "job_id", "run_id", "artifact_id"})
 PLUGIN_EVENT_KEYS = PLUGIN_EVENT_REQUIRED | PLUGIN_EVENT_OPTIONAL
 
-EVENTS_PAGE_KEYS = frozenset({"events", "cursor", "has_more"})
+EVENTS_PAGE_KEYS = frozenset({"events", "cursor", "has_more", "capabilities_fingerprint", "started_at"})
 EVENT_HANDOFF_KEYS = frozenset({"cursor"})
 
 TASK_STATUS_PAYLOAD_KEYS = frozenset({"from", "to", "parent_count", "title", "assignee"})
