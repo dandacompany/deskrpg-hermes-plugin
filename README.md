@@ -17,7 +17,7 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.28.1 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.28.2 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -167,6 +167,8 @@ Skill management is announced per feature (`profile_skill_read`, `profile_skill_
 `profile_skill_admin` is still announced when all five are on.
 
 ## Release
+
+0.28.2 records a Hub skill removal as `hub_uninstall` in the skill job log instead of `hub_update`.
 
 0.28.1 stops a profile from approving its own work: if the reviewer profile submits a card it implemented, or a reviewer run picks up its own submission, the card waits for a person instead of being approved by the same profile. `/deskrpg/info` now reports whether the gateway can start kanban workers (`kanban.worker_launch`): on an upstream package-manager runtime the dispatcher needs `HERMES_BIN` pointing at the Hermes launcher, otherwise workers exit with `No module named 'hermes_cli'`. The patched-core migration steps are rewritten to match a real move to upstream.
 
