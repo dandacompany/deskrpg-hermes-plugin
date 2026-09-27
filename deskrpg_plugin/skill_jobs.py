@@ -1,21 +1,43 @@
-"""스킬 설치·업데이트·curator 실행 작업 표 — Hermes REST 의 `spawn_profile_action` 과 같은 하위 프로세스 방식.
+"""Skill jobs — hub install/uninstall/update and curator runs — as the documented Hermes CLI in a child process.
 
-- 명령: `<python> -m hermes_cli.main -p <profile> <argv…>`. 실행 파일은 Hermes 의 `_dashboard_spawn_executable()`.
-- 환경: Hermes 의 `_profile_action_environment` — 게이트웨이(default) 프로필의 자격증명을 자식에게 넘기지 않는다.
-- 작업 표는 **프로세스 메모리**다. 게이트웨이가 재시작되면 사라지고, 그때 모르는 jobId 는 404 `job_unknown`.
-- 한 프로필에서 동시에 하나만(409 `job_busy`) — 설치와 curator 가 같은 스킬 폴더를 동시에 바꾸지 않게.
+- Command: `<hermes> -p <profile> skills|curator …` (the CLI documented in Hermes' `cli-commands.md` and
+  `curator.md`). `<hermes>` is resolved by the plugin, never through a Hermes internal: `DESKRPG_HERMES_BIN` or
+  `HERMES_BIN` when set, else `hermes` on PATH, else this interpreter with `-m hermes_cli.main` (the gateway's own
+  install, whose entry point loads Hermes' package-manager bootstrap).
+- Environment: a copy of the gateway's with every secret removed — the gateway (default) profile's `.env` keys and
+  anything named like a key, token, secret or password — so the child only has what the target profile's own home
+  gives it. `HERMES_HOME` points at the target profile, `HERMES_NONINTERACTIVE=1`.
+- These commands have no JSON output; the result is the exit code, the masked output tail, and a `verify` check
+  (Hermes `skills install`/`uninstall` exit 0 even when blocked).
+- A job past `JOB_TIMEOUT_SECONDS` is killed with its process group and reported failed.
+- The job table is process memory: after a gateway restart an unknown jobId is 404 `job_unknown`.
+- One job per profile at a time (409 `job_busy`), so an install and a curator run never change the same skill
+  folder at once.
 """
 
 from __future__ import annotations
 
 import asyncio
+import os
 import re
 import secrets
+import shutil
+import signal
+import sys
 import time
+from pathlib import Path
 
 from .common import RequestError, log_event
+from .envfile import read_assignments
 
 TAIL_BYTES = 4096
+JOB_TIMEOUT_SECONDS = 900
+KILL_GRACE_SECONDS = 5
+TIMEOUT_NOTE = "\n[deskrpg] timed out after {seconds}s; the process group was stopped"
+HERMES_BIN_ENVS = ("DESKRPG_HERMES_BIN", "HERMES_BIN")
+# Variables a child must never inherit from the gateway, whatever the gateway's .env says.
+_SECRET_NAME = re.compile(r"(?i)(^|_)(API_?KEY|KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|COOKIE)S?$")
+_ALWAYS_DROP = frozenset({"API_SERVER_KEY", "_HERMES_GATEWAY", "HERMES_DASHBOARD_SESSION_TOKEN"})
 DONE_TTL_SECONDS = 3600
 # Hermes `skills install`/`uninstall` 은 차단·가져오기 실패에도 종료 코드 0 으로 끝난다(`do_install` 이 return 만 한다).
 # 그래서 작업마다 결과 확인 함수(`verify`)를 받아, 0 으로 끝나도 확인이 거짓이면 실패로 적는다.
@@ -43,15 +65,59 @@ def _tail(out: bytes) -> str:
     return text
 
 
+def hermes_command() -> list[str]:
+    """How to run the Hermes CLI from here. See the module docstring for the order."""
+    for name in HERMES_BIN_ENVS:
+        value = (os.environ.get(name) or "").strip()
+        if value and os.access(value, os.X_OK) and Path(value).is_file():
+            return [value]
+    found = shutil.which("hermes")
+    if found:
+        return [found]
+    return [sys.executable, "-m", "hermes_cli.main"]
+
+
+def child_environment(api, profile: str) -> dict:
+    """The gateway's environment minus its secrets, pointed at the target profile's home."""
+    env = dict(os.environ)
+    gateway_env_keys = set()
+    try:
+        gateway_env_keys = set(read_assignments(Path(api.get_hermes_home()) / ".env"))
+    except Exception:  # noqa: BLE001 — without the file, the name rules below still apply
+        pass
+    for name in list(env):
+        if name in _ALWAYS_DROP or name in gateway_env_keys or _SECRET_NAME.search(name):
+            env.pop(name, None)
+    env["HERMES_HOME"] = str(api.get_profile_dir(profile))
+    env["HERMES_NONINTERACTIVE"] = "1"
+    return env
+
+
 async def _default_spawn(*cmd, env=None):
     return await asyncio.create_subprocess_exec(
         *cmd, env=env, stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT, start_new_session=True)
 
 
+async def _stop(proc) -> tuple[bytes, int]:
+    """Stop a timed-out child and everything it started (it runs in its own session)."""
+    for sig, wait in ((signal.SIGTERM, KILL_GRACE_SECONDS), (signal.SIGKILL, None)):
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError, AttributeError):
+            pass
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=wait)
+            return out or b"", proc.returncode if proc.returncode is not None else -1
+        except asyncio.TimeoutError:
+            continue
+    return b"", -1
+
+
 class JobTable:
-    def __init__(self, spawn=None, clock=time.monotonic):
+    def __init__(self, spawn=None, clock=time.monotonic, timeout=JOB_TIMEOUT_SECONDS):
         self._spawn = spawn or _default_spawn
+        self._timeout = timeout
         self._clock = clock
         self._jobs: dict[str, dict] = {}
         self._tasks: dict[str, asyncio.Task] = {}
@@ -70,10 +136,10 @@ class JobTable:
         self._gc()
         if self._busy(profile):
             raise RequestError(409, "job_busy", profile)
-        sub = ["-p", profile, *argv]
-        # 환경·명령을 먼저 만든다 — 여기서 실패하면 작업을 등록하지 않아 프로필이 "진행 중" 에 갇히지 않는다.
-        env = api._profile_action_environment(sub)
-        cmd = [api._dashboard_spawn_executable(), "-m", "hermes_cli.main", *sub]
+        # Build the command and environment first: if that fails no job is registered, so the profile is not left
+        # stuck "busy".
+        env = child_environment(api, profile)
+        cmd = [*hermes_command(), "-p", profile, *argv]
         job_id = secrets.token_hex(8)
         self._jobs[job_id] = {"jobId": job_id, "profile": profile, "kind": kind, "state": "running",
                               "exitCode": None, "outputTail": "", "doneAt": None}
@@ -83,13 +149,20 @@ class JobTable:
 
     async def _run(self, job_id: str, cmd: list[str], env: dict, verify=None) -> None:
         job = self._jobs[job_id]
+        timed_out = False
         try:
             proc = await self._spawn(*cmd, env=env)
-            out, _ = await proc.communicate()
-            code = proc.returncode
-        except Exception as exc:  # noqa: BLE001 — 실행 실패도 작업 결과로 남긴다
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), timeout=self._timeout)
+                code = proc.returncode
+            except asyncio.TimeoutError:
+                timed_out = True
+                out, code = await _stop(proc)
+        except Exception as exc:  # noqa: BLE001 — a failure to start is a job result too
             out, code = f"spawn failed: {type(exc).__name__}".encode(), -1
-        ok = code == 0
+        if timed_out:
+            out = (out or b"") + TIMEOUT_NOTE.format(seconds=self._timeout).encode()
+        ok = code == 0 and not timed_out
         if ok and verify is not None:
             try:
                 ok = bool(await asyncio.to_thread(verify))

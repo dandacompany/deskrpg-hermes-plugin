@@ -63,7 +63,8 @@ Routes under `/p/{profile}/deskrpg/skills`, `/curator` and `/learning` act on th
 - **Subprocesses.** Skills Hub install, uninstall and update, and curator runs, start `hermes -p <profile> skills install|uninstall|update …` or `hermes -p <profile> curator run` as a background job (one per profile) using Hermes' own executable and its profile-action environment, so the gateway profile's credentials are not passed to the child. Only the last 4 KB of output is kept, with secret-like values masked.
 - **Scan override.** Hub preview returns Hermes' security-scan verdict as `allow`, `ask` or `block`. A caller holding the profile's key can install an `ask` skill by sending `force: true`, which passes `--force` to `hermes skills install` — the same override Hermes' own CLI offers. `block` is refused whatever `force` says, and `force` is ignored for `allow`.
 - **Network.** Hub search and preview go to the skill sources configured in Hermes, through Hermes' own source router. The plugin makes no network requests of its own.
-- **File writes.** Editing and creating skills writes `SKILL.md`, `references/` and `templates/` through Hermes' skill write functions (other paths, symlinks and non-local skills are refused). Enable/disable writes `skills.disabled` in the profile's `config.yaml` with a backup. Pin, archive, restore and purge use Hermes' lifecycle functions; purge is recorded in the Hermes skill ledger.
+- **File writes.** Creating a skill and replacing its `SKILL.md` go through Hermes' skill write functions (non-local skills are refused). Reference files are read-only: writing one answers 410 `skill_reference_edit_removed` — ask the employee in chat to change it. Enable/disable writes `skills.disabled` in the profile's `config.yaml` with a backup. Pin, archive and restore use Hermes' lifecycle functions. Permanently deleting a single archived skill answers 410 `skill_purge_removed`; use the Hermes dashboard or `hermes -p <profile> curator purge`.
+- **Skill jobs.** Hub install/uninstall/update and curator runs execute the documented CLI (`hermes -p <profile> skills|curator …`) in a child process: `DESKRPG_HERMES_BIN` or `HERMES_BIN` if set, else `hermes` on PATH, else the gateway's own interpreter with `-m hermes_cli.main`. The child gets the gateway environment without the gateway `.env` keys and anything named like a key, token, secret, password, cookie or credential, with `HERMES_HOME` set to the profile. Jobs stop after 15 minutes.
 - **Memory.** Learning-graph memory nodes are returned only on request (`includeMemory=1`) and are edited or deleted only when a content hash matches. Hermes has no undo for memory deletion, so each deleted chunk is appended to `<profile home>/plugin-data/deskrpg/memory_deleted.jsonl` (`0600`) first.
 
 ### Other settings
@@ -108,11 +109,11 @@ the new launcher and restart the gateway.
 
 CI also runs the integration suite on upstream Hermes `main` (job `integration-upstream`, non-blocking; locally
 `scripts/ci-local.sh --upstream`). Tests that need the approval-policy core patch are excluded there. Known
-upstream breaks, excluded from that job with the `upstream_known_break` marker:
+upstream breaks are excluded from that job with the `upstream_known_break` marker; there are none at the moment.
 
-- **NPC skill management** (`profile_skill_admin`): Hermes main removed
-  `hermes_cli.web_server_gateway._dashboard_spawn_executable`, which skill jobs use to start `hermes` commands.
-  On such a build the capability is not announced and the skill routes are not registered.
+Skill management is announced per feature (`profile_skill_read`, `profile_skill_edit`, `profile_skill_hub`,
+`profile_curator`, `profile_learning_graph`), so a Hermes build that moves one symbol turns off only that feature.
+`profile_skill_admin` is still announced when all five are on.
 
 ## Release
 

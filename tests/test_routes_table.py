@@ -313,16 +313,31 @@ def test_get_skills_라우트는_capability_와_같은_심볼_집합을_본다(f
     assert "profile_skills" not in capabilities(fake_api)
 
 
-def test_hub_curator_관계도_라우트는_profile_skill_admin_과_같은_심볼_집합을_본다(fake_api):
-    from deskrpg_plugin.contract_fields import capabilities
+def test_skill_features_turn_off_one_at_a_time(fake_api):
+    """A Hermes build that moves one symbol turns off only the feature that needs it."""
+    from deskrpg_plugin.contract_fields import SKILL_CAPABILITIES, capabilities
 
-    names = ("/skills/hub/", "/curator", "/learning/")
-    all_paths = [p for _m, p, _h, _s in routes.routes_for(fake_api)]
-    assert sum(any(n in p for n in names) for p in all_paths) == 14
+    def paths():
+        return [p for _m, p, _h, _s in routes.routes_for(fake_api)]
+
+    assert set(SKILL_CAPABILITIES) <= set(capabilities(fake_api))
+    assert sum("/learning/" in p for p in paths()) == 4
     fake_api.build_learning_graph = None
-    paths = [p for _m, p, _h, _s in routes.routes_for(fake_api)]
-    assert not [p for p in paths if any(n in p for n in names)]
-    assert "profile_skill_admin" not in capabilities(fake_api)
+    assert not [p for p in paths() if "/learning/" in p]
+    caps = capabilities(fake_api)
+    assert "profile_learning_graph" not in caps and "profile_skill_admin" not in caps
+    assert {"profile_skill_read", "profile_skill_edit", "profile_skill_hub", "profile_curator"} <= set(caps)
+    assert sum("/skills/hub/" in p for p in paths()) == 6 and sum("/curator" in p for p in paths()) == 4
+
+    fake_api._resolve_source_meta_and_bundle = None
+    assert not [p for p in paths() if "/skills/hub/" in p]
+    assert "profile_skill_hub" not in capabilities(fake_api)
+    assert "/p/{profile}/deskrpg/skills/{name}/file" in paths()
+
+
+def test_single_permanent_delete_route_stays_to_answer_410(fake_api):
+    fake_api._archive_dir = None
+    assert "/p/{profile}/deskrpg/skills/archive/{name}" in [p for _m, p, _h, _s in routes.routes_for(fake_api)]
 
 
 def test_MCP_고정_세그먼트는_서버_이름_와일드카드보다_먼저다():

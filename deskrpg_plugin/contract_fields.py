@@ -61,21 +61,33 @@ _OAUTH_SYMBOLS = (
     "_oauth_sessions", "_oauth_sessions_lock", "_oauth_profile_name", "clear_provider_auth",
 )
 
-# 0.15.0 — NPC 스킬 관리(spec §3.1). `_hermes_api.OPTIONAL_SPEC` 의 0.15.0 블록과 같은 집합이다.
-_SKILL_ADMIN_SYMBOLS = (
-    "_find_all_skills", "_sort_skills",
-    "load_usage", "activity_count", "latest_activity_at", "is_curator_managed",
-    "is_hub_installed", "is_bundled", "set_pinned", "archive_skill", "restore_skill",
-    "list_archived_skill_names", "_archive_dir", "_find_skill_dir", "_find_external_skill_dir",
-    "capture_before", "append_entry", "set_ledger_actor", "reset_ledger_actor",
-    "_create_skill", "_edit_skill", "_write_file", "_find_skill",
-    "is_external_skill_path", "clear_skills_system_prompt_cache",
-    "load_state", "is_enabled", "is_paused", "set_paused", "get_interval_hours",
-    "get_min_idle_hours", "get_stale_after_days", "get_archive_after_days",
-    "build_learning_graph", "node_detail", "edit_node", "delete_node", "parse_node_kind",
-    "create_source_router", "parallel_search_sources", "_resolve_source_meta_and_bundle",
-    "quarantine_bundle", "scan_skill", "should_allow_install",
-    "_profile_action_environment", "_dashboard_spawn_executable",
+# NPC skill management, split by feature so a Hermes build that moves one symbol turns off only that feature.
+# `_hermes_api.OPTIONAL_SPEC` loads all of them. Hub jobs and curator runs use the documented Hermes CLI
+# (skill_jobs), so they need no symbol of their own.
+_SKILL_CORE_SYMBOLS = (
+    "_find_all_skills", "_sort_skills", "load_usage", "activity_count", "latest_activity_at", "is_curator_managed",
+    "is_hub_installed", "is_bundled", "is_external_skill_path", "_find_skill_dir", "_find_external_skill_dir",
+    "set_ledger_actor", "reset_ledger_actor", "clear_skills_system_prompt_cache",
+)
+_SKILL_READ_SYMBOLS = _SKILL_CORE_SYMBOLS + ("list_archived_skill_names", "_archive_dir")
+_SKILL_EDIT_SYMBOLS = _SKILL_CORE_SYMBOLS + (
+    "_create_skill", "_edit_skill", "_find_skill", "set_pinned", "archive_skill", "restore_skill",
+)
+_SKILL_HUB_SYMBOLS = _SKILL_CORE_SYMBOLS + (
+    "create_source_router", "parallel_search_sources", "_resolve_source_meta_and_bundle", "quarantine_bundle",
+    "scan_skill", "should_allow_install",
+)
+_CURATOR_SYMBOLS = (
+    "load_state", "is_enabled", "is_paused", "set_paused", "get_interval_hours", "get_min_idle_hours",
+    "get_stale_after_days", "get_archive_after_days",
+)
+_LEARNING_GRAPH_SYMBOLS = _SKILL_CORE_SYMBOLS + (
+    "build_learning_graph", "node_detail", "edit_node", "delete_node", "parse_node_kind", "archive_skill",
+    "_edit_skill",
+)
+# Capability name → the check the capability and its routes share.
+SKILL_CAPABILITIES = (
+    "profile_skill_read", "profile_skill_edit", "profile_skill_hub", "profile_curator", "profile_learning_graph",
 )
 
 
@@ -102,9 +114,43 @@ def has_mcp_admin_symbols(api) -> bool:
     return _has(api, _MCP_ADMIN_SYMBOLS)
 
 
+def has_skill_read(api) -> bool:
+    """`profile_skill_read`: skill detail, file reading, the archive list."""
+    return _has(api, _SKILL_READ_SYMBOLS)
+
+
+def has_skill_edit(api) -> bool:
+    """`profile_skill_edit`: create, replace SKILL.md, enable/disable, pin, archive, restore."""
+    return _has(api, _SKILL_EDIT_SYMBOLS)
+
+
+def has_skill_hub(api) -> bool:
+    """`profile_skill_hub`: hub search and preview in-process; install/uninstall/update via the Hermes CLI."""
+    return _has(api, _SKILL_HUB_SYMBOLS)
+
+
+def has_curator(api) -> bool:
+    """`profile_curator`: curator status and pause in-process; runs via the Hermes CLI."""
+    return _has(api, _CURATOR_SYMBOLS)
+
+
+def has_learning_graph(api) -> bool:
+    """`profile_learning_graph`: the learning graph and its nodes."""
+    return _has(api, _LEARNING_GRAPH_SYMBOLS)
+
+
+SKILL_CHECKS = {
+    "profile_skill_read": has_skill_read,
+    "profile_skill_edit": has_skill_edit,
+    "profile_skill_hub": has_skill_hub,
+    "profile_curator": has_curator,
+    "profile_learning_graph": has_learning_graph,
+}
+
+
 def has_skill_admin_symbols(api) -> bool:
-    """`profile_skill_admin` capability 와 스킬 관리 라우트 전부가 같은 판정을 쓴다."""
-    return _has(api, _SKILL_ADMIN_SYMBOLS) and has_skill_symbols(api)
+    """`profile_skill_admin`, kept for DeskRPG builds that know only this one name: every skill feature is on."""
+    return all(check(api) for check in SKILL_CHECKS.values()) and has_skill_symbols(api)
 
 
 def _has(api, names) -> bool:
@@ -261,6 +307,7 @@ def capabilities(api) -> tuple[str, ...]:
         extra.append("profile_skills")
     if has_skill_admin_symbols(api):
         extra.append("profile_skill_admin")
+    extra.extend(name for name, check in SKILL_CHECKS.items() if check(api))
     if has_mcp_admin_symbols(api):
         extra.append("profile_mcp_admin")
     if has_approval_policy_symbols(api):
