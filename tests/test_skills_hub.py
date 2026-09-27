@@ -104,8 +104,11 @@ async def test_hub_가_아닌_스킬은_삭제하지_않는다(aiohttp_client, f
     fake_api.skills.seed("sophie", "pdf-tools", source="hub")
     ok = await client.post("/p/sophie/deskrpg/skills/hub/uninstall", json={"name": "pdf-tools"})
     assert ok.status == 202
-    await skill_jobs.TABLE.wait((await ok.json())["jobId"])
+    job_id = (await ok.json())["jobId"]
+    await skill_jobs.TABLE.wait(job_id)
     assert calls[0][-4:] == ["skills", "uninstall", "pdf-tools", "--yes"]
+    job = await client.get(f"/p/sophie/deskrpg/skills/hub/installs/{job_id}")
+    assert (await job.json())["kind"] == "hub_uninstall"
 
 
 async def test_업데이트는_이름이_없으면_전체(aiohttp_client, fake_api, monkeypatch):

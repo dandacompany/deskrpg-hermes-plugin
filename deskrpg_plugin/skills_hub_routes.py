@@ -163,7 +163,7 @@ def uninstall_handler(api):
         home = resolve_profile_home(api, profile)
         name = _skill_name(require_str(await read_json_object(request), "name"))
         await run_blocking(_require_hub, api, home, name)
-        job = skill_jobs.TABLE.start(api, api.normalize_profile_name(profile), "hub_update",
+        job = skill_jobs.TABLE.start(api, api.normalize_profile_name(profile), "hub_uninstall",
                                      ["skills", "uninstall", name, "--yes"],
                                      verify=lambda: not _hub_installed(api, home, name))
         return web.json_response({"jobId": job}, status=202)
