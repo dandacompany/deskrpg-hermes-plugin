@@ -1,18 +1,19 @@
 """실제 Hermes 위의 NPC 스킬 관리(0.15.0). 가짜로는 "Hermes 쓰기 함수·보관·ledger·메모리 파서가 실제로 그렇게 도는가" 를 못 잡는다.
 
 Hub(네트워크)와 하위 프로세스 작업(설치·curator 실행)은 여기서 돌리지 않는다 — 스테이징 화면 확인에서 본다.
+The job runner itself is exercised with the real Hermes CLI (`skills list`) and with a stand-in binary that prints
+the environment it was given.
 """
 
 import hashlib
+from pathlib import Path
 
 import pytest
 
-from deskrpg_plugin.contract_fields import has_skill_admin_symbols
+from deskrpg_plugin import skill_jobs
+from deskrpg_plugin.contract_fields import SKILL_CAPABILITIES, capabilities, has_skill_admin_symbols
 
-# Known upstream break: Hermes main removed `web_server_gateway._dashboard_spawn_executable`, which skill jobs
-# need, so `profile_skill_admin` is off there. The upstream job deselects this module until the plugin stops
-# depending on that internal; the pinned job still runs it.
-pytestmark = [pytest.mark.integration, pytest.mark.upstream_known_break]
+pytestmark = pytest.mark.integration
 
 SKILL = "---\nname: invoice-check\ndescription: 청구서 확인 절차\n---\n# 청구서 확인\n\n1. 금액을 대조한다.\n"
 
@@ -23,6 +24,7 @@ def _sha(text: str) -> str:
 
 async def test_설치된_Hermes_에_스킬_관리_심볼이_다_있다(api):
     assert has_skill_admin_symbols(api)
+    assert set(SKILL_CAPABILITIES) <= set(capabilities(api))
 
 
 async def test_로컬_스킬_생애주기_왕복(client, make_profile):
@@ -41,12 +43,10 @@ async def test_로컬_스킬_생애주기_왕복(client, make_profile):
     stale = await client.put(f"{base}/invoice-check/file",
                              json={"path": "SKILL.md", "content": "---\nname: invoice-check\n---\n", "baseHash": cur["hash"]})
     assert stale.status == 409 and (await stale.json())["error"] == "skill_changed"
+    # Reference files are read-only now: ask the employee in chat.
     ref = await client.put(f"{base}/invoice-check/file",
                            json={"path": "references/rules.md", "content": "규칙", "baseHash": None})
-    assert ref.status == 200, await ref.text()
-    scripts = await client.put(f"{base}/invoice-check/file",
-                               json={"path": "scripts/x.py", "content": "print(1)", "baseHash": None})
-    assert scripts.status == 403
+    assert ref.status == 410 and (await ref.json())["error"] == "skill_reference_edit_removed"
 
     rows = {r["name"]: r for r in (await (await client.get(base)).json())["skills"]}
     assert rows["invoice-check"]["source"] == "local"
@@ -62,13 +62,14 @@ async def test_로컬_스킬_생애주기_왕복(client, make_profile):
     assert "invoice-check" in archived
     assert (await client.post(f"{base}/archive/invoice-check/restore")).status == 200
     detail = await (await client.get(f"{base}/invoice-check")).json()
-    assert {"SKILL.md", "references/rules.md"} <= {f["path"] for f in detail["files"]}
+    assert "SKILL.md" in {f["path"] for f in detail["files"]}
 
     assert (await client.post(f"{base}/invoice-check/archive")).status == 200
+    # A single permanent delete is gone: the archived skill stays.
     purge = await client.delete(f"{base}/archive/invoice-check", headers={"X-DeskRPG-Actor": "u-1"})
-    assert purge.status == 200, await purge.text()
+    assert purge.status == 410 and (await purge.json())["error"] == "skill_purge_removed"
     left = [a["name"] for a in (await (await client.get(f"{base}/archive")).json())["archived"]]
-    assert "invoice-check" not in left
+    assert "invoice-check" in left
 
 
 async def test_켜기_끄기가_Hermes_꺼짐_목록에_들어간다(client, make_profile):
@@ -114,3 +115,56 @@ async def test_curator_상태와_일시정지(client, make_profile):
     assert (await (await client.get("/p/noah/deskrpg/curator")).json())["paused"] is True
     make_profile("mia")
     assert (await (await client.get("/p/mia/deskrpg/curator")).json())["paused"] is False
+
+
+
+async def test_a_job_runs_the_real_hermes_cli_for_the_right_profile(api, client, make_profile, monkeypatch):
+    make_profile("noah")
+    make_profile("mia")
+    created = await client.post("/p/noah/deskrpg/skills", json={"name": "invoice-check", "content": SKILL})
+    assert created.status == 201, await created.text()
+    # No `hermes` from the developer's PATH: this interpreter's Hermes, the one under test.
+    for name in skill_jobs.HERMES_BIN_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(skill_jobs.shutil, "which", lambda name: None)
+    table = skill_jobs.JobTable(timeout=120)
+    outputs = {}
+    for profile in ("noah", "mia"):
+        job = table.start(api, profile, "probe", ["skills", "list", "--source", "local"])
+        await table.wait(job)
+        got = table.get(profile, job)
+        assert got["state"] == "succeeded", got["outputTail"]
+        outputs[profile] = got["outputTail"]
+    assert "invoice-check" in outputs["noah"]
+    assert "invoice-check" not in outputs["mia"]
+
+
+async def test_a_job_child_gets_no_gateway_secret(api, make_profile, monkeypatch, tmp_path):
+    make_profile("noah")
+    # The stand-in reports only what the test needs — never the whole environment (it would print the
+    # developer's shell variables into the test output).
+    stand_in = tmp_path / "report-env"
+    stand_in.write_text(
+        "#!/bin/sh\n"
+        'echo "home=$HERMES_HOME"\n'
+        'echo "noninteractive=$HERMES_NONINTERACTIVE"\n'
+        '[ -n "$API_SERVER_KEY" ] && echo "leak=API_SERVER_KEY"\n'
+        '[ -n "$OPENROUTER_API_KEY" ] && echo "leak=OPENROUTER_API_KEY"\n'
+        '[ -n "$GATEWAY_ONLY_SETTING" ] && echo "leak=GATEWAY_ONLY_SETTING"\n'
+        "exit 0\n"
+    )
+    stand_in.chmod(0o755)
+    (Path(api.get_hermes_home()) / ".env").write_text("GATEWAY_ONLY_SETTING=from-gateway-env\n")
+    monkeypatch.setenv("DESKRPG_HERMES_BIN", str(stand_in))
+    monkeypatch.setenv("API_SERVER_KEY", "gateway-owner-secret")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-gateway-secret")
+    monkeypatch.setenv("GATEWAY_ONLY_SETTING", "from-gateway-env")
+    table = skill_jobs.JobTable(timeout=30)
+    job = table.start(api, "noah", "probe", ["skills", "list"])
+    await table.wait(job)
+    got = table.get("noah", job)
+    lines = set(got["outputTail"].splitlines())
+    assert got["state"] == "succeeded"
+    assert not [line for line in lines if line.startswith("leak=")]
+    assert f"home={api.get_profile_dir('noah')}" in lines
+    assert "noninteractive=1" in lines
