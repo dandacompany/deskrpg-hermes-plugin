@@ -31,6 +31,7 @@ from aiohttp import web
 from .common import guarded, run_blocking
 from .contract_fields import in_app_device_login
 from .cron import resolve_profile_home
+from .model_order import order_models
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +105,15 @@ def _models_for(provider_id: str) -> list[str]:
     **우리가 다시 정렬하지 않는다.** 이 목록의 순서는 Hermes 가 의도한 순서다(codex 는
     priority 순, 일부 프로바이더는 큐레이션 우선). 여기서 다시 섞으면 CLI 피커와 순서가
     갈리고 그 의도를 잃는다.
+
+    Exception: providers whose list Hermes passes through in models.dev insertion order
+    (Gemini, xAI, Mistral, Groq) are reordered by family and newest version, see `model_order`.
     """
+    return order_models(provider_id, _hermes_models(provider_id))
+
+
+def _hermes_models(provider_id: str) -> list[str]:
+    """The picker list as Hermes builds it, falling back to curated + models.dev on old builds."""
     try:
         from hermes_cli.models import cached_provider_model_ids
 
