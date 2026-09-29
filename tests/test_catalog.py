@@ -314,3 +314,16 @@ def test_피커_조회가_실패해도_목록이_죽지_않는다(monkeypatch):
                  curated={"p": {"models": ["curated-1"]}}, mdev={})
     _fake_picker(monkeypatch, boom)
     assert catalog._models_for("p") == ["curated-1"]
+
+
+def test_models_dev_ordered_provider_list_is_sorted_newest_first(monkeypatch):
+    _fake_hermes(monkeypatch, registry={"gemini": _cfg("gemini")}, auth={"gemini": {"configured": True}})
+    _fake_picker(monkeypatch, lambda pid: ["gemma-4-31b-it", "gemini-3.6-flash", "gemini-3.8-flash"])
+    assert catalog._models_for("gemini") == ["gemini-3.8-flash", "gemini-3.6-flash", "gemma-4-31b-it"]
+
+
+def test_the_fallback_merge_is_sorted_too(monkeypatch):
+    _fake_hermes(monkeypatch, registry={"gemini": _cfg("gemini")}, auth={"gemini": {"configured": True}},
+                 mdev={"gemini": ["gemini-2.5-pro", "gemini-3.8-flash"]})
+    _fake_picker(monkeypatch, lambda pid: [])
+    assert catalog._models_for("gemini") == ["gemini-3.8-flash", "gemini-2.5-pro"]
