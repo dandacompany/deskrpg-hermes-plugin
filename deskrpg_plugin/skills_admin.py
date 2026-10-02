@@ -10,8 +10,11 @@
 from __future__ import annotations
 
 import datetime as _dt
+import logging
 import re
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from aiohttp import web
 
@@ -42,9 +45,40 @@ from .skills_common import (
 )
 
 
-def _row_extra(api, name: str, usage: dict) -> dict:
+def _build_dir_map(api) -> dict[str, Path] | None:
+    required = ("_skills_dir", "iter_skill_index_files", "get_all_skills_dirs", "is_external_skill_path")
+    if not all(callable(getattr(api, n, None)) for n in required):
+        return None
+    dir_map: dict[str, Path] = {}
+    try:
+        base = api._skills_dir()
+        if base and base.exists():
+            for p in api.iter_skill_index_files(base, "SKILL.md"):
+                if not api.is_external_skill_path(p):
+                    name = api._read_skill_name(p, fallback=p.parent.name) if callable(getattr(api, "_read_skill_name", None)) else p.parent.name
+                    if name not in dir_map:
+                        dir_map[name] = p.parent
+
+        for ext_base in api.get_all_skills_dirs()[1:]:
+            if ext_base and ext_base.exists():
+                for p in ext_base.rglob("SKILL.md"):
+                    if callable(getattr(api, "is_excluded_skill_path", None)) and api.is_excluded_skill_path(p):
+                        continue
+                    name = api._read_skill_name(p, fallback=p.parent.name) if callable(getattr(api, "_read_skill_name", None)) else p.parent.name
+                    if name not in dir_map:
+                        dir_map[name] = p.parent
+        return dir_map
+    except Exception as exc:
+        logger.warning("[deskrpg] _build_dir_map fallback: %s", exc)
+        return None
+
+
+def _row_extra(api, name: str, usage: dict, dir_map: dict[str, Path] | None = None) -> dict:
     rec = usage.get(name) or {}
-    path = api._find_skill_dir(name) or api._find_external_skill_dir(name)
+    if dir_map is not None:
+        path = dir_map.get(name)
+    else:
+        path = api._find_skill_dir(name) or api._find_external_skill_dir(name)
     return {
         "source": classify(api, name, Path(path) if path else None),
         "curatorManaged": bool(api.is_curator_managed(name)),
@@ -59,7 +93,8 @@ def _row_extra(api, name: str, usage: dict) -> dict:
 def enrich_rows(api, rows: list[dict]) -> list[dict]:
     """`picker.skill_rows` 의 행에 0.15.0 필드를 덧붙인다. **홈 스코프 안에서만** 부른다."""
     usage = api.load_usage() or {}
-    return [{**row, **_row_extra(api, row["name"], usage)} for row in rows]
+    dir_map = _build_dir_map(api)
+    return [{**row, **_row_extra(api, row["name"], usage, dir_map)} for row in rows]
 
 
 def file_tree(ref: SkillRef) -> list[dict]:
