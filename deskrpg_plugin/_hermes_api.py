@@ -264,6 +264,11 @@ OPTIONAL_SPEC = (
     # 없어도 사건은 남는다(패턴·명령만 빠진다) — capability 판정에 넣지 않는다.
     ("tools.approval_detection", ("detect_dangerous_command",)),
     ("agent.redact", ("redact_sensitive_text",)),
+    # 0.31.0 — skill chips in chat. Public builders the TUI and messaging gateway use for `/skill …`; without
+    # every one of them the `skill_invocation` capability is not announced (skill_invocation.available).
+    ("agent.skill_commands", ("build_skill_invocation_message", "build_stacked_skill_invocation_message",
+                              "resolve_skill_command_key", "get_skill_commands")),
+    ("agent.skill_utils", ("get_disabled_skill_names",)),
 )
 
 def _pairs(names):

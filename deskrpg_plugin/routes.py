@@ -17,6 +17,7 @@ from . import profiles as _profiles
 from . import worker_plugin as _worker_plugin
 from . import config as _config
 from . import catalog as _catalog
+from . import skill_invocation as _skill_invocation
 from . import picker as _picker
 from . import skills_admin as _skills_admin
 from . import tool_providers as _tool_providers
@@ -88,6 +89,7 @@ ROUTES = [
     ("PUT", "/p/{profile}/deskrpg/identity", "put_identity", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/config", "get_config", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/catalog", "get_catalog", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/skill-invocation", "skill_invocation", Scope.PROFILE),
     ("GET", "/p/{profile}/deskrpg/toolsets", "get_toolsets", Scope.PROFILE),
     # 0.15.0 — Hub(검색·미리보기·설치·삭제·업데이트). 고정 세그먼트라 `/skills/{name}` 와일드카드 행보다 위에 둔다.
     ("GET", "/p/{profile}/deskrpg/skills/hub/search", "skill_hub_search", Scope.PROFILE),
@@ -269,6 +271,7 @@ _HANDLERS = {
     "get_config": lambda api: _config.get_handler(api),
     "put_config": lambda api: _config.put_handler(api),
     "get_catalog": lambda api: _catalog.get_handler(api),
+    "skill_invocation": lambda api: _skill_invocation.post_handler(api),
     "get_toolsets": lambda api: _picker.toolsets_handler(api),
     "get_skills": lambda api: _picker.skills_handler(api),
     "skill_detail": lambda api: _skills_admin.detail_handler(api),
@@ -632,6 +635,7 @@ _OPTIONAL_ROUTES = {
     "kanban_blackboard": "latest_blackboard",
     "get_toolsets": _contract_fields.has_toolset_symbols,
     "get_skills": _contract_fields.has_skill_symbols,
+    "skill_invocation": _contract_fields.has_skill_invocation_symbols,
     "skill_detail": _contract_fields.has_skill_read,
     "skill_file_get": _contract_fields.has_skill_read,
     "skill_create": _contract_fields.has_skill_edit,
