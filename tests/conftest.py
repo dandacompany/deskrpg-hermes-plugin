@@ -194,6 +194,13 @@ def fake_api(tmp_path):
         swarm_calls=swarm_calls,
         # 0.7.1 — hermes_cli.dashboard_auth.prefix (OPTIONAL_SPEC). 기본은 공개 주소 없음.
         resolve_public_url=lambda: "",
+        # 0.31.0 — skill chips: Hermes' public `/skill` builders (OPTIONAL_SPEC). Empty stand-ins here;
+        # tests/test_skill_invocation.py installs a home-scoped fake.
+        get_skill_commands=lambda: {},
+        resolve_skill_command_key=lambda command: None,
+        get_disabled_skill_names=lambda platform=None: set(),
+        build_skill_invocation_message=lambda cmd_key, user_instruction="": None,
+        build_stacked_skill_invocation_message=lambda cmd_keys, user_instruction="": None,
         # 0.9.0 — 직원 설정 피커 (OPTIONAL_SPEC). fake 는 심볼이 다 있는 빌드를 흉내 낸다.
         _get_effective_configurable_toolsets=lambda: list(FAKE_TOOLSETS),
         _get_platform_tools=_get_platform_tools,

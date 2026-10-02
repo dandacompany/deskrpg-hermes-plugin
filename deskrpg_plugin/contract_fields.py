@@ -164,6 +164,18 @@ def _has(api, names) -> bool:
     return all(getattr(api, n, None) is not None for n in names)
 
 
+# Hermes' public builders for `/skill …` (agent.skill_commands, agent.skill_utils).
+_SKILL_INVOCATION_SYMBOLS = (
+    "build_skill_invocation_message", "build_stacked_skill_invocation_message",
+    "resolve_skill_command_key", "get_skill_commands", "get_disabled_skill_names",
+)
+
+
+def has_skill_invocation_symbols(api) -> bool:
+    """The `skill_invocation` capability and its route are judged by the same symbol set."""
+    return _has(api, _SKILL_INVOCATION_SYMBOLS)
+
+
 def has_toolset_symbols(api) -> bool:
     """`profile_toolsets` capability 와 config PUT `enabledToolsets` 가 같은 판정을 쓴다."""
     return _has(api, _TOOLSET_SYMBOLS)
@@ -330,6 +342,8 @@ def capabilities(api) -> tuple[str, ...]:
         from .review_contract import REVIEW_HOOKS_CAPABILITY
 
         extra.append(REVIEW_HOOKS_CAPABILITY)
+    if has_skill_invocation_symbols(api):
+        extra.append("skill_invocation")
     if has_initial_status(api):
         # 실행 전 승인 관문이 카드를 `blocked` 로 세울 수 있는가. 화면은 이 값이 없으면
         # "플러그인 업데이트 필요" 로 안내한다 — 조용히 승인 없이 실행되지 않게.

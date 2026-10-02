@@ -45,7 +45,7 @@ async def test_info_가_계약_필드를_전부_낸다(aiohttp_client, fake_api,
     assert body["capabilities"] == [
         "kanban", "cron", "events", "event_cursor_handoff", "artifacts", "kanban_views", "card_proposals", "worker_plugin", "kanban_attachment_list", "board_archive", "kanban_task_events", "kanban_run_events", "profile_key_issue", "session_sources", "ask_user", "swarm",
         "profile_toolsets", "profile_skills", "profile_skill_admin", "profile_skill_read", "profile_skill_edit", "profile_skill_hub", "profile_curator", "profile_learning_graph", "profile_mcp_admin", "profile_approval_policy", "profile_clone", "profile_provider_keys",
-        "profile_oauth", "profile_tool_providers", "initial_status",
+        "profile_oauth", "profile_tool_providers", "skill_invocation", "initial_status",
     ]
     assert "artifacts" in body["capabilities"] and isinstance(body["artifact_max_bytes"], int)
     # 카드 제안은 Hermes 빌드와 무관하게 이 플러그인이 늘 싣는다 — 구버전 플러그인에는 없으므로

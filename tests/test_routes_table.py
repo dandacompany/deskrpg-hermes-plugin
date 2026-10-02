@@ -24,6 +24,8 @@ EXPECTED_ROUTES = {
     # 같지만(루트 auth 폴백), 프로필이 자기 자격증명을 갖는 순간 갈린다 —
     # 그때 스코프를 좁히면 이미 쓰던 화면이 깨지므로 처음부터 좁게 둔다.
     ("GET", "/p/{profile}/deskrpg/catalog", _PROFILE),
+    # 0.31.0 skill chips: expand `/skill … instruction` with Hermes' builders (profile key)
+    ("POST", "/p/{profile}/deskrpg/skill-invocation", _PROFILE),
     # 0.9.0 — 직원 설정 피커: 프로필 홈 스코프의 툴셋·스킬 목록.
     ("GET", "/p/{profile}/deskrpg/toolsets", _PROFILE),
     # 0.15.0 — 스킬 Hub(검색·미리보기·설치·설치 작업 조회·삭제·업데이트).
@@ -167,8 +169,8 @@ EXPECTED_ROUTES = {
 
 
 def test_라우트_테이블이_스펙의_예순여덟_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 127
-    assert len(routes.ROUTES) == 127, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+    assert len(EXPECTED_ROUTES) == 128
+    assert len(routes.ROUTES) == 128, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
@@ -180,9 +182,9 @@ def test_소유자_라우트는_41_개_프로필_라우트는_27_개다():
     #   + board default policy GET·PUT 2 = 46 ·
     # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 + 0.10.0 도구 프로바이더 2
     #   + 0.15.0 스킬 CRUD 11 + 스킬 Hub 6 + curator·관계도 8 + 0.17.0 MCP 21 + 0.18.0 승인 정책 4 + session sources 1
-    #   + 대화 중 묻기 3 = 81.
+    #   + 대화 중 묻기 3 + skill invocation 1 = 82.
     assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 1 + 21 + 1 + 2 + 1 + 2 + 2 + 6 + 3 + 2,
-                        routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11 + 6 + 8 + 21 + 4 + 1 + 3}
+                        routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11 + 6 + 8 + 21 + 4 + 1 + 3 + 1}
 
 
 def test_OAuth_취소_행이_연결_끊기_행보다_앞에_있다():
