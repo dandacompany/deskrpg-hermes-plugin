@@ -125,3 +125,26 @@ def test_blob_symlink_is_never_read(tmp_path):
     path = s.blob_path(f['id']);path.unlink();path.symlink_to(original)
     with pytest.raises(RequestError, match='attachment_not_found'):
         s.read_file(f['id'])
+
+
+def test_sweep_reclaims_only_unused_profile_copies_and_retains_original(tmp_path):
+    s = store(tmp_path)
+    f, _ = upload(s)
+    s.link_file(f['id'], 'dm-1', 'message')
+    alice = tmp_path / 'alice.pdf'
+    bob = tmp_path / 'bob.pdf'
+    alice.write_bytes(b'copy'); bob.write_bytes(b'copy')
+    with s.connection() as db:
+        db.executemany('INSERT INTO copies VALUES(?,?,?,?)', [
+            (f['id'], 'alice', str(alice), 4), (f['id'], 'bob', str(bob), 4)])
+    lease = s.acquire_lease(f['id'], 'alice', 'sid', 'prepare', now=100)
+    s.sweep_files(now=101, grace=False)
+    assert alice.exists()
+    assert not bob.exists()
+    assert s.read_file(f['id']) == b'%PDF-1.4\noriginal'
+    s.release_lease(lease['leaseId'], 'alice', 'sid', 'prepare', now=102)
+    s.sweep_files(now=103, grace=False)
+    assert not alice.exists()
+    with s.connection() as db:
+        assert db.execute('SELECT COUNT(*) FROM copies').fetchone()[0] == 0
+    assert s.read_file(f['id']) == b'%PDF-1.4\noriginal'

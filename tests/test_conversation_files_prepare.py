@@ -115,3 +115,12 @@ def test_failed_retry_cannot_release_an_already_ready_execution_lease(tmp_path):
     with pytest.raises(RequestError):
         rt.prepare(g['grant'], 'request', 'alice')
     assert rt.store.delete_file(f['id'])['state'] == 'pending'
+
+
+def test_http_lease_uses_granted_session_when_ancestor_also_has_binding(tmp_path):
+    rt, _ = runtime(tmp_path)
+    f, _ = rt.store.store_file('dm', 'r', 'a.pdf', 'application/pdf', [b'original'])
+    rt.issue_grant(f['id'], 'dm', 'alice', 'key', 'child')
+    grant = rt.issue_grant(f['id'], 'dm', 'alice', 'key', 'sid')
+    prepared = rt.prepare(grant['grant'], 'new-request', 'alice')
+    assert rt.store.renew_lease(prepared['leaseId'], 'alice', 'sid', 'new-request')['leaseId'] == prepared['leaseId']

@@ -104,7 +104,8 @@ class FileRuntime:
             terminal_token = self.api.install_profile_terminal_scope(self.home(profile))
             tokens = self.api.set_session_vars(platform='api_server', profile=profile,
                 session_key=binding['session_key'], session_id=session_id, async_delivery=False)
-            return self.prepare_bound(binding['file'], request_id, profile, session_id, session_id)
+            return self.prepare_bound(binding['file'], request_id, profile, session_id, session_id,
+                                      lease_session_id=binding['session_id'])
         finally:
             if tokens is not None:
                 self.api.clear_session_vars(tokens)
@@ -112,10 +113,12 @@ class FileRuntime:
                 self.api.reset_terminal_scope(terminal_token)
             self.api.reset_hermes_home_override(home_token)
 
-    def prepare_bound(self, file_id, request_id, profile, session_id, task_id):
+    def prepare_bound(self, file_id, request_id, profile, session_id, task_id, *, lease_session_id=None):
         identifier(request_id); identifier(task_id)
         sessions = self.authorized_sessions(profile, session_id)
-        binding = self.store.bound_file(file_id, profile, sessions)
+        # HTTP renew/release carries the exact session in the grant, even after compression.
+        binding = self.store.bound_file(file_id, profile,
+                                        [lease_session_id] if lease_session_id in sessions else sessions)
         backend = self.api.terminal_env('TERMINAL_ENV', 'local')
         if backend not in ('local', 'docker'):
             raise RequestError(422, 'attachment_backend_unsupported')

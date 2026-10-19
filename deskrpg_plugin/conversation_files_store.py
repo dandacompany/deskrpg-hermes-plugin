@@ -284,6 +284,19 @@ class FileStore:
         count = 0
         for fid in ids:
             count += self.delete_file(fid, now=now)['state'] == 'deleted'
+        # Reserve and remove idle execution copies under the same lock used by preparation.
+        # Linked originals and historical session bindings remain available for re-preparation.
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            idle = db.execute('''SELECT c.* FROM copies c WHERE NOT EXISTS (
+                SELECT 1 FROM leases l WHERE l.file=c.file AND l.profile=c.profile
+                AND l.released=0 AND l.expires>?)''', (now,)).fetchall()
+            for row in idle:
+                path = Path(row['path'])
+                if path.is_symlink() or any(p.is_symlink() for p in path.parents):
+                    raise RequestError(400, 'attachment_invalid_file')
+                path.unlink(missing_ok=True)
+                db.execute('DELETE FROM copies WHERE file=? AND profile=?', (row['file'], row['profile']))
         # Reconcile files left by a crash between rename and transaction commit.
         with self.connection() as db:
             known = {r[0] for r in db.execute('SELECT id FROM files')}
