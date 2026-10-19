@@ -20,7 +20,7 @@ PLUGIN_INFO_REQUIRED = frozenset({
 })
 # `routes` 는 0.1.0 부터 내던 필드라 유지한다. 계약 타입에는 없지만 해가 없다.
 # `worker_plugin` 은 0.11.2 에서 더했다 — 옛 플러그인에는 없으므로 계약상 선택 키다.
-PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | frozenset(
+PLUGIN_INFO_KEYS = PLUGIN_INFO_REQUIRED | {"conversation_files"} | frozenset(
     {"routes", "worker_plugin", "capabilities_fingerprint", "started_at", "install"}
 )
 PLUGIN_INFO_KANBAN_KEYS = frozenset(
@@ -342,6 +342,9 @@ def capabilities(api) -> tuple[str, ...]:
         from .review_contract import REVIEW_HOOKS_CAPABILITY
 
         extra.append(REVIEW_HOOKS_CAPABILITY)
+    from .conversation_files_prepare import available as conversation_files_available
+    if conversation_files_available(api):
+        extra.append("conversation_files_v1")
     if has_skill_invocation_symbols(api):
         extra.append("skill_invocation")
     if has_initial_status(api):
@@ -644,3 +647,6 @@ ARTIFACT_VERSION_KEYS = ARTIFACT_VERSION_REQUIRED | ARTIFACT_VERSION_OPTIONAL
 SESSION_SOURCE_KINDS = ("web", "file")
 SESSION_SOURCES_KEYS = frozenset({"session_id", "sources", "outside_workdir_files", "truncated"})
 SESSION_SOURCE_KEYS = frozenset({"kind", "ref", "title", "via", "at"})
+
+CONVERSATION_FILE_FIELDS = frozenset({"id", "name", "mimeType", "bytes", "sha256"})
+CONVERSATION_PREPARED_FILE_FIELDS = CONVERSATION_FILE_FIELDS | {"agentPath", "leaseId", "expiresAt"}

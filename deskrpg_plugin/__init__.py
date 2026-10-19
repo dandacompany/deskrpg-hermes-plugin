@@ -26,6 +26,7 @@ def register(ctx) -> None:
 
         attach(native, adapter, api)
 
+    _register_conversation_files(ctx, api)
     ctx.register_platform_handler("api_server", _wire)
     _register_artifacts(ctx, api)
     _register_card_proposal(ctx, api)
@@ -139,3 +140,19 @@ def _register_review_hooks(ctx, api) -> None:
         except Exception as exc:  # noqa: BLE001
             logger.warning("[deskrpg] review %s registration failed: %s", name, type(exc).__name__)
     review_hooks.HOOKS_REGISTERED = registered == 2
+
+
+def _register_conversation_files(ctx, api):
+    from . import conversation_files_prepare, conversation_files_tool
+    api.conversation_dispatch_tool = getattr(ctx, 'dispatch_tool', None)
+    if not conversation_files_prepare.available(api):
+        return
+    try:
+        ctx.register_tool(conversation_files_tool.TOOL_NAME, conversation_files_tool.TOOLSET,
+                          conversation_files_tool.TOOL_SCHEMA, conversation_files_tool.make_handler(api),
+                          description=conversation_files_tool.TOOL_SCHEMA['description'])
+        ctx.register_system_prompt_section('deskrpg-conversation-files', conversation_files_tool.PROMPT,
+                                           position='after_memory')
+    except Exception as exc:
+        api.conversation_dispatch_tool = None
+        logger.warning('[deskrpg] conversation files registration failed: %s', type(exc).__name__)

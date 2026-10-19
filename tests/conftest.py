@@ -244,6 +244,8 @@ def fake_api(tmp_path):
     from tests.fakes_mcp import install_fake_mcp
 
     api.fake_mcp = install_fake_mcp(api)
+    from tests.fakes_conversation_files import install_conversation_file_symbols
+    install_conversation_file_symbols(api)
     return api
 
 

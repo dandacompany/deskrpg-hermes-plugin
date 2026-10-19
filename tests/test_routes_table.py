@@ -9,6 +9,16 @@ from deskrpg_plugin import routes
 _OWNER = routes.Scope.DEFAULT
 _PROFILE = routes.Scope.PROFILE
 EXPECTED_ROUTES = {
+    ("POST", "/deskrpg/conversation-files", _OWNER),
+    ("POST", "/deskrpg/conversation-files/bindings/revoke", _OWNER),
+    ("GET", "/deskrpg/conversation-files/{id}/content", _OWNER),
+    ("POST", "/deskrpg/conversation-files/{id}/grant", _OWNER),
+    ("POST", "/deskrpg/conversation-files/{id}/link", _OWNER),
+    ("DELETE", "/deskrpg/conversation-files/{id}", _OWNER),
+    ("POST", "/p/{profile}/deskrpg/conversation-files/prepare", _PROFILE),
+    ("POST", "/p/{profile}/deskrpg/conversation-files/leases/{id}/renew", _PROFILE),
+    ("POST", "/p/{profile}/deskrpg/conversation-files/leases/{id}/release", _PROFILE),
+
     # 0.5.0 까지의 아홉 개 (V2 — 동작·응답 불변)
     ("GET", "/deskrpg/info", _OWNER),
     ("GET", "/deskrpg/profiles", _OWNER),
@@ -169,8 +179,8 @@ EXPECTED_ROUTES = {
 
 
 def test_라우트_테이블이_스펙의_예순여덟_개와_스코프까지_정확히_같다():
-    assert len(EXPECTED_ROUTES) == 128
-    assert len(routes.ROUTES) == 128, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
+    assert len(EXPECTED_ROUTES) == 137
+    assert len(routes.ROUTES) == 137, "행 수가 다르다 — 중복 행이거나 빠진 행이다"
     assert {(m, p, s) for m, p, _h, s in routes.ROUTES} == EXPECTED_ROUTES
 
 
@@ -183,8 +193,8 @@ def test_소유자_라우트는_41_개_프로필_라우트는_27_개다():
     # 프로필: 기존 5 + 크론 12 + 0.9.0 피커 2 + 프로바이더 키 2 + OAuth 4 + 0.10.0 도구 프로바이더 2
     #   + 0.15.0 스킬 CRUD 11 + 스킬 Hub 6 + curator·관계도 8 + 0.17.0 MCP 21 + 0.18.0 승인 정책 4 + session sources 1
     #   + 대화 중 묻기 3 + skill invocation 1 = 82.
-    assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 1 + 21 + 1 + 2 + 1 + 2 + 2 + 6 + 3 + 2,
-                        routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11 + 6 + 8 + 21 + 4 + 1 + 3 + 1}
+    assert by_scope == {routes.Scope.DEFAULT: 4 + 1 + 1 + 21 + 1 + 2 + 1 + 2 + 2 + 6 + 3 + 2 + 6,
+                        routes.Scope.PROFILE: 5 + 12 + 2 + 2 + 4 + 2 + 11 + 6 + 8 + 21 + 4 + 1 + 3 + 1 + 3}
 
 
 def test_OAuth_취소_행이_연결_끊기_행보다_앞에_있다():
@@ -257,7 +267,7 @@ def test_plugin_yaml_이_requires_hermes_를_최상위에_선언하고_버전은
 
     raw = (pathlib.Path(__file__).resolve().parent.parent / "plugin.yaml").read_text(encoding="utf-8")
     manifest = yaml.safe_load(raw)
-    assert manifest["version"] == "0.31.1"
+    assert manifest["version"] == "0.32.0"
     assert manifest["requires_hermes"] == ">=0.21.1"
     assert "requires" not in manifest
 

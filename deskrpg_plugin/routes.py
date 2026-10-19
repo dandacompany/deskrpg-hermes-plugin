@@ -11,6 +11,8 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from .auth import Scope, require_auth
+from . import conversation_files_routes as _conversation_files
+from .conversation_files_prepare import available as _conversation_files_available
 from . import contract_fields as _contract_fields
 from . import identity as _identity
 from . import profiles as _profiles
@@ -77,6 +79,16 @@ ADAPTER = None
 
 # (method, path, handler_name, scope)
 ROUTES = [
+    ("POST", "/deskrpg/conversation-files", "conversation_files_upload", Scope.DEFAULT),
+    ("POST", "/deskrpg/conversation-files/bindings/revoke", "conversation_files_revoke", Scope.DEFAULT),
+    ("GET", "/deskrpg/conversation-files/{id}/content", "conversation_files_content", Scope.DEFAULT),
+    ("POST", "/deskrpg/conversation-files/{id}/grant", "conversation_files_grant", Scope.DEFAULT),
+    ("POST", "/deskrpg/conversation-files/{id}/link", "conversation_files_link", Scope.DEFAULT),
+    ("DELETE", "/deskrpg/conversation-files/{id}", "conversation_files_delete", Scope.DEFAULT),
+    ("POST", "/p/{profile}/deskrpg/conversation-files/prepare", "conversation_files_prepare", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/conversation-files/leases/{id}/renew", "conversation_files_renew", Scope.PROFILE),
+    ("POST", "/p/{profile}/deskrpg/conversation-files/leases/{id}/release", "conversation_files_release", Scope.PROFILE),
+
     ("GET", "/deskrpg/info", "info", Scope.DEFAULT),
     ("GET", "/deskrpg/profiles", "list_profiles", Scope.DEFAULT),
     ("POST", "/deskrpg/profiles", "create_profile", Scope.DEFAULT),
@@ -260,6 +272,16 @@ def _assert_scope_matches_path():
 _assert_scope_matches_path()
 
 _HANDLERS = {
+    "conversation_files_upload": lambda api: _conversation_files.handler(api, "upload"),
+    "conversation_files_revoke": lambda api: _conversation_files.handler(api, "revoke"),
+    "conversation_files_content": lambda api: _conversation_files.handler(api, "content"),
+    "conversation_files_grant": lambda api: _conversation_files.handler(api, "grant"),
+    "conversation_files_link": lambda api: _conversation_files.handler(api, "link"),
+    "conversation_files_delete": lambda api: _conversation_files.handler(api, "delete"),
+    "conversation_files_prepare": lambda api: _conversation_files.handler(api, "prepare"),
+    "conversation_files_renew": lambda api: _conversation_files.handler(api, "renew"),
+    "conversation_files_release": lambda api: _conversation_files.handler(api, "release"),
+
     "info": lambda api: _make_info(api),
     "ensure_worker_plugin": lambda api: _worker_plugin.ensure_handler(api),
     "list_profiles": lambda api: _profiles.list_handler(api),
@@ -579,6 +601,7 @@ def _info_body(api) -> dict:
         "timezone": _info_timezone(api),
         "dashboard_url": _info_dashboard_url(api),
         "artifact_max_bytes": _artifact_upload_max_bytes(api),
+        **({"conversation_files": {"max_bytes": 5 * 1024 * 1024, "max_count": 3, "backends": ["local", "docker"]}} if _conversation_files_available(api) else {}),
         "install": _info_install(),
         "kanban": {
             "dispatcher_present": _info_dispatcher_present(api),
@@ -631,6 +654,16 @@ def handler_for(name, api):
 # 라우트 유무가 `capabilities()` 의 `profile_toolsets`/`profile_skills` 와 항상 같은
 # 심볼 집합으로 판정된다(F3, 2026-09-19).
 _OPTIONAL_ROUTES = {
+    "conversation_files_upload": _conversation_files_available,
+    "conversation_files_revoke": _conversation_files_available,
+    "conversation_files_content": _conversation_files_available,
+    "conversation_files_grant": _conversation_files_available,
+    "conversation_files_link": _conversation_files_available,
+    "conversation_files_delete": _conversation_files_available,
+    "conversation_files_prepare": _conversation_files_available,
+    "conversation_files_renew": _conversation_files_available,
+    "conversation_files_release": _conversation_files_available,
+
     "kanban_create_swarm": "create_swarm",
     "kanban_blackboard": "latest_blackboard",
     "get_toolsets": _contract_fields.has_toolset_symbols,
@@ -728,6 +761,9 @@ def attach(app, adapter, api) -> None:
         # 프로필 프리픽스 미러는 Hermes 가 자기 라우트에만 만들어 주므로,
         # /p/{profile}/ 경로는 우리가 테이블에 그대로 적어 등록한다.
     _raise_above_profile_catchall(app, before)
+    if _conversation_files_available(api):
+        from .conversation_files_cleanup import cleanup_context
+        app.cleanup_ctx.append(cleanup_context(api))
 
 
 # Hermes 는 `/p/{profile}/{tail:.*}` 포괄 라우트를 **자기 라우트 전부를 등록한 뒤**

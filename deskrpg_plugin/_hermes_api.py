@@ -158,6 +158,9 @@ SPEC = (
 # 않으므로 반쯤 되는 상태가 생기지 않는다. 반대로 이걸 `SPEC` 에 넣으면 `kanban_swarm`
 # 이 없는 구버전 Hermes 에서 칸반·크론까지 전부 죽는다.
 OPTIONAL_SPEC = (
+    ("tools.terminal_scope", ("install_profile_terminal_scope", "reset_terminal_scope", "terminal_env")),
+    ("gateway.session_context", ("set_session_vars", "clear_session_vars")),
+    ("tools.credential_files", ("to_agent_visible_cache_path",)),
     # Hermes internals with no public replacement. Upstream can move them at any time, so the plugin must still
     # load without them: a missing terminator only refuses reopening a finished card whose descendants are running
     # (kanban_board._write_status). `_check_dispatcher_presence` is not used — from inside the gateway it asks the
