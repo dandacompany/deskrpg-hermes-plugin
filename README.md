@@ -11,13 +11,14 @@ Connect [DeskRPG](https://github.com/dandacompany/deskrpg), a self-hosted virtua
 - Manage profile-scoped cron jobs and retrieve automation events.
 - Save versioned artifacts with `artifact_save`, and capture supported tool outputs, response code blocks and links.
 - Propose kanban cards with `propose_kanban_card`.
+- Preserve original conversation attachments and prepare verified copies for agent file tools.
 
 ## Requirements and installation
 
 Python 3.11+ and Hermes Agent >=0.21.1 with the API Server enabled. Runtime dependencies are aiohttp and PyYAML, provided by Hermes. Internal Hermes API availability is checked during registration.
 
 ```sh
-plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.31.1 | cut -f1)
+plugin_sha=$(git ls-remote https://github.com/dandacompany/deskrpg-hermes-plugin.git refs/tags/v0.32.0 | cut -f1)
 hermes plugins install https://github.com/dandacompany/deskrpg-hermes-plugin --ref "$plugin_sha"
 hermes plugins enable deskrpg
 hermes plugins doctor deskrpg
@@ -29,7 +30,7 @@ Once admitted to the Hermes plugin catalog, installation by the catalog name `de
 
 ## Permissions
 
-This plugin runs inside the Hermes gateway with the gateway process's filesystem authority. It registers an `api_server` platform handler, two tools (`artifact_save`, `propose_kanban_card`), two hooks (`post_tool_call`, `post_llm_call`), system-prompt sections and an artifact skill. It requires no additional API key to load.
+This plugin runs inside the Hermes gateway with the gateway process's filesystem authority. It registers an `api_server` platform handler, four tools (`artifact_save`, `propose_kanban_card`, `deskrpg_ask_user`, `conversation_files`), two hooks (`post_tool_call`, `post_llm_call`), system-prompt sections and an artifact skill. It requires no additional API key to load.
 
 HTTP routes require Hermes API Server authentication. Owner-key routes can manage all profiles and shared kanban boards, dispatch or terminate workers, and read automation results across profiles. Profile routes manage identity, configuration, cron jobs, provider credentials and OAuth flows. Profile-key isolation requires Hermes multiplex profiles; single-profile gateways resolve their own profile prefix to the listener owner key. Keep owner credentials server-side and restrict access to the gateway.
 
@@ -166,7 +167,15 @@ Skill management is announced per feature (`profile_skill_read`, `profile_skill_
 `profile_curator`, `profile_learning_graph`), so a Hermes build that moves one symbol turns off only that feature.
 `profile_skill_admin` is still announced when all five are on.
 
+## Original conversation files
+
+Capability `conversation_files_v1` lets DeskRPG keep original uploads in Hermes and prepare them for a specific profile and conversation session. The `conversation_files` tool lists authorized originals and prepares a selected file for reading with existing file tools. DeskRPG uploads support files up to 5 MiB and up to three files per send.
+
+Originals remain available through their conversation links. Execution copies use short-lived leases and are reclaimed when idle. The default original-store quota is 1 GiB (`DESKRPG_CONVERSATION_FILE_QUOTA_BYTES`); the per-profile execution cache is limited to 256 MiB. Grants and file-tool calls remain bound to the authorized profile and Hermes session. File contents are untrusted user material.
+
 ## Release
+
+0.32.0 adds original conversation files, authenticated upload/download/delete routes, session-bound grants and the `conversation_files` tool. Prepared copies are verified against their original SHA256, support Hermes local and Docker file tools, and use renewable leases with idle cleanup. Requires a DeskRPG version with conversation attachments; restart the gateway after updating.
 
 0.31.1 lists the same providers as `hermes model`, in its order: the catalog walks Hermes' `provider_catalog` instead of `PROVIDER_REGISTRY`, which repeated a provider once per alias (Nebius Token Factory and Meta Model API six times each) and left out OpenRouter, Mixture of Agents and custom endpoints. Authentication comes from the picker's own check, so an OpenRouter key or a configured custom base URL counts. Authenticated providers still come first. `PUT provider-keys/openrouter` now stores `OPENROUTER_API_KEY`.
 
