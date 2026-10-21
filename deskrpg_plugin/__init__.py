@@ -32,6 +32,7 @@ def register(ctx) -> None:
     _register_card_proposal(ctx, api)
     _register_approval_blocked(ctx, api)
     _register_ask_user(ctx, api)
+    _register_education_workflows(ctx, api)
     _register_review_hooks(ctx, api)
 
 
@@ -110,6 +111,45 @@ def _register_ask_user(ctx, api) -> None:
             step()
         except Exception as exc:  # noqa: BLE001 — 한 등록의 실패가 다른 등록을 막지 않는다
             logger.warning("[deskrpg] ask_user %s registration failed: %s", name, type(exc).__name__)
+
+
+def _register_education_workflows(ctx, api) -> None:
+    """Expose only the education-workflow operations to the training Slack profile."""
+    try:
+        from . import education_workflows_tool as workflows
+    except Exception as exc:  # noqa: BLE001 — optional tool failure must not remove plugin routes
+        logger.warning("[deskrpg] education workflow module import failed: %s", type(exc).__name__)
+        return
+
+    registrations = (
+        (workflows.LIST_SCHEMA, "list"),
+        (workflows.CREATE_SCHEMA, "create"),
+        (workflows.GET_SCHEMA, "get"),
+        (workflows.UPDATE_SCHEMA, "update"),
+    )
+    for schema, operation in registrations:
+        try:
+            ctx.register_tool(
+                schema["name"], workflows.TOOLSET, schema, workflows.make_handler(api, operation),
+                description=schema["description"], emoji="🎓",
+            )
+        except Exception as exc:  # noqa: BLE001 — keep remaining read/write operations available
+            logger.warning("[deskrpg] education workflow tool registration failed: %s", type(exc).__name__)
+    try:
+        ctx.register_system_prompt_section(
+            "deskrpg_education_workflows",
+            (
+                "## Shared education workflows\n"
+                "For education and presentation requests, use the education_workflow tools to create/read the canonical DeskRPG record. "
+                "After presenting topic options, persist them with save_candidates before asking the user to choose. After each clarify answer, "
+                "persist the decision with education_workflow_update before moving to another stage. Read the latest version before updating; "
+                "on stale_version reload the task and ask again only if needed. Include the stable task ID and DeskRPG link in the Slack thread. "
+                "Report a change as synced only when the API confirms it. Never include confidential/customer/personal data in the shared record."
+            ),
+            position="after_memory",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[deskrpg] education workflow prompt registration failed: %s", type(exc).__name__)
 
 
 def _register_approval_blocked(ctx, api) -> None:
