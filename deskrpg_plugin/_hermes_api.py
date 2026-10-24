@@ -214,7 +214,8 @@ OPTIONAL_SPEC = (
     # 툴셋 목록이 구독 기능 판정을 한 번만 계산하는 데 쓴다. 없으면 툴셋마다 Hermes 가 다시 계산한다.
     ("hermes_cli.nous_subscription", ("get_nous_subscription_features",)),
     ("tools.skills_tool", ("_find_all_skills", "_sort_skills")),
-    ("agent.skill_utils", ("ESSENTIAL_SKILLS", "parse_config_string_list", "is_external_skill_path")),
+    ("agent.skill_utils", ("ESSENTIAL_SKILLS", "parse_config_string_list", "is_external_skill_path",
+                           "iter_skill_index_files", "get_all_skills_dirs")),
     # `_plugin_aliases` 는 복제가 설정의 프로바이더 id 를 Hermes 와 같이 정식 id 로 푸는 데 쓴다.
     (
         "hermes_cli.auth",
@@ -227,6 +228,7 @@ OPTIONAL_SPEC = (
             "load_usage", "activity_count", "latest_activity_at", "is_curator_managed",
             "is_hub_installed", "is_bundled", "set_pinned", "archive_skill", "restore_skill",
             "list_archived_skill_names", "_archive_dir", "_find_skill_dir", "_find_external_skill_dir",
+            "_skills_dir", "_read_skill_name", "is_excluded_skill_path",
         ),
     ),
     ("tools.skill_ledger", ("set_ledger_actor", "reset_ledger_actor")),
@@ -256,7 +258,6 @@ OPTIONAL_SPEC = (
     ("tools.mcp_tool_lifecycle", ("_stop_mcp_loop_if_idle", "shutdown_mcp_servers")),
     ("tools.mcp_tool_agent", ("reprobe_tool_availability",)),
     ("tools.registry", (("registry", "mcp_registry"),)),
-    ("gateway.run", ("_profile_runtime_scope",)),
     ("hermes_cli.mcp_catalog", (
         ("list_catalog", "mcp_list_catalog"), ("get_entry", "mcp_get_catalog_entry"),
         ("card_install_config", "mcp_card_install_config"),
@@ -325,5 +326,17 @@ def load() -> types.SimpleNamespace:
             module = None
         for src, dst in _pairs(names):
             resolved[dst] = getattr(module, src, None) if module is not None else None
+
+    # 0.17.0 MCP scope: gateway.run is resolved lazily on call to avoid
+    # a cross-thread import deadlock when gateway.run discovers plugins during startup.
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _profile_runtime_scope(profile_home, *args, **kwargs):
+        import gateway.run
+        with gateway.run._profile_runtime_scope(profile_home, *args, **kwargs):
+            yield
+
+    resolved["_profile_runtime_scope"] = _profile_runtime_scope
 
     return types.SimpleNamespace(**resolved)

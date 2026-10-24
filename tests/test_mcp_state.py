@@ -15,7 +15,8 @@ def test_mcp_admin_capability_requires_every_symbol(fake_api):
 
 
 def test_capability_symbols_match_optional_spec_block():
-    assert set(contract_fields._MCP_ADMIN_SYMBOLS) <= set(_hermes_api.OPTIONAL)
+    # The runtime scope is provided lazily by load(), not imported from OPTIONAL_SPEC.
+    assert set(contract_fields._MCP_ADMIN_SYMBOLS) - {"_profile_runtime_scope"} <= set(_hermes_api.OPTIONAL)
 
 
 def test_aliases_resolve_to_flat_names():

@@ -1,6 +1,8 @@
 import os
 import stat
 
+import pytest
+
 from deskrpg_plugin import envfile
 
 
@@ -10,6 +12,51 @@ def test_기존_줄을_보존하고_같은_키는_한_줄만_남긴다(tmp_path)
     envfile.upsert_lines(p, {"B": "B=new", "D": "D='x y'"})
     assert p.read_text(encoding="utf-8") == "# 주석\nA=1\nB=new\n\nC=3\nD='x y'\n"
     assert stat.S_IMODE(os.stat(p).st_mode) == 0o600
+
+
+def test_atomic_replace_retries_permission_errors_with_exponential_backoff(tmp_path, monkeypatch):
+    target = tmp_path / ".env"
+    target.write_text("old", encoding="utf-8")
+    actual_replace = os.replace
+    attempts = []
+    delays = []
+
+    def replace(source, destination):
+        attempts.append((source, destination))
+        if len(attempts) < 4:
+            raise PermissionError("destination temporarily busy")
+        actual_replace(source, destination)
+
+    monkeypatch.setattr(envfile.os, "replace", replace)
+    monkeypatch.setattr(envfile.time, "sleep", delays.append)
+    envfile.write_text_atomic(target, "new")
+
+    assert target.read_text(encoding="utf-8") == "new"
+    assert len(attempts) == 4
+    assert delays == [0.05, 0.1, 0.2]
+    assert {source for source, destination in attempts if destination == target} == {attempts[0][0]}
+    assert not list(tmp_path.glob("..env.*"))
+
+
+def test_atomic_replace_exhausts_retries_without_touching_destination(tmp_path, monkeypatch):
+    target = tmp_path / ".env"
+    target.write_text("old", encoding="utf-8")
+    attempts = []
+    delays = []
+
+    def replace(source, destination):
+        attempts.append((source, destination))
+        raise PermissionError("destination busy")
+
+    monkeypatch.setattr(envfile.os, "replace", replace)
+    monkeypatch.setattr(envfile.time, "sleep", delays.append)
+    with pytest.raises(PermissionError):
+        envfile.write_text_atomic(target, "new")
+
+    assert target.read_text(encoding="utf-8") == "old"
+    assert len(attempts) == 5
+    assert delays == [0.05, 0.1, 0.2, 0.4]
+    assert not list(tmp_path.glob("..env.*"))
 
 
 def test_없는_파일이면_만든다(tmp_path):

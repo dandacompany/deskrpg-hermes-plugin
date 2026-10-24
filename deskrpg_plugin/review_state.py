@@ -80,7 +80,9 @@ def review_state(api, conn, store, task, board: str | None = None) -> dict | Non
         state = "approved"
         if approval_row is None:
             reason = "external_done"
-    elif task.status == "review" and not task.assignee:
+    # If mode is human or task has no assignee, human approval is required.
+    # An implementer remaining as assignee must not block human review.
+    elif task.status == "review" and (mode == "human" or not task.assignee):
         state = "human_required"
     elif task.status == "review" or _active_reviewer_run(api, conn, task):
         state = "reviewing"
@@ -92,6 +94,10 @@ def review_state(api, conn, store, task, board: str | None = None) -> dict | Non
     submission = None
     if latest is not None and latest.run_id is not None:
         submission = {"id": submission_id(latest.run_id), "run_id": latest.run_id, "hash": "",
+                      "policy_revision": POLICY_REVISION}
+    elif task.status == "review":
+        # Fallback submission id for manually promoted review tasks to allow approval actions
+        submission = {"id": f"task:{task.id}", "run_id": None, "hash": "",
                       "policy_revision": POLICY_REVISION}
     approval = None
     if approval_row is not None and task.status == "done":

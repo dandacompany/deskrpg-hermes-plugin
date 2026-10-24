@@ -5,6 +5,8 @@ Hermes 는 사용자 플러그인을 **로드하는 홈의** `plugins/` 에서�
 설치하면 워커에는 훅도 `artifact_save` 도 없다. 오류도 로그도 없이 결과물이 쌓이지 않는다.
 """
 import os
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -78,6 +80,54 @@ def test_ensure_는_루트로_가는_링크와_활성화를_만든다(fake_api):
     cfg = _config(fake_api, "sophie")
     assert cfg["plugins"]["enabled"] == ["danteterm-activity", "deskrpg"]  # 기존 항목·순서 보존
     assert cfg["model"] == {"default": "m"}  # 다른 키 보존
+
+
+def test_concurrent_ensure_link_preserves_the_created_link(fake_api, monkeypatch):
+    _profile(fake_api, "sophie")
+    link = _link(fake_api, "sophie")
+    first_checked = threading.Event()
+    release_first = threading.Event()
+    second_started = threading.Event()
+    second_checked = threading.Event()
+    second_created = threading.Event()
+
+    def controlled_state(path):
+        state = "linked" if path.exists() else "missing"
+        if threading.current_thread().name == "link_0" and state == "missing":
+            first_checked.set()
+            assert release_first.wait(5)
+        elif threading.current_thread().name == "link_1":
+            second_checked.set()
+        return state
+
+    def create_link(_target, path, *, target_is_directory):
+        assert target_is_directory
+        path.mkdir()  # Directory stands in for a junction; no symlink privilege required.
+        if threading.current_thread().name == "link_1":
+            second_created.set()
+
+    def second_call():
+        second_started.set()
+        return worker_plugin._ensure_link(link)
+
+    monkeypatch.setattr(worker_plugin, "_link_state", controlled_state)
+    monkeypatch.setattr(worker_plugin.os, "symlink", create_link)
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="link") as pool:
+        try:
+            first = pool.submit(worker_plugin._ensure_link, link)
+            assert first_checked.wait(5)
+            second = pool.submit(second_call)
+            assert second_started.wait(5)
+            reached_state_while_paused = second_checked.wait(2)
+            if reached_state_while_paused:
+                assert second_created.wait(5)
+        finally:
+            release_first.set()
+        assert sorted((first.result(timeout=5), second.result(timeout=5))) == ["created", "present"]
+    assert link.is_dir()
+    assert second_checked.is_set()
+    assert not reached_state_while_paused
+    assert not second_created.is_set()
 
 
 def test_ensure_는_멱등이다(fake_api):
@@ -167,7 +217,7 @@ def test_plugins_가_매핑이_아니면_덮어쓰지_않는다(fake_api):
     assert (d / "config.yaml").read_text(encoding="utf-8") == before
 
 
-@pytest.mark.skipif(os.geteuid() == 0, reason="root 는 umask·권한을 무시한다")
+@pytest.mark.skipif(os.name == "nt" or os.geteuid() == 0, reason="Windows/root 는 POSIX 권한 검사가 성립하지 않는다")
 def test_config_는_원자적으로_0600_으로_쓰고_백업을_남긴다(fake_api):
     d = _profile(fake_api, "sophie", {"model": {"default": "m"}})
     os.chmod(d / "config.yaml", 0o600)

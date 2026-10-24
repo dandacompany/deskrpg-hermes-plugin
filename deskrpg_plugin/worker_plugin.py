@@ -27,7 +27,9 @@ collect_directory_manifests`), 활성화도 **그 홈의** `config.yaml` `plugin
 
 from __future__ import annotations
 
+import contextlib
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -41,6 +43,8 @@ PROPAGATION_ENV = "DESKRPG_WORKER_PROPAGATION"
 PROPAGATION_CONFIG_KEY = "worker_propagation"
 DISABLED_ERROR = "worker_propagation_disabled"
 _TRUTHY = {"1", "true", "yes", "on"}
+_link_locks_guard = threading.Lock()
+_link_locks: dict[Path, threading.Lock] = {}
 
 DISABLED_DETAIL = (
     "Worker propagation is off. When enabled, this plugin symlinks itself into every profile's "
@@ -175,6 +179,14 @@ def review_hooks_report(api) -> dict:
 
 
 def _ensure_link(link: Path) -> str:
+    key = link.absolute()
+    with _link_locks_guard:
+        lock = _link_locks.setdefault(key, threading.Lock())
+    with lock:
+        return _ensure_link_locked(link)
+
+
+def _ensure_link_locked(link: Path) -> str:
     state = _link_state(link)
     if state == "linked":
         return "present"
@@ -182,8 +194,27 @@ def _ensure_link(link: Path) -> str:
         return "other"
     if link.is_symlink():  # 끊어진 링크 — 다시 건다
         link.unlink()
+    elif os.name == "nt" and (link.is_dir() or not link.exists()):
+        try:
+            link.rmdir()
+        except OSError:
+            with contextlib.suppress(OSError):
+                link.unlink()
     link.parent.mkdir(parents=True, exist_ok=True)
-    os.symlink(plugin_root(), link, target_is_directory=True)
+    try:
+        os.symlink(plugin_root(), link, target_is_directory=True)
+    except OSError as exc:
+        is_privilege_error = getattr(exc, "winerror", None) == 1314 or isinstance(exc, PermissionError)
+        if os.name == "nt" and is_privilege_error:
+            import _winapi
+            try:
+                _winapi.CreateJunction(str(plugin_root()), str(link))
+            except Exception:
+                with contextlib.suppress(OSError):
+                    link.rmdir()
+                raise
+        else:
+            raise
     return "created"
 
 

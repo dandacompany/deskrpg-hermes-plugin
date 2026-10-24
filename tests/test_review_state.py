@@ -57,6 +57,16 @@ def test_submitted_to_a_person_is_human_required_with_the_submitting_run(fake_ap
     assert got["review_round"] == 1 and got["approval"] is None
 
 
+def test_human_mode_in_review_is_human_required_even_with_implementer_assignee(fake_api, kanban, store):
+    conn, task = _card(kanban, assignee="impl")
+    rs.put_policy(store, rs.Policy(task.id, "human", "impl", None, "card"))
+    run = _submit(kanban, conn, task.id)
+    got = _state(fake_api, kanban, conn, store, task.id)
+    assert got is not None
+    assert got["state"] == "human_required"
+    assert got["submission"] == {"id": submission_id(run), "run_id": run, "hash": "", "policy_revision": 1}
+
+
 def test_review_with_an_assignee_is_reviewing(fake_api, kanban, store):
     conn, task = _card(kanban, assignee="impl")
     rs.put_policy(store, rs.Policy(task.id, "agent", "impl", "rev", "card"))
